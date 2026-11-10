@@ -87,7 +87,7 @@ export default Effect.gen(function* () {
       change_from_baseline REAL,
       change_percent REAL,
       lab TEXT NOT NULL DEFAULT '',
-      source_note_id TEXT REFERENCES notes (id),
+      source_note_id TEXT NOT NULL REFERENCES notes (id),
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     )
@@ -105,7 +105,7 @@ export default Effect.gen(function* () {
       status TEXT NOT NULL DEFAULT 'draft' CHECK (
         status IN ('draft', 'planned', 'done', 'cancelled')
       ),
-      source_note_id TEXT REFERENCES notes (id),
+      source_note_id TEXT NOT NULL REFERENCES notes (id),
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     )
