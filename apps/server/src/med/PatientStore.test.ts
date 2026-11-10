@@ -108,6 +108,47 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("PatientStore", (
     }).pipe(Effect.provide(layerStore)),
   );
 
+  it.effect("matches a patient by URN only and offers a name's patients as candidates", () =>
+    Effect.gen(function* () {
+      const store = yield* PatientStore.PatientStore;
+      const wayan = yield* store.createPatient({
+        name: "I Wayan Sudarma",
+        urn: "00-12-34-56",
+        alsoWrittenAs: ["Pak Yan"],
+      });
+      const arta = yield* store.createPatient({ name: "Wayan Arta" });
+      const found = (query: Parameters<typeof store.findPatient>[0]) =>
+        store.findPatient(query).pipe(
+          Effect.map(({ match, candidates }) => ({
+            match: Option.getOrNull(Option.map(match, (patient) => patient.id)),
+            candidates: candidates.map((patient) => patient.id),
+          })),
+        );
+
+      assert.deepStrictEqual(yield* found({ urn: "00123456" }), {
+        match: wayan.id,
+        candidates: [],
+      });
+      assert.deepStrictEqual(yield* found({ urn: "00123456", name: "Arta" }), {
+        match: wayan.id,
+        candidates: [],
+      });
+      assert.deepStrictEqual(yield* found({ urn: "99", name: "wayan" }), {
+        match: null,
+        candidates: [wayan.id, arta.id],
+      });
+      assert.deepStrictEqual(yield* found({ name: "pak yan" }), {
+        match: null,
+        candidates: [wayan.id],
+      });
+      assert.deepStrictEqual(yield* found({ urn: "99" }), { match: null, candidates: [] });
+      assert.deepStrictEqual(yield* refusedField(store.findPatient({ urn: " ", name: "" })), [
+        "BlankFieldError",
+        "urn or name",
+      ]);
+    }).pipe(Effect.provide(layerStore)),
+  );
+
   it.effect("lists patients by their latest note, falling back to when they were created", () =>
     Effect.gen(function* () {
       const store = yield* PatientStore.PatientStore;
@@ -159,6 +200,11 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("PatientStore", (
         urn: null,
         urnKey: null,
       });
+      assert.deepStrictEqual(
+        (yield* store.updatePatient(created.id, { name: "Wayan Sudarma", addSpelling: "Pak Yan" }))
+          .alsoWrittenAs,
+        ["Wayan", "I Wayan Sudarma", "Pak Yan"],
+      );
       assert.strictEqual(
         yield* failureTag(store.updatePatient("missing", { name: "Nobody" })),
         "PatientNotFoundError",
@@ -656,6 +702,22 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("PatientStore", (
         yield* failureTag(store.upsertThreadNote({ ...note, patientId: null, date: "today" })),
         "InvalidDateError",
       );
+
+      // The kind says what the thread brought; it never makes a second note.
+      assert.deepInclude(
+        yield* store.upsertThreadNote({ ...note, patientId: made.id, kind: "lab_sheet" }),
+        { id: other.id, kind: "lab_sheet" },
+      );
+      assert.strictEqual(
+        (yield* store.upsertThreadNote({ ...note, patientId: made.id })).kind,
+        "lab_sheet",
+      );
+      assert.deepStrictEqual(
+        yield* refusedField(
+          store.upsertThreadNote({ ...note, patientId: made.id, kind: "memo" as never }),
+        ),
+        ["InvalidChoiceError", "kind"],
+      );
     }).pipe(Effect.provide(layerStore)),
   );
 
@@ -770,6 +832,12 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("PatientStore", (
       const moved = yield* store.moveNoteToPatient({ noteId: note.id, patientId: patient.id });
 
       assert.deepInclude(moved, { id: note.id, patientId: patient.id });
+      // The doctor's move is what links a thread that named no URN.
+      assert.deepStrictEqual(
+        Option.map(yield* store.getThreadPatient("thread-1"), (linked) => linked.id),
+        Option.some(patient.id),
+      );
+      assert.isTrue(Option.isNone(yield* store.getThreadPatient("thread-2")));
       assert.deepStrictEqual(
         (yield* store.listLabs({ patientId: patient.id })).map((lab) => [
           lab.testId,
@@ -1051,6 +1119,438 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("PatientStore", (
       assert.strictEqual((yield* statuses).patient, "archived");
       assert.strictEqual(yield* failureTag(store.verifyNote(inbox.id)), "NoteInInboxError");
       assert.strictEqual(yield* failureTag(store.verifyNote("missing")), "NoteNotFoundError");
+    }).pipe(Effect.provide(layerStore)),
+  );
+
+  it.effect("records each file of a note once and refuses one without a name or a path", () =>
+    Effect.gen(function* () {
+      const store = yield* PatientStore.PatientStore;
+      const note = yield* chatNote(store, null);
+      const sheet = { name: "lipid-panel.pdf", path: "patient-files/lipid-panel.pdf" };
+      const scan = { name: "mri.pdf", path: "patient-files/mri.pdf" };
+
+      const first = yield* store.addNoteFiles({ noteId: note.id, files: [sheet] });
+      const again = yield* store.addNoteFiles({ noteId: note.id, files: [sheet, scan] });
+
+      assert.deepStrictEqual(
+        first.map((file) => [file.noteId, file.name, file.path]),
+        [[note.id, sheet.name, sheet.path]],
+      );
+      assert.deepStrictEqual(
+        again.map((file) => file.path),
+        [sheet.path, scan.path],
+      );
+      assert.strictEqual(again[0]?.id, first[0]?.id);
+      assert.deepStrictEqual(
+        yield* refusedField(
+          store.addNoteFiles({ noteId: note.id, files: [scan, { name: " ", path: "x.pdf" }] }),
+        ),
+        ["BlankFieldError", "files[1].name"],
+      );
+      assert.deepStrictEqual(
+        yield* refusedField(
+          store.addNoteFiles({ noteId: note.id, files: [{ name: "x.pdf", path: "" }] }),
+        ),
+        ["BlankFieldError", "files[0].path"],
+      );
+      assert.strictEqual(
+        yield* failureTag(store.addNoteFiles({ noteId: "missing", files: [sheet] })),
+        "NoteNotFoundError",
+      );
+    }).pipe(Effect.provide(layerStore)),
+  );
+
+  it.effect("files a thread's message in one step: note, labs, plans, files and the link", () =>
+    Effect.gen(function* () {
+      const store = yield* PatientStore.PatientStore;
+      const patient = yield* store.createPatient({ name: "Wayan", urn: "00-12-34-56" });
+      const message = { threadId: "thread-1", patientId: patient.id, title: "Lipid follow-up" };
+      const sheet = { name: "lipid-panel.pdf", path: "patient-files/lipid-panel.pdf" };
+
+      const filed = yield* store.fileFromThread({
+        ...message,
+        summary: "LDL down on statin.",
+        date: "2026-11-11",
+        labs: [
+          { testAsWritten: "LDL", value: 190, unit: "mg/dL", collected: "2026-01-10" },
+          { testAsWritten: "LDL", value: 2.6, unit: "mmol/L", collected: "2026-04-10" },
+        ],
+        plans: [{ title: "Repeat lipid panel", due: "2026-12-01", type: "lab" }],
+        files: [sheet],
+      });
+
+      assert.deepInclude(filed.note, {
+        patientId: patient.id,
+        threadId: "thread-1",
+        kind: "chat",
+        title: "Lipid follow-up",
+        summary: "LDL down on statin.",
+        date: "2026-11-11",
+      });
+      assert.deepStrictEqual(
+        filed.labs.map((lab) => [lab.sourceNoteId, lab.status, lab.isBaseline]),
+        [
+          [filed.note.id, "draft", true],
+          [filed.note.id, "draft", false],
+        ],
+      );
+      // Published pair: 2.6 mmol/L is 100 mg/dL; 100 - 190 = -90; -90 / 190 = -47.4 %.
+      assert.closeTo(filed.labs[1]!.valueInBaselineUnit!, 100, 1);
+      assert.closeTo(filed.labs[1]!.changeFromBaseline!, -90, 1);
+      assert.closeTo(filed.labs[1]!.changePercent!, -47.4, 0.6);
+      assert.deepStrictEqual(
+        filed.plans.map((plan) => [plan.patientId, plan.sourceNoteId, plan.status, plan.due]),
+        [[patient.id, filed.note.id, "draft", "2026-12-01"]],
+      );
+      assert.deepStrictEqual(
+        filed.files.map((file) => [file.noteId, file.path]),
+        [[filed.note.id, sheet.path]],
+      );
+      assert.deepStrictEqual(
+        Option.map(yield* store.getThreadPatient("thread-1"), (linked) => linked.id),
+        Option.some(patient.id),
+      );
+
+      // The thread's next message goes to the same note, which keeps the date it has.
+      const next = yield* store.fileFromThread({
+        ...message,
+        summary: "LDL down on statin; HbA1c stable.",
+        kind: "lab_sheet",
+        labs: [{ testAsWritten: "HbA1c", value: 6.5, unit: "%", collected: "2026-04-10" }],
+        files: [sheet],
+      });
+      assert.deepInclude(next.note, {
+        id: filed.note.id,
+        summary: "LDL down on statin; HbA1c stable.",
+        kind: "lab_sheet",
+        date: "2026-11-11",
+      });
+      assert.strictEqual(next.files.length, 1);
+      assert.strictEqual((yield* store.listLabs({ patientId: patient.id })).length, 3);
+    }).pipe(Effect.provide(layerStore)),
+  );
+
+  it.effect("files a thread's message to the Inbox, and nothing when a part is refused", () =>
+    Effect.gen(function* () {
+      const store = yield* PatientStore.PatientStore;
+      const sql = yield* MedDatabase.MedDatabase;
+      const ldl = { testAsWritten: "LDL", value: 100, unit: "mg/dL", collected: "2026-04-10" };
+      const plan = { title: "Clinic visit", due: "2026-11-25", type: "follow_up" } as const;
+      const evening = Date.parse("2026-11-11T20:00:00.000Z");
+      yield* TestClock.setTime(evening);
+
+      const inbox = yield* store.fileFromThread({
+        threadId: "thread-1",
+        patientId: null,
+        title: "Unknown patient",
+        needsYou: "Named only as Wayan; candidates: Wayan Sudarma, Wayan Arta.",
+        labs: [ldl],
+        plans: [plan],
+      });
+
+      assert.deepInclude(inbox.note, {
+        patientId: null,
+        needsYou: "Named only as Wayan; candidates: Wayan Sudarma, Wayan Arta.",
+        // The calendar day where the server runs, which is not UTC's after 16:00 UTC in Bali.
+        date: new Intl.DateTimeFormat("en-CA").format(evening),
+      });
+      assert.deepStrictEqual(
+        inbox.labs.map((lab) => [lab.patientId, lab.isBaseline]),
+        [[null, false]],
+      );
+      assert.deepStrictEqual(
+        inbox.plans.map((filed) => filed.patientId),
+        [null],
+      );
+      assert.isTrue(Option.isNone(yield* store.getThreadPatient("thread-1")));
+
+      const refused = (input: Partial<Parameters<typeof store.fileFromThread>[0]>) =>
+        refusedField(
+          store.fileFromThread({ threadId: "thread-2", patientId: null, title: "Visit", ...input }),
+        );
+      assert.deepStrictEqual(
+        yield* refused({ labs: [ldl, { ...ldl, testAsWritten: " " }], plans: [plan] }),
+        ["BlankFieldError", "labs[1].testAsWritten"],
+      );
+      assert.deepStrictEqual(yield* refused({ labs: [ldl], plans: [{ ...plan, due: "soon" }] }), [
+        "InvalidDateError",
+        "plans[0].due",
+      ]);
+      assert.deepStrictEqual(yield* refused({ files: [{ name: "x.pdf", path: " " }] }), [
+        "BlankFieldError",
+        "files[0].path",
+      ]);
+      assert.deepStrictEqual(yield* refused({ title: " " }), ["BlankFieldError", "title"]);
+      assert.deepStrictEqual(yield* refused({ date: "today" }), ["InvalidDateError", "date"]);
+      assert.deepStrictEqual(yield* refused({ kind: "memo" as never }), [
+        "InvalidChoiceError",
+        "kind",
+      ]);
+      assert.deepStrictEqual(yield* refused({ patientId: "missing", labs: [ldl] }), [
+        "PatientNotFoundError",
+        undefined,
+      ]);
+      assert.deepStrictEqual(yield* sql`SELECT id FROM notes WHERE thread_id = 'thread-2'`, []);
+      assert.strictEqual((yield* store.listLabs({ inbox: true })).length, 1);
+    }).pipe(Effect.provide(layerStore)),
+  );
+
+  it.effect("reads one patient's record, with the labs of one test when a test is named", () =>
+    Effect.gen(function* () {
+      const store = yield* PatientStore.PatientStore;
+      const patient = yield* store.createPatient({ name: "Wayan" });
+      const other = yield* store.createPatient({ name: "Made" });
+      const ldl = { testAsWritten: "LDL", value: 100, unit: "mg/dL", collected: "2026-04-10" };
+      const sheet = { name: "lipid-panel.pdf", path: "patient-files/lipid-panel.pdf" };
+      const first = yield* store.fileFromThread({
+        threadId: "thread-1",
+        patientId: patient.id,
+        title: "First visit",
+        date: "2026-01-12",
+        labs: [
+          { ...ldl, testAsWritten: "Kolesterol LDL", value: 162, collected: "2026-01-10" },
+          {
+            testAsWritten: "Anti-dsDNA",
+            value: null,
+            valueText: "negative",
+            collected: "2026-01-10",
+          },
+        ],
+        files: [sheet],
+      });
+      const second = yield* store.fileFromThread({
+        threadId: "thread-2",
+        patientId: patient.id,
+        title: "Follow-up",
+        date: "2026-04-12",
+        labs: [ldl, { testAsWritten: "HbA1c", value: 6.5, unit: "%", collected: "2026-04-10" }],
+        plans: [{ title: "Repeat lipid panel", due: "2026-07-01", type: "lab" }],
+      });
+      yield* store.fileFromThread({
+        threadId: "thread-3",
+        patientId: other.id,
+        title: "Someone else",
+        labs: [ldl],
+        plans: [{ title: "Clinic visit", due: "2026-05-01", type: "follow_up" }],
+      });
+      const labsOf = (test?: string) =>
+        store
+          .getPatientRecord({ patientId: patient.id, test })
+          .pipe(Effect.map((record) => record.labs.map((lab) => [lab.testName, lab.collected])));
+
+      const record = yield* store.getPatientRecord({ patientId: patient.id });
+
+      assert.strictEqual(record.patient.id, patient.id);
+      assert.deepStrictEqual(
+        record.labs.map((lab) => [lab.testAsWritten, lab.collected]),
+        [
+          ["Kolesterol LDL", "2026-01-10"],
+          ["Anti-dsDNA", "2026-01-10"],
+          ["LDL", "2026-04-10"],
+          ["HbA1c", "2026-04-10"],
+        ],
+      );
+      assert.deepStrictEqual(
+        record.plans.map((plan) => plan.title),
+        ["Repeat lipid panel"],
+      );
+      assert.deepStrictEqual(
+        record.notes.map((note) => [note.id, note.files.map((file) => file.path)]),
+        [
+          [second.note.id, []],
+          [first.note.id, [sheet.path]],
+        ],
+      );
+      const ldlHistory = [
+        ["Kolesterol LDL", "2026-01-10"],
+        ["Kolesterol LDL", "2026-04-10"],
+      ];
+      assert.deepStrictEqual(yield* labsOf("ldl"), ldlHistory);
+      assert.deepStrictEqual(yield* labsOf("LDL-C"), ldlHistory);
+      assert.deepStrictEqual(yield* labsOf(" anti-dsdna "), [["Anti-dsDNA", "2026-01-10"]]);
+      assert.deepStrictEqual(yield* labsOf("Troponin"), []);
+      assert.strictEqual(
+        yield* failureTag(store.getPatientRecord({ patientId: "missing" })),
+        "PatientNotFoundError",
+      );
+    }).pipe(Effect.provide(layerStore)),
+  );
+
+  it.effect("lists the plans still ahead by due date, with the patient's name", () =>
+    Effect.gen(function* () {
+      const store = yield* PatientStore.PatientStore;
+      const sql = yield* MedDatabase.MedDatabase;
+      const wayan = yield* store.createPatient({ name: "Wayan" });
+      const made = yield* store.createPatient({ name: "Made" });
+      const verified = yield* store.fileFromThread({
+        threadId: "thread-1",
+        patientId: wayan.id,
+        title: "Visit",
+        plans: [
+          { title: "Repeat lipid panel", due: "2026-12-01", type: "lab" },
+          { title: "MRI brain", due: "2026-11-20", type: "imaging" },
+        ],
+      });
+      yield* store.verifyNote(verified.note.id);
+      yield* sql`UPDATE plans SET status = 'done' WHERE title = 'MRI brain'`;
+      yield* store.fileFromThread({
+        threadId: "thread-2",
+        patientId: made.id,
+        title: "Visit",
+        plans: [{ title: "Clinic visit", due: "2026-11-25", type: "follow_up" }],
+      });
+      yield* store.fileFromThread({
+        threadId: "thread-3",
+        patientId: null,
+        title: "Unknown patient",
+        plans: [{ title: "EEG", due: "2026-11-22", type: "procedure" }],
+      });
+      const upcoming = (range?: Parameters<typeof store.listUpcomingPlans>[0]) =>
+        store
+          .listUpcomingPlans(range)
+          .pipe(
+            Effect.map((plans) =>
+              plans.map((plan) => [plan.due, plan.title, plan.patientName, plan.status]),
+            ),
+          );
+      const eeg = ["2026-11-22", "EEG", null, "draft"];
+      const visit = ["2026-11-25", "Clinic visit", "Made", "draft"];
+      const lipids = ["2026-12-01", "Repeat lipid panel", "Wayan", "planned"];
+
+      assert.deepStrictEqual(yield* upcoming(), [eeg, visit, lipids]);
+      assert.deepStrictEqual(yield* upcoming({ from: "2026-11-25" }), [visit, lipids]);
+      assert.deepStrictEqual(yield* upcoming({ to: "2026-11-25" }), [eeg, visit]);
+      assert.deepStrictEqual(yield* upcoming({ from: "2026-11-23", to: "2026-11-30" }), [visit]);
+      assert.deepStrictEqual(yield* refusedField(store.listUpcomingPlans({ from: "next week" })), [
+        "InvalidDateError",
+        "from",
+      ]);
+    }).pipe(Effect.provide(layerStore)),
+  );
+
+  it.effect("lists what waits for the doctor: the Inbox, open questions and drafts", () =>
+    Effect.gen(function* () {
+      const store = yield* PatientStore.PatientStore;
+      const wayan = yield* store.createPatient({ name: "Wayan" });
+      const made = yield* store.createPatient({ name: "Made" });
+      const quiet = yield* store.createPatient({ name: "Ketut" });
+      const ldl = { testAsWritten: "LDL", value: 100, unit: "mg/dL", collected: "2026-04-10" };
+      const plan = { title: "Clinic visit", due: "2026-11-25", type: "follow_up" } as const;
+      const message = { title: "Visit", date: "2026-11-11" };
+      const drafts = yield* store.fileFromThread({
+        ...message,
+        threadId: "thread-1",
+        patientId: wayan.id,
+        labs: [ldl, { ...ldl, testAsWritten: "HDL" }],
+        plans: [plan],
+      });
+      const cleared = yield* store.fileFromThread({
+        ...message,
+        threadId: "thread-2",
+        patientId: wayan.id,
+        labs: [ldl],
+      });
+      yield* store.verifyNote(cleared.note.id);
+      const question = yield* store.fileFromThread({
+        ...message,
+        threadId: "thread-3",
+        patientId: made.id,
+        needsYou: "Is the HbA1c unit % or mmol/mol?",
+      });
+      yield* store.fileFromThread({ ...message, threadId: "thread-4", patientId: quiet.id });
+      const inbox = yield* store.fileFromThread({
+        ...message,
+        threadId: "thread-5",
+        patientId: null,
+        needsYou: "Named only as Wayan.",
+        plans: [plan],
+      });
+
+      const waiting = yield* store.listNeedsYou();
+
+      assert.deepStrictEqual(
+        waiting.inbox.map((note) => [note.id, note.needsYou, note.draftLabs, note.draftPlans]),
+        [[inbox.note.id, "Named only as Wayan.", 0, 1]],
+      );
+      assert.deepStrictEqual(
+        waiting.patients
+          .map(({ patient, draftLabs, draftPlans, notes }) => ({
+            name: patient.name,
+            draftLabs,
+            draftPlans,
+            notes: notes.map((note) => [note.id, note.needsYou, note.draftLabs, note.draftPlans]),
+          }))
+          .toSorted((a, b) => a.name.localeCompare(b.name)),
+        [
+          {
+            name: "Made",
+            draftLabs: 0,
+            draftPlans: 0,
+            notes: [[question.note.id, "Is the HbA1c unit % or mmol/mol?", 0, 0]],
+          },
+          {
+            name: "Wayan",
+            draftLabs: 2,
+            draftPlans: 1,
+            notes: [[drafts.note.id, "", 2, 1]],
+          },
+        ],
+      );
+    }).pipe(Effect.provide(layerStore)),
+  );
+
+  it.effect("moves and verifies the note a thread has, found by the thread", () =>
+    Effect.gen(function* () {
+      const store = yield* PatientStore.PatientStore;
+      const patient = yield* store.createPatient({ name: "Wayan" });
+      const ldl = { testAsWritten: "LDL", value: 100, unit: "mg/dL", collected: "2026-04-10" };
+      const inbox = yield* store.fileFromThread({
+        threadId: "thread-1",
+        patientId: null,
+        title: "Unknown patient",
+        labs: [{ ...ldl, value: 200, collected: "2026-01-10" }],
+      });
+      yield* store.fileFromThread({
+        threadId: "thread-2",
+        patientId: patient.id,
+        title: "Visit",
+        labs: [ldl],
+      });
+      const ofThread = { threadId: "thread-1", patientId: patient.id };
+
+      assert.strictEqual(
+        yield* failureTag(store.verifyThreadNote(ofThread)),
+        "ThreadNoteNotFoundError",
+      );
+      assert.deepInclude(yield* store.moveThreadNoteToPatient(ofThread), {
+        id: inbox.note.id,
+        patientId: patient.id,
+      });
+      assert.deepStrictEqual(
+        Option.map(yield* store.getThreadPatient("thread-1"), (linked) => linked.id),
+        Option.some(patient.id),
+      );
+      assert.strictEqual(
+        yield* failureTag(store.moveThreadNoteToPatient(ofThread)),
+        "ThreadNoteNotFoundError",
+      );
+      assert.deepStrictEqual(yield* store.verifyThreadNote(ofThread), {
+        labsVerified: 1,
+        plansPlanned: 0,
+        patientActivated: true,
+      });
+      assert.deepStrictEqual(
+        (yield* store.listLabs({ patientId: patient.id })).map((lab) => [
+          lab.collected,
+          lab.status,
+          lab.isBaseline,
+          lab.changeFromBaseline,
+        ]),
+        [
+          ["2026-01-10", "verified", true, null],
+          ["2026-04-10", "draft", false, -100],
+        ],
+      );
     }).pipe(Effect.provide(layerStore)),
   );
 
