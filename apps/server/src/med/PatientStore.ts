@@ -587,6 +587,20 @@ export class PatientStore extends Context.Service<
     >;
     /** Most recent activity first. */
     readonly listPatients: () => Effect.Effect<ReadonlyArray<Patient>, PatientStoreError>;
+    /**
+     * What the patient's page shows: notes latest first, how many of the patient's labs and
+     * plans are still drafts, and the draft and planned plans, soonest due first.
+     */
+    readonly getPatientHome: (patientId: string) => Effect.Effect<
+      {
+        readonly patient: Patient;
+        readonly notes: ReadonlyArray<Note>;
+        readonly draftLabs: number;
+        readonly draftPlans: number;
+        readonly upcomingPlans: ReadonlyArray<Plan>;
+      },
+      PatientNotFoundError | PatientStoreError
+    >;
     /** Case-insensitive substring over the name and its other spellings. */
     readonly searchPatients: (
       query: string,
@@ -668,6 +682,19 @@ export class PatientStore extends Context.Service<
           readonly draftPlans: number;
           readonly notes: ReadonlyArray<WaitingNote>;
         }>;
+      },
+      PatientStoreError
+    >;
+    /**
+     * How long each list is: the Inbox, `listPatients`, the patients' notes in `listNeedsYou`
+     * and `listUpcomingPlans`.
+     */
+    readonly getCounts: () => Effect.Effect<
+      {
+        readonly inbox: number;
+        readonly patients: number;
+        readonly needsYou: number;
+        readonly upcoming: number;
       },
       PatientStoreError
     >;
@@ -754,11 +781,14 @@ export class PatientStore extends Context.Service<
       ReadonlyArray<NoteFile>,
       NoteNotFoundError | BlankFieldError | PatientStoreError
     >;
-    /** The doctor's own choice of whom a thread is about; agents link through evidence instead. */
+    /**
+     * The doctor's own choice of whom a thread is about; agents link through evidence instead.
+     * Returns the patient the thread is now linked to.
+     */
     readonly linkThread: (input: {
       readonly threadId: string;
       readonly patientId: string;
-    }) => Effect.Effect<void, PatientNotFoundError | PatientStoreError>;
+    }) => Effect.Effect<Patient, PatientNotFoundError | PatientStoreError>;
     readonly getThreadPatient: (
       threadId: string,
     ) => Effect.Effect<Option.Option<Patient>, PatientStoreError>;
@@ -911,6 +941,11 @@ const make = Effect.gen(function* () {
     pl.source_note_id AS "sourceNoteId",
     pl.created_at AS "createdAt",
     pl.updated_at AS "updatedAt"
+  `;
+
+  // Upcoming: a plan not done or cancelled, of the Inbox or of a patient who is not archived.
+  const stillAhead = sql`
+    pl.status IN ('draft', 'planned') AND COALESCE(p.status, '') <> 'archived'
   `;
 
   const selectPlans = (where: Fragment) =>
@@ -1506,6 +1541,30 @@ const make = Effect.gen(function* () {
 
     listPatients,
 
+    getPatientHome: Effect.fn("PatientStore.getPatientHome")(function* (patientId) {
+      const patient = yield* readPatient(patientId);
+      const notes = yield* sql<Note>`
+        SELECT ${noteColumns} FROM notes WHERE patient_id = ${patient.id}
+        ORDER BY date DESC, id DESC
+      `.pipe(failedIn("getPatientHome:notes"));
+      const drafts = yield* sql<{ readonly labs: number; readonly plans: number }>`
+        SELECT
+          (SELECT COUNT(*) FROM labs WHERE patient_id = ${patient.id} AND status = 'draft')
+            AS "labs",
+          (SELECT COUNT(*) FROM plans WHERE patient_id = ${patient.id} AND status = 'draft')
+            AS "plans"
+      `.pipe(failedIn("getPatientHome:drafts"));
+      return {
+        patient,
+        notes,
+        draftLabs: drafts[0]?.labs ?? 0,
+        draftPlans: drafts[0]?.plans ?? 0,
+        upcomingPlans: yield* selectPlans(
+          sql`pl.patient_id = ${patient.id} AND pl.status IN ('draft', 'planned')`,
+        ),
+      };
+    }),
+
     searchPatients,
 
     createPatient: Effect.fn("PatientStore.createPatient")(function* (input) {
@@ -1683,6 +1742,38 @@ const make = Effect.gen(function* () {
       };
     }),
 
+    getCounts: Effect.fn("PatientStore.getCounts")(function* () {
+      const rows = yield* sql<{
+        readonly inbox: number;
+        readonly patients: number;
+        readonly needsYou: number;
+        readonly upcoming: number;
+      }>`
+        SELECT
+          (SELECT COUNT(*) FROM notes WHERE patient_id IS NULL) AS "inbox",
+          (SELECT COUNT(*) FROM patients) AS "patients",
+          (
+            SELECT COUNT(*) FROM notes n
+            JOIN patients p ON p.id = n.patient_id
+            WHERE p.status <> 'archived' AND (
+              TRIM(n.needs_you) <> ''
+              OR EXISTS (
+                SELECT 1 FROM labs l WHERE l.source_note_id = n.id AND l.status = 'draft'
+              )
+              OR EXISTS (
+                SELECT 1 FROM plans pl WHERE pl.source_note_id = n.id AND pl.status = 'draft'
+              )
+            )
+          ) AS "needsYou",
+          (
+            SELECT COUNT(*) FROM plans pl
+            LEFT JOIN patients p ON p.id = pl.patient_id
+            WHERE ${stillAhead}
+          ) AS "upcoming"
+      `.pipe(failedIn("getCounts:query"));
+      return rows[0] ?? { inbox: 0, patients: 0, needsYou: 0, upcoming: 0 };
+    }),
+
     listUpcomingPlans: Effect.fn("PatientStore.listUpcomingPlans")(function* (range = {}) {
       const { from, to } = range;
       if (from !== undefined) yield* requireIsoDate("from", from);
@@ -1693,8 +1784,7 @@ const make = Effect.gen(function* () {
         FROM plans pl
         LEFT JOIN patients p ON p.id = pl.patient_id
         WHERE ${sql.and([
-          sql`pl.status IN ('draft', 'planned')`,
-          sql`COALESCE(p.status, '') <> 'archived'`,
+          stillAhead,
           ...(from === undefined ? [] : [sql`pl.due >= ${from}`]),
           ...(to === undefined ? [] : [sql`pl.due <= ${to}`]),
         ])}
@@ -1778,8 +1868,8 @@ const make = Effect.gen(function* () {
 
     linkThread: Effect.fn("PatientStore.linkThread")(function* (input) {
       const at = yield* now;
-      yield* readPatient(input.patientId).pipe(
-        Effect.andThen(writeThreadLink(input.threadId, input.patientId, at)),
+      return yield* readPatient(input.patientId).pipe(
+        Effect.tap(() => writeThreadLink(input.threadId, input.patientId, at)),
         sql.withTransaction,
         Effect.catchTags(transactionFailure("linkThread")),
       );

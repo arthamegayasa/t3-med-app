@@ -18,9 +18,13 @@ import { Route as ChatRouteImport } from './routes/_chat'
 import { Route as ChatIndexRouteImport } from './routes/_chat.index'
 import { Route as ProjectsProjectKeyRouteImport } from './routes/projects.$projectKey'
 import { Route as ChatUsageRouteImport } from './routes/_chat.usage'
+import { Route as ChatUpcomingRouteImport } from './routes/_chat.upcoming'
 import { Route as ChatSettingsRouteImport } from './routes/_chat.settings'
 import { Route as ChatPullRequestsRouteImport } from './routes/_chat.pull-requests'
 import { Route as ChatNewRouteImport } from './routes/_chat.new'
+import { Route as ChatNeedsYouRouteImport } from './routes/_chat.needs-you'
+import { Route as ChatInboxRouteImport } from './routes/_chat.inbox'
+import { Route as ChatPatientsIndexRouteImport } from './routes/_chat.patients.index'
 import { Route as ThreadsEnvironmentIdThreadIdRouteImport } from './routes/threads.$environmentId.$threadId'
 import { Route as ChatSettingsWorktreesRouteImport } from './routes/_chat.settings.worktrees'
 import { Route as ChatSettingsVoiceRouteImport } from './routes/_chat.settings.voice'
@@ -49,6 +53,7 @@ import { Route as ChatSettingsArchivedRouteImport } from './routes/_chat.setting
 import { Route as ChatSettingsAppearanceRouteImport } from './routes/_chat.settings.appearance'
 import { Route as ChatSettingsAccessRouteImport } from './routes/_chat.settings.access'
 import { Route as ChatSettingsAboutRouteImport } from './routes/_chat.settings.about'
+import { Route as ChatPatientsPatientIdRouteImport } from './routes/_chat.patients.$patientId'
 import { Route as ChatDraftDraftIdRouteImport } from './routes/_chat.draft.$draftId'
 import { Route as ChatEnvironmentIdThreadIdRouteImport } from './routes/_chat.$environmentId.$threadId'
 
@@ -96,6 +101,11 @@ const ChatUsageRoute = ChatUsageRouteImport.update({
   path: '/usage',
   getParentRoute: () => ChatRoute,
 } as any)
+const ChatUpcomingRoute = ChatUpcomingRouteImport.update({
+  id: '/upcoming',
+  path: '/upcoming',
+  getParentRoute: () => ChatRoute,
+} as any)
 const ChatSettingsRoute = ChatSettingsRouteImport.update({
   id: '/settings',
   path: '/settings',
@@ -109,6 +119,21 @@ const ChatPullRequestsRoute = ChatPullRequestsRouteImport.update({
 const ChatNewRoute = ChatNewRouteImport.update({
   id: '/new',
   path: '/new',
+  getParentRoute: () => ChatRoute,
+} as any)
+const ChatNeedsYouRoute = ChatNeedsYouRouteImport.update({
+  id: '/needs-you',
+  path: '/needs-you',
+  getParentRoute: () => ChatRoute,
+} as any)
+const ChatInboxRoute = ChatInboxRouteImport.update({
+  id: '/inbox',
+  path: '/inbox',
+  getParentRoute: () => ChatRoute,
+} as any)
+const ChatPatientsIndexRoute = ChatPatientsIndexRouteImport.update({
+  id: '/patients/',
+  path: '/patients/',
   getParentRoute: () => ChatRoute,
 } as any)
 const ThreadsEnvironmentIdThreadIdRoute =
@@ -256,6 +281,11 @@ const ChatSettingsAboutRoute = ChatSettingsAboutRouteImport.update({
   path: '/about',
   getParentRoute: () => ChatSettingsRoute,
 } as any)
+const ChatPatientsPatientIdRoute = ChatPatientsPatientIdRouteImport.update({
+  id: '/patients/$patientId',
+  path: '/patients/$patientId',
+  getParentRoute: () => ChatRoute,
+} as any)
 const ChatDraftDraftIdRoute = ChatDraftDraftIdRouteImport.update({
   id: '/draft/$draftId',
   path: '/draft/$draftId',
@@ -275,13 +305,17 @@ export interface FileRoutesByFullPath {
   '/guest': typeof GuestRoute
   '/pair': typeof PairRoute
   '/welcome': typeof WelcomeRoute
+  '/inbox': typeof ChatInboxRoute
+  '/needs-you': typeof ChatNeedsYouRoute
   '/new': typeof ChatNewRoute
   '/pull-requests': typeof ChatPullRequestsRoute
   '/settings': typeof ChatSettingsRouteWithChildren
+  '/upcoming': typeof ChatUpcomingRoute
   '/usage': typeof ChatUsageRoute
   '/projects/$projectKey': typeof ProjectsProjectKeyRoute
   '/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
   '/draft/$draftId': typeof ChatDraftDraftIdRoute
+  '/patients/$patientId': typeof ChatPatientsPatientIdRoute
   '/settings/about': typeof ChatSettingsAboutRoute
   '/settings/access': typeof ChatSettingsAccessRoute
   '/settings/appearance': typeof ChatSettingsAppearanceRoute
@@ -310,6 +344,7 @@ export interface FileRoutesByFullPath {
   '/settings/voice': typeof ChatSettingsVoiceRoute
   '/settings/worktrees': typeof ChatSettingsWorktreesRoute
   '/threads/$environmentId/$threadId': typeof ThreadsEnvironmentIdThreadIdRoute
+  '/patients/': typeof ChatPatientsIndexRoute
 }
 export interface FileRoutesByTo {
   '/connect': typeof ConnectRoute
@@ -317,14 +352,18 @@ export interface FileRoutesByTo {
   '/guest': typeof GuestRoute
   '/pair': typeof PairRoute
   '/welcome': typeof WelcomeRoute
+  '/inbox': typeof ChatInboxRoute
+  '/needs-you': typeof ChatNeedsYouRoute
   '/new': typeof ChatNewRoute
   '/pull-requests': typeof ChatPullRequestsRoute
   '/settings': typeof ChatSettingsRouteWithChildren
+  '/upcoming': typeof ChatUpcomingRoute
   '/usage': typeof ChatUsageRoute
   '/projects/$projectKey': typeof ProjectsProjectKeyRoute
   '/': typeof ChatIndexRoute
   '/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
   '/draft/$draftId': typeof ChatDraftDraftIdRoute
+  '/patients/$patientId': typeof ChatPatientsPatientIdRoute
   '/settings/about': typeof ChatSettingsAboutRoute
   '/settings/access': typeof ChatSettingsAccessRoute
   '/settings/appearance': typeof ChatSettingsAppearanceRoute
@@ -353,6 +392,7 @@ export interface FileRoutesByTo {
   '/settings/voice': typeof ChatSettingsVoiceRoute
   '/settings/worktrees': typeof ChatSettingsWorktreesRoute
   '/threads/$environmentId/$threadId': typeof ThreadsEnvironmentIdThreadIdRoute
+  '/patients': typeof ChatPatientsIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -362,14 +402,18 @@ export interface FileRoutesById {
   '/guest': typeof GuestRoute
   '/pair': typeof PairRoute
   '/welcome': typeof WelcomeRoute
+  '/_chat/inbox': typeof ChatInboxRoute
+  '/_chat/needs-you': typeof ChatNeedsYouRoute
   '/_chat/new': typeof ChatNewRoute
   '/_chat/pull-requests': typeof ChatPullRequestsRoute
   '/_chat/settings': typeof ChatSettingsRouteWithChildren
+  '/_chat/upcoming': typeof ChatUpcomingRoute
   '/_chat/usage': typeof ChatUsageRoute
   '/projects/$projectKey': typeof ProjectsProjectKeyRoute
   '/_chat/': typeof ChatIndexRoute
   '/_chat/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
   '/_chat/draft/$draftId': typeof ChatDraftDraftIdRoute
+  '/_chat/patients/$patientId': typeof ChatPatientsPatientIdRoute
   '/_chat/settings/about': typeof ChatSettingsAboutRoute
   '/_chat/settings/access': typeof ChatSettingsAccessRoute
   '/_chat/settings/appearance': typeof ChatSettingsAppearanceRoute
@@ -398,6 +442,7 @@ export interface FileRoutesById {
   '/_chat/settings/voice': typeof ChatSettingsVoiceRoute
   '/_chat/settings/worktrees': typeof ChatSettingsWorktreesRoute
   '/threads/$environmentId/$threadId': typeof ThreadsEnvironmentIdThreadIdRoute
+  '/_chat/patients/': typeof ChatPatientsIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -408,13 +453,17 @@ export interface FileRouteTypes {
     | '/guest'
     | '/pair'
     | '/welcome'
+    | '/inbox'
+    | '/needs-you'
     | '/new'
     | '/pull-requests'
     | '/settings'
+    | '/upcoming'
     | '/usage'
     | '/projects/$projectKey'
     | '/$environmentId/$threadId'
     | '/draft/$draftId'
+    | '/patients/$patientId'
     | '/settings/about'
     | '/settings/access'
     | '/settings/appearance'
@@ -443,6 +492,7 @@ export interface FileRouteTypes {
     | '/settings/voice'
     | '/settings/worktrees'
     | '/threads/$environmentId/$threadId'
+    | '/patients/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/connect'
@@ -450,14 +500,18 @@ export interface FileRouteTypes {
     | '/guest'
     | '/pair'
     | '/welcome'
+    | '/inbox'
+    | '/needs-you'
     | '/new'
     | '/pull-requests'
     | '/settings'
+    | '/upcoming'
     | '/usage'
     | '/projects/$projectKey'
     | '/'
     | '/$environmentId/$threadId'
     | '/draft/$draftId'
+    | '/patients/$patientId'
     | '/settings/about'
     | '/settings/access'
     | '/settings/appearance'
@@ -486,6 +540,7 @@ export interface FileRouteTypes {
     | '/settings/voice'
     | '/settings/worktrees'
     | '/threads/$environmentId/$threadId'
+    | '/patients'
   id:
     | '__root__'
     | '/_chat'
@@ -494,14 +549,18 @@ export interface FileRouteTypes {
     | '/guest'
     | '/pair'
     | '/welcome'
+    | '/_chat/inbox'
+    | '/_chat/needs-you'
     | '/_chat/new'
     | '/_chat/pull-requests'
     | '/_chat/settings'
+    | '/_chat/upcoming'
     | '/_chat/usage'
     | '/projects/$projectKey'
     | '/_chat/'
     | '/_chat/$environmentId/$threadId'
     | '/_chat/draft/$draftId'
+    | '/_chat/patients/$patientId'
     | '/_chat/settings/about'
     | '/_chat/settings/access'
     | '/_chat/settings/appearance'
@@ -530,6 +589,7 @@ export interface FileRouteTypes {
     | '/_chat/settings/voice'
     | '/_chat/settings/worktrees'
     | '/threads/$environmentId/$threadId'
+    | '/_chat/patients/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -608,6 +668,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ChatUsageRouteImport
       parentRoute: typeof ChatRoute
     }
+    '/_chat/upcoming': {
+      id: '/_chat/upcoming'
+      path: '/upcoming'
+      fullPath: '/upcoming'
+      preLoaderRoute: typeof ChatUpcomingRouteImport
+      parentRoute: typeof ChatRoute
+    }
     '/_chat/settings': {
       id: '/_chat/settings'
       path: '/settings'
@@ -627,6 +694,27 @@ declare module '@tanstack/react-router' {
       path: '/new'
       fullPath: '/new'
       preLoaderRoute: typeof ChatNewRouteImport
+      parentRoute: typeof ChatRoute
+    }
+    '/_chat/needs-you': {
+      id: '/_chat/needs-you'
+      path: '/needs-you'
+      fullPath: '/needs-you'
+      preLoaderRoute: typeof ChatNeedsYouRouteImport
+      parentRoute: typeof ChatRoute
+    }
+    '/_chat/inbox': {
+      id: '/_chat/inbox'
+      path: '/inbox'
+      fullPath: '/inbox'
+      preLoaderRoute: typeof ChatInboxRouteImport
+      parentRoute: typeof ChatRoute
+    }
+    '/_chat/patients/': {
+      id: '/_chat/patients/'
+      path: '/patients'
+      fullPath: '/patients/'
+      preLoaderRoute: typeof ChatPatientsIndexRouteImport
       parentRoute: typeof ChatRoute
     }
     '/threads/$environmentId/$threadId': {
@@ -825,6 +913,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ChatSettingsAboutRouteImport
       parentRoute: typeof ChatSettingsRoute
     }
+    '/_chat/patients/$patientId': {
+      id: '/_chat/patients/$patientId'
+      path: '/patients/$patientId'
+      fullPath: '/patients/$patientId'
+      preLoaderRoute: typeof ChatPatientsPatientIdRouteImport
+      parentRoute: typeof ChatRoute
+    }
     '/_chat/draft/$draftId': {
       id: '/_chat/draft/$draftId'
       path: '/draft/$draftId'
@@ -907,23 +1002,33 @@ const ChatSettingsRouteWithChildren = ChatSettingsRoute._addFileChildren(
 )
 
 interface ChatRouteChildren {
+  ChatInboxRoute: typeof ChatInboxRoute
+  ChatNeedsYouRoute: typeof ChatNeedsYouRoute
   ChatNewRoute: typeof ChatNewRoute
   ChatPullRequestsRoute: typeof ChatPullRequestsRoute
   ChatSettingsRoute: typeof ChatSettingsRouteWithChildren
+  ChatUpcomingRoute: typeof ChatUpcomingRoute
   ChatUsageRoute: typeof ChatUsageRoute
   ChatIndexRoute: typeof ChatIndexRoute
   ChatEnvironmentIdThreadIdRoute: typeof ChatEnvironmentIdThreadIdRoute
   ChatDraftDraftIdRoute: typeof ChatDraftDraftIdRoute
+  ChatPatientsPatientIdRoute: typeof ChatPatientsPatientIdRoute
+  ChatPatientsIndexRoute: typeof ChatPatientsIndexRoute
 }
 
 const ChatRouteChildren: ChatRouteChildren = {
+  ChatInboxRoute: ChatInboxRoute,
+  ChatNeedsYouRoute: ChatNeedsYouRoute,
   ChatNewRoute: ChatNewRoute,
   ChatPullRequestsRoute: ChatPullRequestsRoute,
   ChatSettingsRoute: ChatSettingsRouteWithChildren,
+  ChatUpcomingRoute: ChatUpcomingRoute,
   ChatUsageRoute: ChatUsageRoute,
   ChatIndexRoute: ChatIndexRoute,
   ChatEnvironmentIdThreadIdRoute: ChatEnvironmentIdThreadIdRoute,
   ChatDraftDraftIdRoute: ChatDraftDraftIdRoute,
+  ChatPatientsPatientIdRoute: ChatPatientsPatientIdRoute,
+  ChatPatientsIndexRoute: ChatPatientsIndexRoute,
 }
 
 const ChatRouteWithChildren = ChatRoute._addFileChildren(ChatRouteChildren)

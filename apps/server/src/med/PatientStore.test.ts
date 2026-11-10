@@ -1452,6 +1452,78 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("PatientStore", (
     }).pipe(Effect.provide(layerStore)),
   );
 
+  it.effect("reads a patient's home: notes latest first, draft counts and plans still ahead", () =>
+    Effect.gen(function* () {
+      const store = yield* PatientStore.PatientStore;
+      const sql = yield* MedDatabase.MedDatabase;
+      const wayan = yield* store.createPatient({ name: "Wayan" });
+      const made = yield* store.createPatient({ name: "Made" });
+      const ldl = { testAsWritten: "LDL", value: 100, unit: "mg/dL", collected: "2026-08-21" };
+      const admission = yield* fileLinked(store, {
+        threadId: "thread-1",
+        patientId: wayan.id,
+        title: "Admission",
+        date: "2026-08-21",
+        summary: "Admission labs filed",
+        labs: [ldl],
+        plans: [
+          { title: "MRI brain", due: "2026-11-20", type: "imaging" },
+          { title: "Clinic visit", due: "2026-11-14", type: "follow_up" },
+        ],
+      });
+      yield* store.verifyNote(admission.note.id);
+      yield* sql`UPDATE plans SET status = 'done' WHERE title = 'MRI brain'`;
+      yield* fileLinked(store, {
+        threadId: "thread-2",
+        patientId: wayan.id,
+        title: "Labs 6 Nov",
+        date: "2026-11-06",
+        needsYou: "Is the unit mg/dL?",
+        labs: [
+          { ...ldl, value: 78, collected: "2026-11-06" },
+          { ...ldl, testAsWritten: "HDL", collected: "2026-11-06" },
+        ],
+        plans: [{ title: "Repeat lipid panel", due: "2026-12-01", type: "lab" }],
+      });
+      yield* fileLinked(store, {
+        threadId: "thread-3",
+        patientId: made.id,
+        title: "Visit",
+        labs: [ldl],
+        plans: [{ title: "EEG", due: "2026-11-22", type: "procedure" }],
+      });
+
+      const home = yield* store.getPatientHome(wayan.id);
+
+      assert.strictEqual(home.patient.id, wayan.id);
+      assert.deepStrictEqual(
+        home.notes.map((note) => [
+          note.title,
+          note.threadId,
+          note.date,
+          note.summary,
+          note.needsYou,
+        ]),
+        [
+          ["Labs 6 Nov", "thread-2", "2026-11-06", "", "Is the unit mg/dL?"],
+          ["Admission", "thread-1", "2026-08-21", "Admission labs filed", ""],
+        ],
+      );
+      assert.deepStrictEqual([home.draftLabs, home.draftPlans], [2, 1]);
+      assert.deepStrictEqual(
+        home.upcomingPlans.map((plan) => [plan.due, plan.title, plan.status]),
+        [
+          ["2026-11-14", "Clinic visit", "planned"],
+          ["2026-12-01", "Repeat lipid panel", "draft"],
+        ],
+      );
+      assert.strictEqual(
+        yield* failureTag(store.getPatientHome("missing")),
+        "PatientNotFoundError",
+      );
+    }).pipe(Effect.provide(layerStore)),
+  );
+
   it.effect("lists what waits for the doctor: the Inbox, open questions and drafts", () =>
     Effect.gen(function* () {
       const store = yield* PatientStore.PatientStore;
@@ -1492,6 +1564,19 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("PatientStore", (
 
       const waiting = yield* store.listNeedsYou();
 
+      // The sidebar's numbers are the lengths of the lists its rows open.
+      assert.deepStrictEqual(yield* store.getCounts(), {
+        inbox: waiting.inbox.length,
+        patients: (yield* store.listPatients()).length,
+        needsYou: waiting.patients.flatMap((entry) => entry.notes).length,
+        upcoming: (yield* store.listUpcomingPlans()).length,
+      });
+      assert.deepStrictEqual(yield* store.getCounts(), {
+        inbox: 1,
+        patients: 3,
+        needsYou: 2,
+        upcoming: 2,
+      });
       assert.deepStrictEqual(
         waiting.inbox.map((note) => [note.id, note.needsYou, note.draftLabs, note.draftPlans]),
         [[inbox.note.id, "Named only as Wayan.", 0, 1]],
@@ -1528,6 +1613,12 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("PatientStore", (
         ["Made"],
       );
       assert.strictEqual(afterArchiving.inbox.length, 1);
+      assert.deepStrictEqual(yield* store.getCounts(), {
+        inbox: 1,
+        patients: 3,
+        needsYou: 1,
+        upcoming: 1,
+      });
     }).pipe(Effect.provide(layerStore)),
   );
 
@@ -1954,7 +2045,8 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("PatientStore", (
       assert.deepStrictEqual(yield* linked("thread-1"), Option.none());
       yield* store.linkThread({ threadId: "thread-1", patientId: wayan.id });
       assert.deepStrictEqual(yield* linked("thread-1"), Option.some(wayan.id));
-      yield* store.linkThread({ threadId: "thread-1", patientId: made.id });
+      const relinked = yield* store.linkThread({ threadId: "thread-1", patientId: made.id });
+      assert.strictEqual(relinked.id, made.id);
       assert.deepStrictEqual(yield* linked("thread-1"), Option.some(made.id));
       assert.deepStrictEqual(yield* linked("thread-2"), Option.none());
       assert.strictEqual(

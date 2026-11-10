@@ -79,6 +79,7 @@ import * as ProjectSettingsOverrideSweep from "./provider/ProjectSettingsOverrid
 import * as TerminalManager from "./terminal/Manager.ts";
 import * as McpHttpServer from "./mcp/McpHttpServer.ts";
 import * as MedDatabase from "./med/MedDatabase.ts";
+import * as MedHttp from "./med/http.ts";
 import * as PatientStore from "./med/PatientStore.ts";
 import * as PeerForwarding from "./peer/PeerForwarding.ts";
 import * as RemoteDelegation from "./peer/RemoteDelegation.ts";
@@ -807,14 +808,16 @@ const layerMakeRoutes = Layer.mergeAll(
   McpHttpServer.layer.pipe(
     Layer.provide(ProviderAdapterRegistry.layerFromProviderInstanceRegistry),
     Layer.provide(McpOAuth.layerMcpClientAuthenticator),
-    // T3 Med: the patient tools file into the fork's own database, never upstream's.
-    Layer.provide(PatientStore.layer.pipe(Layer.provide(MedDatabase.layerConfig))),
   ),
+  MedHttp.layer,
   // Follows delegated tasks running in linked environments, including after a restart.
   Layer.effectDiscard(
     RemoteDelegation.RemoteDelegation.pipe(Effect.flatMap((remote) => remote.start())),
   ),
 ).pipe(
+  // T3 Med: one store for the patient tools (/mcp) and the patient pages (/api/med), in the
+  // fork's own database, never upstream's.
+  Layer.provide(PatientStore.layer.pipe(Layer.provide(MedDatabase.layerConfig))),
   Layer.provide(
     PullRequestReviewGuideService.layer.pipe(Layer.provide(PullRequestReviewGuides.layer)),
   ),
