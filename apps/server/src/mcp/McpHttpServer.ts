@@ -1209,6 +1209,11 @@ export const layerDeviceToolkit = Layer.mergeAll(
   layerDeviceScreenshotRegistration,
 );
 
+// T3 Med: a patient call's arguments are patient data and stay out of every span.
+export const layerPatientToolkit = toolkitRegistration(PatientToolkit, PatientHandlers.layer).pipe(
+  Layer.provide(McpServer.middleware(PatientHandlers.withoutArgumentsOnSpan).layer),
+);
+
 /**
  * `McpServer` for in-process calls, which provide `McpInvocationContext`
  * around `callTool` as the auth middleware does for each /mcp request.
@@ -1251,7 +1256,7 @@ export const layerTools = Layer.mergeAll(
   layerPullRequestsToolkit,
   layerDeviceToolkit,
   layerHtmlToolkit,
-  toolkitRegistration(PatientToolkit, PatientHandlers.layer),
+  layerPatientToolkit,
 );
 
 export const layer = layerMcpTransport(layerTools);

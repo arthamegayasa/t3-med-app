@@ -1,11 +1,24 @@
 import { OrchestratorMcpFailure } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Tracer from "effect/Tracer";
 
 import * as PatientStore from "../../../med/PatientStore.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import { INBOX, PatientToolkit } from "./tools.ts";
+
+/**
+ * `Toolkit.handle` writes a call's raw arguments on the current span, and so into the trace
+ * file. Under this the current span is a copy that takes no attributes and has the same ids, so
+ * the spans of the call still hang from the request's.
+ */
+export const withoutArgumentsOnSpan = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+  Effect.matchEffect(Effect.currentSpan, {
+    onFailure: () => effect,
+    onSuccess: ({ spanId, traceId, sampled, annotations }) =>
+      Effect.withParentSpan(effect, Tracer.externalSpan({ spanId, traceId, sampled, annotations })),
+  });
 
 // A refusal says what the agent must change, so its text goes through; a store failure says
 // only the step it failed in.
@@ -15,16 +28,14 @@ const refused = (error: { readonly _tag: string; readonly message: string }) =>
     message: error.message,
   });
 
-const urnTaken = Effect.fn("mcp.patient.urnTaken")(function* (
-  error: PatientStore.PatientUrnTakenError,
-) {
-  const store = yield* PatientStore.PatientStore;
-  const holder = yield* store.getPatient(error.patientId).pipe(Effect.mapError(refused));
-  return yield* new OrchestratorMcpFailure({
-    code: "invalid_request",
-    message: `URN ${holder.urn} belongs to patient ${holder.id} (${holder.name}, ${holder.status}). Nothing was changed; use that patient.`,
-  });
-});
+// The holder's name is for the agent only: the error's own message would put it in the trace.
+const urnTaken = ({ urn, patientId, patientName, status }: PatientStore.PatientUrnTakenError) =>
+  Effect.fail(
+    new OrchestratorMcpFailure({
+      code: "invalid_request",
+      message: `URN ${urn} belongs to patient ${patientId} (${patientName}, ${status}). Nothing was changed; find that patient by this URN to file for them.`,
+    }),
+  );
 
 const callingThread = McpInvocationContext.McpInvocationContext.pipe(
   Effect.flatMap((scope) => McpInvocationContext.requireThreadScope(scope, "This tool")),
@@ -46,6 +57,9 @@ const patientDetails = (patient: PatientStore.Patient) => ({
   alsoWrittenAs: patient.alsoWrittenAs,
 });
 
+const relinkedFrom = (previous: Option.Option<PatientStore.Patient>) =>
+  Option.getOrNull(Option.map(previous, ({ id, name }) => ({ patientId: id, name })));
+
 const labResult = (lab: PatientStore.Lab) => ({
   testName: lab.testName,
   testId: lab.testId,
@@ -59,9 +73,12 @@ const labResult = (lab: PatientStore.Lab) => ({
   lab: lab.lab,
   status: lab.status,
   isBaseline: lab.isBaseline,
+  baseline: lab.baseline,
   valueInBaselineUnit: lab.valueInBaselineUnit,
   changeFromBaseline: lab.changeFromBaseline,
+  changeUnit: lab.changeUnit,
   changePercent: lab.changePercent,
+  notCompared: lab.notCompared,
   noteId: lab.sourceNoteId,
 });
 
@@ -90,27 +107,31 @@ const waitingNote = (note: PatientStore.WaitingNote) => ({
   draftPlans: note.draftPlans,
 });
 
+// Each handler makes one store call: a thread is linked, and a message filed, in one transaction.
 const handlers = {
-  patient_find: McpToolAccess.readsAsCaller((input) =>
+  patient_find: McpToolAccess.actsAsCaller((input) =>
     Effect.gen(function* () {
       const store = yield* PatientStore.PatientStore;
-      const { match, candidates } = yield* store.findPatient(input).pipe(Effect.mapError(refused));
+      const found = yield* store
+        .findPatientFromThread({ ...input, threadId: yield* callingThread })
+        .pipe(Effect.mapError(refused));
       return {
-        match: Option.getOrNull(Option.map(match, patientSummary)),
-        candidates: candidates.map(patientSummary),
+        match: Option.getOrNull(Option.map(found.match, patientSummary)),
+        candidates: found.candidates.map(patientSummary),
+        relinkedFrom: relinkedFrom(found.relinkedFrom),
       };
     }),
   ),
   patient_create: McpToolAccess.actsAsCaller((input) =>
     Effect.gen(function* () {
       const store = yield* PatientStore.PatientStore;
-      return yield* store
-        .createPatient(input)
-        .pipe(
-          Effect.map(patientDetails),
-          Effect.catchTags({ PatientUrnTakenError: urnTaken }),
-          Effect.mapError(refused),
-        );
+      const created = yield* store
+        .createPatientFromThread({ ...input, threadId: yield* callingThread })
+        .pipe(Effect.catchTags({ PatientUrnTakenError: urnTaken }), Effect.mapError(refused));
+      return {
+        ...patientDetails(created.patient),
+        relinkedFrom: relinkedFrom(created.relinkedFrom),
+      };
     }),
   ),
   patient_update: McpToolAccess.actsAsCaller(({ patientId, ...fields }) =>
@@ -187,35 +208,26 @@ const handlers = {
       };
     }),
   ),
-  patient_verify: McpToolAccess.actsAsCaller(({ patientId, noteId }) =>
+  patient_verify: McpToolAccess.actsAsCaller(() =>
     Effect.gen(function* () {
       const store = yield* PatientStore.PatientStore;
-      if (noteId !== undefined) {
-        return yield* store.verifyNote(noteId).pipe(Effect.mapError(refused));
-      }
-      if (patientId === undefined) {
-        return yield* new OrchestratorMcpFailure({
-          code: "invalid_request",
-          message: "Pass `patientId` for this thread's note, or `noteId`.",
-        });
-      }
       return yield* store
-        .verifyThreadNote({ threadId: yield* callingThread, patientId })
+        .verifyThreadNote({ threadId: yield* callingThread })
         .pipe(Effect.mapError(refused));
     }),
   ),
-  patient_move_note: McpToolAccess.actsAsCaller(({ patientId, noteId }) =>
+  patient_move_note: McpToolAccess.actsAsCaller(({ patientId }) =>
     Effect.gen(function* () {
       const store = yield* PatientStore.PatientStore;
-      const note = yield* (
-        noteId === undefined
-          ? store.moveThreadNoteToPatient({ threadId: yield* callingThread, patientId })
-          : store.moveNoteToPatient({ noteId, patientId })
-      ).pipe(Effect.mapError(refused));
-      const labs = yield* store
-        .listLabs({ patientId, sourceNoteId: note.id })
+      const moved = yield* store
+        .moveThreadNoteToPatient({ threadId: yield* callingThread, patientId })
         .pipe(Effect.mapError(refused));
-      return { noteId: note.id, patientId, labs: labs.map(labResult) };
+      return {
+        noteId: moved.note.id,
+        patientId,
+        labs: moved.labs.map(labResult),
+        relinkedFrom: relinkedFrom(moved.relinkedFrom),
+      };
     }),
   ),
 } satisfies McpToolAccess.Handlers<typeof PatientToolkit.tools>;

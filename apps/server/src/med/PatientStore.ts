@@ -13,7 +13,7 @@ import * as Schema from "effect/Schema";
 import type { SqlError } from "effect/sql/SqlError";
 import type { Fragment } from "effect/sql/Statement";
 
-import { compareToBaseline, resolveTest } from "./labs.ts";
+import { compareToBaseline, normaliseUnit, resolveTest } from "./labs.ts";
 import * as MedDatabase from "./MedDatabase.ts";
 
 const PATIENT_STATUSES = ["new", "active", "archived"] as const;
@@ -69,6 +69,15 @@ export interface LabTest {
 
 export type LabFlag = (typeof LAB_FLAGS)[number];
 
+/** Why a result has no change from baseline. `first_result` is the baseline itself. */
+export type NotComparedReason =
+  | "first_result"
+  | "in_inbox"
+  | "result_has_no_number"
+  | "result_has_no_unit"
+  | "baseline_has_no_unit"
+  | "no_verified_conversion";
+
 export interface Lab {
   readonly id: string;
   readonly patientId: string | null;
@@ -88,6 +97,15 @@ export interface Lab {
   readonly valueInBaselineUnit: number | null;
   readonly changeFromBaseline: number | null;
   readonly changePercent: number | null;
+  /** The baseline result this one was compared with, as written; null when it was not compared. */
+  readonly baseline: {
+    readonly value: number;
+    readonly unit: string;
+    readonly collected: string;
+  } | null;
+  /** The unit `valueInBaselineUnit` and `changeFromBaseline` are in. */
+  readonly changeUnit: string | null;
+  readonly notCompared: NotComparedReason | null;
   readonly lab: string;
   readonly sourceNoteId: string;
   readonly createdAt: string;
@@ -134,13 +152,17 @@ export interface PlanInput {
 export interface ThreadNoteInput {
   readonly threadId: string;
   readonly patientId: string | null;
-  readonly title: string;
+  /** A new note needs one; an existing note keeps its title when none is given. */
+  readonly title?: string | undefined;
   /** Today when a new note gives none; an existing note keeps its date. */
   readonly date?: string | undefined;
   /** What the thread brought; `chat` when a new note gives none. */
   readonly kind?: NoteKind | undefined;
   readonly summary?: string | undefined;
+  /** Added to what the note already asks, one line each; a line it has is not added again. */
   readonly needsYou?: string | undefined;
+  /** Empties what the note asks before `needsYou` is added. */
+  readonly clearNeedsYou?: boolean | undefined;
 }
 
 export interface Plan {
@@ -195,9 +217,18 @@ export class PatientNotFoundError extends Schema.TaggedError<PatientNotFoundErro
   }
 }
 
+/**
+ * Names the patient who holds the URN. The message leaves the name and URN out, because a
+ * failure's message is written to the trace file with the span it ended.
+ */
 export class PatientUrnTakenError extends Schema.TaggedError<PatientUrnTakenError>()(
   "PatientUrnTakenError",
-  { patientId: Schema.String },
+  {
+    patientId: Schema.String,
+    patientName: Schema.String,
+    status: Schema.Literals(PATIENT_STATUSES),
+    urn: Schema.String,
+  },
 ) {
   override get message(): string {
     return `Patient ${this.patientId} already has this URN.`;
@@ -221,6 +252,24 @@ export class ThreadNoteNotFoundError extends Schema.TaggedError<ThreadNoteNotFou
     return this.patientId === null
       ? "This thread has no note in the Inbox."
       : `This thread has filed no note for patient ${this.patientId}.`;
+  }
+}
+
+export class ThreadNotLinkedError extends Schema.TaggedError<ThreadNotLinkedError>()(
+  "ThreadNotLinkedError",
+  { patientId: Schema.String },
+) {
+  override get message(): string {
+    return `This thread is not linked to patient ${this.patientId}; find the patient by URN, create them from a URN, or file to the Inbox.`;
+  }
+}
+
+export class ThreadHasNoPatientError extends Schema.TaggedError<ThreadHasNoPatientError>()(
+  "ThreadHasNoPatientError",
+  {},
+) {
+  override get message(): string {
+    return "This thread is not linked to a patient; find the patient by URN, or move this thread's Inbox note to a patient, before verifying.";
   }
 }
 
@@ -255,6 +304,12 @@ export class InvalidDateError extends Schema.TaggedError<InvalidDateError>()("In
 }) {
   override get message(): string {
     return `${this.field} must be a calendar date written as YYYY-MM-DD.`;
+  }
+}
+
+export class DateRangeError extends Schema.TaggedError<DateRangeError>()("DateRangeError", {}) {
+  override get message(): string {
+    return "from must not be later than to.";
   }
 }
 
@@ -311,6 +366,15 @@ const spellingsAfterRename = (patient: Patient, name: string) =>
 
 const joinText = (kept: string, added: string) =>
   [kept, added].filter((text) => text.trim() !== "").join("\n\n");
+
+// What a note asks the doctor is a list of lines, so a retried filing asks nothing twice.
+const addLines = (kept: string, added: string) => {
+  const known = new Set(kept.split("\n").map((line) => line.trim()));
+  const fresh = [...new Set(added.split("\n").map((line) => line.trim()))].filter(
+    (line) => line !== "" && !known.has(line),
+  );
+  return [kept, ...fresh].filter((text) => text.trim() !== "").join("\n");
+};
 
 // Round-tripping rejects dates the calendar does not have, such as 2026-02-30.
 const isIsoDate = (date: string) =>
@@ -378,6 +442,7 @@ const checkNoteFile = Effect.fnUntraced(function* (file: NoteFileInput, index: n
 });
 
 const checkThreadNote = Effect.fnUntraced(function* (note: ThreadNoteInput) {
+  if (note.title !== undefined) yield* requireText("title", note.title);
   if (note.date !== undefined) yield* requireIsoDate("date", note.date);
   if (note.kind !== undefined) yield* requireChoice("kind", note.kind, NOTE_KINDS);
 });
@@ -400,11 +465,65 @@ const toLabTest = (row: LabTestRow): LabTest => ({
   alsoWrittenAs: splitSpellings(row.alsoWrittenAs),
 });
 
-interface LabRow extends Omit<Lab, "isBaseline"> {
+interface LabRow extends Omit<Lab, "isBaseline" | "baseline" | "changeUnit" | "notCompared"> {
   readonly isBaseline: number;
+  /** The patient's baseline row for the test, when that is another row than this one. */
+  readonly baselineValue: number | null;
+  readonly baselineUnit: string | null;
+  readonly baselineCollected: string | null;
 }
 
-const toLab = (row: LabRow): Lab => ({ ...row, isBaseline: row.isBaseline === 1 });
+const hasNoUnit = (unit: string) => {
+  const normalised = normaliseUnit(unit);
+  return Result.isFailure(normalised) && normalised.failure._tag === "MissingUnitError";
+};
+
+// Read from what `recomputeBaseline` stored, in the order `compareToBaseline` refuses.
+const toLab = ({ baselineValue, baselineUnit, baselineCollected, ...row }: LabRow): Lab => {
+  const baseline =
+    row.valueInBaselineUnit === null ||
+    baselineValue === null ||
+    baselineUnit === null ||
+    baselineCollected === null
+      ? null
+      : { value: baselineValue, unit: baselineUnit, collected: baselineCollected };
+  const notCompared: NotComparedReason | null =
+    baseline !== null
+      ? null
+      : row.patientId === null
+        ? "in_inbox"
+        : row.isBaseline === 1
+          ? "first_result"
+          : row.value === null
+            ? "result_has_no_number"
+            : hasNoUnit(row.unit)
+              ? "result_has_no_unit"
+              : baselineUnit !== null && hasNoUnit(baselineUnit)
+                ? "baseline_has_no_unit"
+                : "no_verified_conversion";
+  return {
+    ...row,
+    isBaseline: row.isBaseline === 1,
+    baseline,
+    changeUnit:
+      baseline === null
+        ? null
+        : Result.getOrElse(normaliseUnit(baseline.unit), () => baseline.unit),
+    notCompared,
+  };
+};
+
+/** The patient a thread was linked to before it was linked to another one. */
+type RelinkedFrom = Option.Option<Patient>;
+
+interface PatientInput {
+  readonly name: string;
+  readonly urn?: string | null | undefined;
+  readonly sex?: PatientSex | null | undefined;
+  readonly dateOfBirth?: string | null | undefined;
+  readonly diagnoses?: string | undefined;
+  readonly alsoWrittenAs?: ReadonlyArray<string> | undefined;
+}
 
 type FilingError =
   | PatientNotFoundError
@@ -429,6 +548,22 @@ export class PatientStore extends Context.Service<
       readonly name?: string | undefined;
     }) => Effect.Effect<
       { readonly match: Option.Option<Patient>; readonly candidates: ReadonlyArray<Patient> },
+      BlankFieldError | PatientStoreError
+    >;
+    /**
+     * `findPatient` for an agent's thread. A URN that matches is evidence of whom the thread is
+     * about, so it links the thread to that patient; a name never links.
+     */
+    readonly findPatientFromThread: (query: {
+      readonly threadId: string;
+      readonly urn?: string | undefined;
+      readonly name?: string | undefined;
+    }) => Effect.Effect<
+      {
+        readonly match: Option.Option<Patient>;
+        readonly candidates: ReadonlyArray<Patient>;
+        readonly relinkedFrom: RelinkedFrom;
+      },
       BlankFieldError | PatientStoreError
     >;
     readonly getPatient: (
@@ -456,14 +591,19 @@ export class PatientStore extends Context.Service<
     readonly searchPatients: (
       query: string,
     ) => Effect.Effect<ReadonlyArray<Patient>, PatientStoreError>;
-    readonly createPatient: (input: {
-      readonly name: string;
-      readonly urn?: string | null | undefined;
-      readonly sex?: PatientSex | null | undefined;
-      readonly dateOfBirth?: string | null | undefined;
-      readonly diagnoses?: string | undefined;
-      readonly alsoWrittenAs?: ReadonlyArray<string> | undefined;
-    }) => Effect.Effect<Patient, PatientUrnTakenError | InputError | PatientStoreError>;
+    readonly createPatient: (
+      input: PatientInput,
+    ) => Effect.Effect<Patient, PatientUrnTakenError | InputError | PatientStoreError>;
+    /**
+     * `createPatient` for an agent's thread: a new URN is the evidence, so it is required, and
+     * the thread is linked to the patient it creates.
+     */
+    readonly createPatientFromThread: (
+      input: PatientInput & { readonly threadId: string; readonly urn: string },
+    ) => Effect.Effect<
+      { readonly patient: Patient; readonly relinkedFrom: RelinkedFrom },
+      PatientUrnTakenError | InputError | PatientStoreError
+    >;
     /** A new name keeps the old one as a spelling. */
     readonly updatePatient: (
       patientId: string,
@@ -488,14 +628,12 @@ export class PatientStore extends Context.Service<
     /** A thread has one note per patient and one more in the Inbox, whatever their kind. */
     readonly upsertThreadNote: (
       input: ThreadNoteInput,
-    ) => Effect.Effect<
-      Note,
-      PatientNotFoundError | InvalidDateError | InvalidChoiceError | PatientStoreError
-    >;
+    ) => Effect.Effect<Note, PatientNotFoundError | InputError | PatientStoreError>;
     /**
      * Files results as drafts of one note in one transaction and sets their baseline fields. The
      * baseline is the patient's earliest-collected numeric result for the test; Inbox results
-     * have none. `patientId` must be the note's patient, or null for a note in the Inbox.
+     * have none. `patientId` must be the note's patient, or null for a note in the Inbox. A result
+     * the note already has (same test, date, value, text and unit) is returned, not filed again.
      */
     readonly fileLabs: (input: {
       readonly patientId: string | null;
@@ -507,6 +645,7 @@ export class PatientStore extends Context.Service<
       filter: RowOwner & { readonly sourceNoteId?: string | undefined },
     ) => Effect.Effect<ReadonlyArray<Lab>, PatientStoreError>;
     readonly listLabTests: () => Effect.Effect<ReadonlyArray<LabTest>, PatientStoreError>;
+    /** A plan the note already has, by title and due date, is returned, not filed again. */
     readonly filePlans: (input: {
       readonly patientId: string | null;
       readonly sourceNoteId: string;
@@ -518,7 +657,7 @@ export class PatientStore extends Context.Service<
     ) => Effect.Effect<ReadonlyArray<Plan>, PatientStoreError>;
     /**
      * Needs you: the notes in the Inbox, and per patient the notes with a question or with draft
-     * labs or plans, each with its draft counts. Latest change first.
+     * labs or plans, each with its draft counts. Latest change first. Archived patients are left out.
      */
     readonly listNeedsYou: () => Effect.Effect<
       {
@@ -533,13 +672,16 @@ export class PatientStore extends Context.Service<
       PatientStoreError
     >;
     /**
-     * Upcoming: draft and planned plans of every patient and of the Inbox, soonest due first,
-     * optionally only those due from `from` to `to`, both included.
+     * Upcoming: draft and planned plans of every patient not archived and of the Inbox, soonest
+     * due first, optionally only those due from `from` to `to`, both included.
      */
     readonly listUpcomingPlans: (range?: {
       readonly from?: string | undefined;
       readonly to?: string | undefined;
-    }) => Effect.Effect<ReadonlyArray<UpcomingPlan>, InvalidDateError | PatientStoreError>;
+    }) => Effect.Effect<
+      ReadonlyArray<UpcomingPlan>,
+      InvalidDateError | DateRangeError | PatientStoreError
+    >;
     /**
      * Gives the note, and the labs and plans filed from it, to a patient; the labs get baselines.
      * When the note's thread already has a note for that patient, the Inbox note is merged
@@ -553,12 +695,16 @@ export class PatientStore extends Context.Service<
       Note,
       NoteNotFoundError | NoteNotInInboxError | PatientNotFoundError | PatientStoreError
     >;
-    /** `moveNoteToPatient` for the Inbox note of a thread. */
+    /** `moveNoteToPatient` for a thread's own Inbox note, with the labs the note then has. */
     readonly moveThreadNoteToPatient: (input: {
       readonly threadId: string;
       readonly patientId: string;
     }) => Effect.Effect<
-      Note,
+      {
+        readonly note: Note;
+        readonly labs: ReadonlyArray<Lab>;
+        readonly relinkedFrom: RelinkedFrom;
+      },
       | ThreadNoteNotFoundError
       | NoteNotFoundError
       | NoteNotInInboxError
@@ -569,18 +715,21 @@ export class PatientStore extends Context.Service<
     readonly verifyNote: (
       noteId: string,
     ) => Effect.Effect<Verified, NoteNotFoundError | NoteInInboxError | PatientStoreError>;
-    /** `verifyNote` for the note a thread has for a patient. */
+    /** `verifyNote` for the note a thread has for the patient it is linked to, and no other. */
     readonly verifyThreadNote: (input: {
       readonly threadId: string;
-      readonly patientId: string;
     }) => Effect.Effect<
       Verified,
-      ThreadNoteNotFoundError | NoteNotFoundError | NoteInInboxError | PatientStoreError
+      | ThreadHasNoPatientError
+      | ThreadNoteNotFoundError
+      | NoteNotFoundError
+      | NoteInInboxError
+      | PatientStoreError
     >;
     /**
      * What an agent files for one message, in one transaction: the thread's note for the patient
-     * (or its Inbox note), the results and plans as drafts of that note, the note's files, and
-     * the link from the thread to the patient when there is one.
+     * (or its Inbox note), the results and plans as drafts of that note, and the note's files.
+     * Filing to a patient needs the thread linked to exactly that patient, and never links it.
      */
     readonly fileFromThread: (
       input: ThreadNoteInput & {
@@ -595,7 +744,7 @@ export class PatientStore extends Context.Service<
         readonly plans: ReadonlyArray<Plan>;
         readonly files: ReadonlyArray<NoteFile>;
       },
-      PatientNotFoundError | InputError | PatientStoreError
+      ThreadNotLinkedError | PatientNotFoundError | InputError | PatientStoreError
     >;
     /** Adds the files the note does not have yet, by path, and returns all it has. */
     readonly addNoteFiles: (input: {
@@ -605,6 +754,7 @@ export class PatientStore extends Context.Service<
       ReadonlyArray<NoteFile>,
       NoteNotFoundError | BlankFieldError | PatientStoreError
     >;
+    /** The doctor's own choice of whom a thread is about; agents link through evidence instead. */
     readonly linkThread: (input: {
       readonly threadId: string;
       readonly patientId: string;
@@ -733,12 +883,23 @@ const make = Effect.gen(function* () {
       l.lab AS "lab",
       l.source_note_id AS "sourceNoteId",
       l.created_at AS "createdAt",
-      l.updated_at AS "updatedAt"
+      l.updated_at AS "updatedAt",
+      b.value AS "baselineValue",
+      b.unit AS "baselineUnit",
+      b.collected AS "baselineCollected"
     FROM labs l
     JOIN lab_tests t ON t.id = l.lab_test_id
+    LEFT JOIN labs b
+      ON b.patient_id = l.patient_id
+      AND b.lab_test_id = l.lab_test_id
+      AND b.is_baseline = 1
+      AND b.id <> l.id
     WHERE ${where}
     ORDER BY l.collected ASC, l.id ASC
-  `.pipe(failedIn("selectLabs:query"));
+  `.pipe(
+      failedIn("selectLabs:query"),
+      Effect.map((rows) => rows.map(toLab)),
+    );
 
   const planColumns = sql`
     pl.id AS "id",
@@ -886,7 +1047,12 @@ const make = Effect.gen(function* () {
     const key = urnKey(written);
     const holder = yield* readPatientByUrnKey(key);
     if (Option.isSome(holder) && holder.value.id !== exceptPatientId) {
-      return yield* new PatientUrnTakenError({ patientId: holder.value.id });
+      return yield* new PatientUrnTakenError({
+        patientId: holder.value.id,
+        patientName: holder.value.name,
+        status: holder.value.status,
+        urn: holder.value.urn ?? written,
+      });
     }
     return { urn: written === "" ? null : written, urn_key: key === "" ? null : key };
   });
@@ -932,7 +1098,9 @@ const make = Effect.gen(function* () {
     if (input.patientId !== null) yield* readPatient(input.patientId);
     const existing = (yield* threadNoteOf(input.threadId, input.patientId))[0];
     const noteId = existing?.id ?? (yield* newId);
+    const asked = input.clearNeedsYou === true ? "" : (existing?.needsYou ?? "");
     if (existing === undefined) {
+      if (input.title === undefined) return yield* new BlankFieldError({ field: "title" });
       yield* sql`
         INSERT INTO notes ${sql.insert({
           id: noteId,
@@ -942,7 +1110,7 @@ const make = Effect.gen(function* () {
           date: input.date ?? (yield* today),
           kind: input.kind ?? "chat",
           summary: input.summary ?? "",
-          needs_you: input.needsYou ?? "",
+          needs_you: addLines(asked, input.needsYou ?? ""),
           created_at: at,
           updated_at: at,
         })}
@@ -950,11 +1118,11 @@ const make = Effect.gen(function* () {
     } else {
       yield* sql`
         UPDATE notes SET ${sql.update({
-          title: input.title,
+          ...(input.title === undefined ? {} : { title: input.title }),
           ...(input.date === undefined ? {} : { date: input.date }),
           ...(input.kind === undefined ? {} : { kind: input.kind }),
           ...(input.summary === undefined ? {} : { summary: input.summary }),
-          ...(input.needsYou === undefined ? {} : { needs_you: input.needsYou }),
+          needs_you: addLines(asked, input.needsYou ?? ""),
           updated_at: at,
         })}
         WHERE id = ${noteId}
@@ -972,9 +1140,26 @@ const make = Effect.gen(function* () {
     results: ReadonlyArray<CheckedLabResult>,
     at: string,
   ) {
-    const filed: Array<{ readonly id: string; readonly labTestId: string }> = [];
+    const filed: Array<string> = [];
+    const added = new Set<string>();
     for (const { category, ...result } of results) {
       const labTestId = yield* catalogueTest(result.test_as_written, category, at);
+      // A retried filing repeats its results; `IS` also matches a result that is not a number.
+      const same = yield* sql<{ readonly id: string }>`
+        SELECT id AS "id" FROM labs
+        WHERE source_note_id = ${sourceNoteId}
+          AND lab_test_id = ${labTestId}
+          AND collected = ${result.collected}
+          AND value IS ${result.value}
+          AND value_text = ${result.value_text}
+          AND unit = ${result.unit}
+        ORDER BY id ASC
+        LIMIT 1
+      `.pipe(failedIn("fileLabs:findSame"));
+      if (same[0] !== undefined) {
+        filed.push(same[0].id);
+        continue;
+      }
       const id = yield* newId;
       yield* sql`
         INSERT INTO labs ${sql.insert({
@@ -988,19 +1173,16 @@ const make = Effect.gen(function* () {
           updated_at: at,
         })}
       `.pipe(failedIn("fileLabs:insert"));
-      filed.push({ id, labTestId });
+      filed.push(id);
+      added.add(labTestId);
     }
     if (filed.length === 0) return [];
-    yield* touchNote(sourceNoteId, at);
-    for (const labTestId of new Set(filed.map((lab) => lab.labTestId))) {
+    if (added.size > 0) yield* touchNote(sourceNoteId, at);
+    for (const labTestId of added) {
       yield* recomputeBaseline(patientId, labTestId);
     }
-    const rows = yield* selectLabs(sql`l.id IN ${sql.in(filed.map((lab) => lab.id))}`);
-    const byId = new Map(rows.map((row) => [row.id, toLab(row)]));
-    return filed.flatMap(({ id }) => {
-      const lab = byId.get(id);
-      return lab === undefined ? [] : [lab];
-    });
+    const labs = yield* selectLabs(sql`l.id IN ${sql.in(filed)}`);
+    return filed.flatMap((id) => labs.filter((lab) => lab.id === id));
   });
 
   const insertPlans = Effect.fn("PatientStore.insertPlans")(function* (
@@ -1010,13 +1192,25 @@ const make = Effect.gen(function* () {
     at: string,
   ) {
     const ids: Array<string> = [];
+    let added = false;
     for (const plan of plans) {
+      const title = plan.title.trim();
+      const same = yield* sql<{ readonly id: string }>`
+        SELECT id AS "id" FROM plans
+        WHERE source_note_id = ${sourceNoteId} AND title = ${title} AND due = ${plan.due}
+        ORDER BY id ASC
+        LIMIT 1
+      `.pipe(failedIn("filePlans:findSame"));
+      if (same[0] !== undefined) {
+        ids.push(same[0].id);
+        continue;
+      }
       const id = yield* newId;
       yield* sql`
         INSERT INTO plans ${sql.insert({
           id,
           patient_id: patientId,
-          title: plan.title.trim(),
+          title,
           due: plan.due,
           type: plan.type,
           status: "draft",
@@ -1026,9 +1220,10 @@ const make = Effect.gen(function* () {
         })}
       `.pipe(failedIn("filePlans:insert"));
       ids.push(id);
+      added = true;
     }
     if (ids.length === 0) return [];
-    yield* touchNote(sourceNoteId, at);
+    if (added) yield* touchNote(sourceNoteId, at);
     const rows = yield* selectPlans(sql`id IN ${sql.in(ids)}`);
     return ids.flatMap((id) => rows.filter((row) => row.id === id));
   });
@@ -1076,6 +1271,29 @@ const make = Effect.gen(function* () {
       ON CONFLICT (thread_id)
       DO UPDATE SET patient_id = excluded.patient_id, updated_at = excluded.updated_at
     `.pipe(failedIn("linkThread:upsert"));
+
+  const readThreadPatient = Effect.fn("PatientStore.readThreadPatient")(function* (
+    threadId: string,
+  ) {
+    const rows = yield* sql<PatientRow>`
+      SELECT ${patientColumns}
+      FROM thread_patients t
+      JOIN patients p ON p.id = t.patient_id
+      WHERE t.thread_id = ${threadId}
+    `.pipe(failedIn("getThreadPatient:query"));
+    return Option.map(Option.fromNullishOr(rows[0]), toPatient);
+  });
+
+  // Links the thread, and returns the patient it was linked to when that was another one.
+  const linkThreadTo = Effect.fn("PatientStore.linkThreadTo")(function* (
+    threadId: string,
+    patientId: string,
+    at: string,
+  ) {
+    const previous = yield* readThreadPatient(threadId);
+    yield* writeThreadLink(threadId, patientId, at);
+    return Option.filter(previous, (patient) => patient.id !== patientId);
+  });
 
   const moveNote = Effect.fn("PatientStore.moveNote")(function* (
     noteId: string,
@@ -1125,8 +1343,11 @@ const make = Effect.gen(function* () {
     for (const labTestId of new Set(tests.map((lab) => lab.labTestId))) {
       yield* recomputeBaseline(patientId, labTestId);
     }
-    if (note.threadId !== null) yield* writeThreadLink(note.threadId, patientId, at);
-    return yield* readNote(keptId);
+    const relinkedFrom =
+      note.threadId === null
+        ? Option.none<Patient>()
+        : yield* linkThreadTo(note.threadId, patientId, at);
+    return { note: yield* readNote(keptId), relinkedFrom };
   });
 
   const requireThreadNote = Effect.fn("PatientStore.requireThreadNote")(function* (
@@ -1176,18 +1397,79 @@ const make = Effect.gen(function* () {
     );
   });
 
-  return PatientStore.of({
-    findPatientByUrn: Effect.fn("PatientStore.findPatientByUrn")(function* (urn) {
-      return yield* readPatientByUrnKey(urnKey(urn));
-    }),
-
-    findPatient: Effect.fn("PatientStore.findPatient")(function* (query) {
+  const findPatient: PatientStore["Service"]["findPatient"] = Effect.fn("PatientStore.findPatient")(
+    function* (query) {
       const urn = query.urn?.trim() ?? "";
       const name = query.name?.trim() ?? "";
       if (urn === "" && name === "") return yield* new BlankFieldError({ field: "urn or name" });
       const match = yield* readPatientByUrnKey(urnKey(urn));
       const candidates = Option.isSome(match) || name === "" ? [] : yield* searchPatients(name);
       return { match, candidates };
+    },
+  );
+
+  const checkPatientInput = Effect.fn("PatientStore.checkPatientInput")(function* (
+    input: PatientInput,
+  ) {
+    yield* requireText("name", input.name);
+    const sex = input.sex ?? null;
+    if (sex !== null) yield* requireChoice("sex", sex, PATIENT_SEXES);
+    const dateOfBirth = input.dateOfBirth ?? null;
+    if (dateOfBirth !== null) yield* requireIsoDate("dateOfBirth", dateOfBirth);
+    const name = tidy(input.name);
+    return {
+      name,
+      urn: input.urn ?? null,
+      sex,
+      date_of_birth: dateOfBirth,
+      diagnoses: input.diagnoses ?? "",
+      also_written_as: (input.alsoWrittenAs ?? [])
+        .reduce<ReadonlyArray<string>>((known, spelling) => addSpelling(known, name, spelling), [])
+        .join("\n"),
+    };
+  });
+
+  const insertPatient = Effect.fn("PatientStore.insertPatient")(function* (
+    { urn, ...columns }: Effect.Success<ReturnType<typeof checkPatientInput>>,
+    at: string,
+  ) {
+    const id = yield* newId;
+    yield* sql`
+      INSERT INTO patients ${sql.insert({
+        id,
+        ...columns,
+        ...(yield* urnColumns(urn)),
+        status: "new",
+        created_at: at,
+        updated_at: at,
+      })}
+    `.pipe(failedIn("createPatient:insert"));
+    // The row was written in this transaction, so only its absence is a defect.
+    return yield* readPatient(id).pipe(
+      Effect.catchTags({ PatientNotFoundError: (error) => Effect.die(error) }),
+    );
+  });
+
+  return PatientStore.of({
+    findPatientByUrn: Effect.fn("PatientStore.findPatientByUrn")(function* (urn) {
+      return yield* readPatientByUrnKey(urnKey(urn));
+    }),
+
+    findPatient,
+
+    findPatientFromThread: Effect.fn("PatientStore.findPatientFromThread")(function* ({
+      threadId,
+      ...query
+    }) {
+      yield* requireText("threadId", threadId);
+      const at = yield* now;
+      return yield* Effect.gen(function* () {
+        const found = yield* findPatient(query);
+        const relinkedFrom = Option.isNone(found.match)
+          ? Option.none<Patient>()
+          : yield* linkThreadTo(threadId, found.match.value.id, at);
+        return { ...found, relinkedFrom };
+      }).pipe(sql.withTransaction, Effect.catchTags(transactionFailure("findPatientFromThread")));
     }),
 
     getPatient: Effect.fn("PatientStore.getPatient")(function* (patientId) {
@@ -1213,7 +1495,7 @@ const make = Effect.gen(function* () {
       );
       return {
         patient,
-        labs: labs.map(toLab),
+        labs,
         plans: yield* selectPlans(sql`patient_id = ${patient.id}`),
         notes: notes.map((note) => ({
           ...note,
@@ -1227,38 +1509,29 @@ const make = Effect.gen(function* () {
     searchPatients,
 
     createPatient: Effect.fn("PatientStore.createPatient")(function* (input) {
-      yield* requireText("name", input.name);
-      const sex = input.sex ?? null;
-      if (sex !== null) yield* requireChoice("sex", sex, PATIENT_SEXES);
-      const dateOfBirth = input.dateOfBirth ?? null;
-      if (dateOfBirth !== null) yield* requireIsoDate("dateOfBirth", dateOfBirth);
-      const id = yield* newId;
+      const checked = yield* checkPatientInput(input);
       const at = yield* now;
-      const name = tidy(input.name);
-      const spellings = (input.alsoWrittenAs ?? []).reduce<ReadonlyArray<string>>(
-        (known, spelling) => addSpelling(known, name, spelling),
-        [],
+      return yield* insertPatient(checked, at).pipe(
+        sql.withTransaction,
+        Effect.catchTags(transactionFailure("createPatient")),
       );
+    }),
+
+    createPatientFromThread: Effect.fn("PatientStore.createPatientFromThread")(function* ({
+      threadId,
+      ...input
+    }) {
+      yield* requireText("threadId", threadId);
+      // A URN with no letter or digit has no key, so nothing could ever match it.
+      if (typeof input.urn !== "string" || urnKey(input.urn) === "") {
+        return yield* new BlankFieldError({ field: "urn" });
+      }
+      const checked = yield* checkPatientInput(input);
+      const at = yield* now;
       return yield* Effect.gen(function* () {
-        yield* sql`
-          INSERT INTO patients ${sql.insert({
-            id,
-            name,
-            ...(yield* urnColumns(input.urn ?? null)),
-            status: "new",
-            sex,
-            date_of_birth: dateOfBirth,
-            diagnoses: input.diagnoses ?? "",
-            also_written_as: spellings.join("\n"),
-            created_at: at,
-            updated_at: at,
-          })}
-        `.pipe(failedIn("createPatient:insert"));
-        // The row was written in this transaction, so only its absence is a defect.
-        return yield* readPatient(id).pipe(
-          Effect.catchTags({ PatientNotFoundError: (error) => Effect.die(error) }),
-        );
-      }).pipe(sql.withTransaction, Effect.catchTags(transactionFailure("createPatient")));
+        const patient = yield* insertPatient(checked, at);
+        return { patient, relinkedFrom: yield* linkThreadTo(threadId, patient.id, at) };
+      }).pipe(sql.withTransaction, Effect.catchTags(transactionFailure("createPatientFromThread")));
     }),
 
     updatePatient: Effect.fn("PatientStore.updatePatient")(function* (patientId, fields) {
@@ -1340,7 +1613,7 @@ const make = Effect.gen(function* () {
     }),
 
     listLabs: Effect.fn("PatientStore.listLabs")(function* (filter) {
-      const rows = yield* selectLabs(
+      return yield* selectLabs(
         sql.and([
           ownedBy(sql`l.patient_id`, filter),
           ...(filter.sourceNoteId === undefined
@@ -1348,7 +1621,6 @@ const make = Effect.gen(function* () {
             : [sql`l.source_note_id = ${filter.sourceNoteId}`]),
         ]),
       );
-      return rows.map(toLab);
     }),
 
     listLabTests,
@@ -1397,7 +1669,7 @@ const make = Effect.gen(function* () {
         inbox: waiting.filter((note) => note.patientId === null),
         patients: patients.flatMap((patient) => {
           const notes = waiting.filter((note) => note.patientId === patient.id);
-          return notes.length === 0
+          return notes.length === 0 || patient.status === "archived"
             ? []
             : [
                 {
@@ -1415,12 +1687,14 @@ const make = Effect.gen(function* () {
       const { from, to } = range;
       if (from !== undefined) yield* requireIsoDate("from", from);
       if (to !== undefined) yield* requireIsoDate("to", to);
+      if (from !== undefined && to !== undefined && from > to) return yield* new DateRangeError();
       return yield* sql<UpcomingPlan>`
         SELECT ${planColumns}, p.name AS "patientName"
         FROM plans pl
         LEFT JOIN patients p ON p.id = pl.patient_id
         WHERE ${sql.and([
           sql`pl.status IN ('draft', 'planned')`,
+          sql`COALESCE(p.status, '') <> 'archived'`,
           ...(from === undefined ? [] : [sql`pl.due >= ${from}`]),
           ...(to === undefined ? [] : [sql`pl.due <= ${to}`]),
         ])}
@@ -1431,6 +1705,7 @@ const make = Effect.gen(function* () {
     moveNoteToPatient: Effect.fn("PatientStore.moveNoteToPatient")(function* (input) {
       const at = yield* now;
       return yield* moveNote(input.noteId, input.patientId, at).pipe(
+        Effect.map((moved) => moved.note),
         sql.withTransaction,
         Effect.catchTags(transactionFailure("moveNoteToPatient")),
       );
@@ -1438,11 +1713,11 @@ const make = Effect.gen(function* () {
 
     moveThreadNoteToPatient: Effect.fn("PatientStore.moveThreadNoteToPatient")(function* (input) {
       const at = yield* now;
-      return yield* requireThreadNote(input.threadId, null).pipe(
-        Effect.flatMap((noteId) => moveNote(noteId, input.patientId, at)),
-        sql.withTransaction,
-        Effect.catchTags(transactionFailure("moveThreadNoteToPatient")),
-      );
+      return yield* Effect.gen(function* () {
+        const noteId = yield* requireThreadNote(input.threadId, null);
+        const moved = yield* moveNote(noteId, input.patientId, at);
+        return { ...moved, labs: yield* selectLabs(sql`l.source_note_id = ${moved.note.id}`) };
+      }).pipe(sql.withTransaction, Effect.catchTags(transactionFailure("moveThreadNoteToPatient")));
     }),
 
     verifyNote: Effect.fn("PatientStore.verifyNote")(function* (noteId) {
@@ -1455,17 +1730,16 @@ const make = Effect.gen(function* () {
 
     verifyThreadNote: Effect.fn("PatientStore.verifyThreadNote")(function* (input) {
       const at = yield* now;
-      return yield* requireThreadNote(input.threadId, input.patientId).pipe(
-        Effect.flatMap((noteId) => verify(noteId, at)),
-        sql.withTransaction,
-        Effect.catchTags(transactionFailure("verifyThreadNote")),
-      );
+      return yield* Effect.gen(function* () {
+        const linked = yield* readThreadPatient(input.threadId);
+        if (Option.isNone(linked)) return yield* new ThreadHasNoPatientError();
+        return yield* verify(yield* requireThreadNote(input.threadId, linked.value.id), at);
+      }).pipe(sql.withTransaction, Effect.catchTags(transactionFailure("verifyThreadNote")));
     }),
 
     fileFromThread: Effect.fn("PatientStore.fileFromThread")(function* (input) {
       const { threadId, patientId } = input;
       yield* requireText("threadId", threadId);
-      yield* requireText("title", input.title);
       yield* checkThreadNote(input);
       const labs = yield* Effect.forEach(input.labs ?? [], (result, index) =>
         checkLabResult(result, index, "labs"),
@@ -1476,15 +1750,19 @@ const make = Effect.gen(function* () {
       yield* Effect.forEach(files, checkNoteFile);
       const at = yield* now;
       return yield* Effect.gen(function* () {
+        if (patientId !== null) {
+          const linked = yield* readThreadPatient(threadId);
+          if (Option.getOrUndefined(linked)?.id !== patientId) {
+            return yield* new ThreadNotLinkedError({ patientId });
+          }
+        }
         const note = yield* writeThreadNote(input, at);
-        const filed = {
+        return {
           note,
           labs: yield* insertLabs(patientId, note.id, labs, at),
           plans: yield* insertPlans(patientId, note.id, plans, at),
           files: yield* insertNoteFiles(note.id, files, at),
         };
-        if (patientId !== null) yield* writeThreadLink(threadId, patientId, at);
-        return filed;
       }).pipe(sql.withTransaction, Effect.catchTags(transactionFailure("fileFromThread")));
     }),
 
@@ -1508,13 +1786,7 @@ const make = Effect.gen(function* () {
     }),
 
     getThreadPatient: Effect.fn("PatientStore.getThreadPatient")(function* (threadId) {
-      const rows = yield* sql<PatientRow>`
-        SELECT ${patientColumns}
-        FROM thread_patients t
-        JOIN patients p ON p.id = t.patient_id
-        WHERE t.thread_id = ${threadId}
-      `.pipe(failedIn("getThreadPatient:query"));
-      return Option.map(Option.fromNullishOr(rows[0]), toPatient);
+      return yield* readThreadPatient(threadId);
     }),
   });
 });

@@ -9,6 +9,8 @@ import * as McpInvocationContext from "../../McpInvocationContext.ts";
 /** What `patient_file` takes as `patientId` to file to the Inbox. */
 export const INBOX = "inbox";
 
+const IsoDate = Schema.String.annotate({ description: "YYYY-MM-DD" });
+
 const patientSummary = {
   patientId: Schema.String,
   name: Schema.String,
@@ -17,13 +19,17 @@ const patientSummary = {
 };
 const PatientSummary = Schema.Struct(patientSummary);
 const sex = Schema.Literals(["female", "male"]);
-const Patient = Schema.Struct({
+const patient = {
   ...patientSummary,
   sex: Schema.NullOr(sex),
   dateOfBirth: Schema.NullOr(Schema.String),
   diagnoses: Schema.String,
   alsoWrittenAs: Schema.Array(Schema.String),
-});
+};
+/** The patient this thread was linked to before the call linked it to another one. */
+const relinkedFrom = Schema.NullOr(
+  Schema.Struct({ patientId: Schema.String, name: Schema.String }),
+);
 
 const flag = Schema.Literals(["low", "normal", "high"]);
 const Lab = Schema.Struct({
@@ -39,9 +45,23 @@ const Lab = Schema.Struct({
   lab: Schema.String,
   status: Schema.Literals(["draft", "verified"]),
   isBaseline: Schema.Boolean,
+  baseline: Schema.NullOr(
+    Schema.Struct({ value: Schema.Number, unit: Schema.String, collected: Schema.String }),
+  ),
   valueInBaselineUnit: Schema.NullOr(Schema.Number),
   changeFromBaseline: Schema.NullOr(Schema.Number),
+  changeUnit: Schema.NullOr(Schema.String),
   changePercent: Schema.NullOr(Schema.Number),
+  notCompared: Schema.NullOr(
+    Schema.Literals([
+      "first_result",
+      "in_inbox",
+      "result_has_no_number",
+      "result_has_no_unit",
+      "baseline_has_no_unit",
+      "no_verified_conversion",
+    ]),
+  ),
   noteId: Schema.String,
 });
 
@@ -84,9 +104,9 @@ const writing = {
 };
 
 const PatientFindTool = Tool.make("patient_find", {
-  ...reading,
+  ...writing,
   description:
-    "Look a patient up before filing. A `urn` finds its patient as `match`, exactly; a `name` only lists `candidates`, which never decide whom a message is about.",
+    "Call this first when a message is about a patient, with the URN when the message gives one. A `urn` that matches links this thread to that patient as `match`; a `name` only lists `candidates` for the doctor to choose from, and never links.",
   parameters: Schema.Struct({
     urn: Schema.optional(Schema.String),
     name: Schema.optional(Schema.String),
@@ -94,25 +114,25 @@ const PatientFindTool = Tool.make("patient_find", {
   success: Schema.Struct({
     match: Schema.NullOr(PatientSummary),
     candidates: Schema.Array(PatientSummary),
+    relinkedFrom,
   }),
 })
-  .annotate(Tool.Readonly, true)
+  .annotate(Tool.Strict, true)
   .annotate(Tool.Destructive, false)
   .annotate(Tool.OpenWorld, false);
 
 const patientFields = {
-  urn: Schema.optional(Schema.String),
   sex: Schema.optional(sex),
-  dateOfBirth: Schema.optional(Schema.String),
+  dateOfBirth: Schema.optional(IsoDate),
   diagnoses: Schema.optional(Schema.String),
 };
 
 const PatientCreateTool = Tool.make("patient_create", {
   ...writing,
   description:
-    "Create a patient, marked new, when a message gives a URN that `patient_find` did not match. A URN that belongs to a patient is refused, and the refusal names that patient.",
-  parameters: Schema.Struct({ name: Schema.String, ...patientFields }),
-  success: Patient,
+    "Call this when a message gives a URN that `patient_find` did not match. It creates the patient, marked new, and links this thread to them.",
+  parameters: Schema.Struct({ name: Schema.String, urn: Schema.String, ...patientFields }),
+  success: Schema.Struct({ ...patient, relinkedFrom }),
 })
   .annotate(Tool.Strict, true)
   .annotate(Tool.Destructive, false)
@@ -121,14 +141,15 @@ const PatientCreateTool = Tool.make("patient_create", {
 const PatientUpdateTool = Tool.make("patient_update", {
   ...writing,
   description:
-    "Correct a patient's details, or add another way the name is written with `addSpelling`.",
+    "Call this when the doctor corrects a patient's details, or when a message writes the patient's name another way (`addSpelling`).",
   parameters: Schema.Struct({
     patientId: Schema.String,
     name: Schema.optional(Schema.String),
+    urn: Schema.optional(Schema.String),
     ...patientFields,
     addSpelling: Schema.optional(Schema.String),
   }),
-  success: Patient,
+  success: Schema.Struct(patient),
 })
   .annotate(Tool.Strict, true)
   .annotate(Tool.OpenWorld, false);
@@ -136,14 +157,28 @@ const PatientUpdateTool = Tool.make("patient_update", {
 const PatientFileTool = Tool.make("patient_file", {
   ...writing,
   description:
-    "File what a message says about a patient, once per message and without asking first: this thread's note with its labs, plans and source files, all as drafts. `patientId` is a patient's id, or `inbox` when no URN matched, with the candidates in `needsYou`; `summary` and `needsYou` replace the note's, and each lab returns its change from baseline, so never calculate it.",
+    "Call this once for each message that carries patient data, without asking first, to file its labs, plans and source files as drafts on this thread's note. A retry files nothing twice.",
   parameters: Schema.Struct({
-    patientId: Schema.String,
-    title: Schema.String,
-    summary: Schema.optional(Schema.String),
-    needsYou: Schema.optional(Schema.String),
+    patientId: Schema.String.annotate({
+      description: "The patient this thread is linked to, or `inbox` when no URN matched.",
+    }),
+    title: Schema.optional(
+      Schema.String.annotate({ description: "Needed for the thread's first filing." }),
+    ),
+    summary: Schema.optional(
+      Schema.String.annotate({ description: "Replaces the note's summary." }),
+    ),
+    needsYou: Schema.optional(
+      Schema.String.annotate({
+        description:
+          "A question for the doctor, added to those the note has; for the Inbox, the candidates.",
+      }),
+    ),
+    clearNeedsYou: Schema.optional(
+      Schema.Boolean.annotate({ description: "True once the doctor has answered." }),
+    ),
     kind: Schema.optional(noteKind),
-    date: Schema.optional(Schema.String),
+    date: Schema.optional(IsoDate),
     labs: Schema.optional(
       Schema.Array(
         Schema.Struct({
@@ -153,13 +188,16 @@ const PatientFileTool = Tool.make("patient_file", {
           unit: Schema.optional(Schema.String),
           referenceRange: Schema.optional(Schema.String),
           flag: Schema.optional(flag),
-          collected: Schema.String,
+          collected: IsoDate,
           lab: Schema.optional(Schema.String),
         }),
-      ),
+      ).annotate({
+        description:
+          "Results as the sheet writes them. The reply gives each one's change from baseline; never calculate it.",
+      }),
     ),
     plans: Schema.optional(
-      Schema.Array(Schema.Struct({ title: Schema.String, due: Schema.String, type: planType })),
+      Schema.Array(Schema.Struct({ title: Schema.String, due: IsoDate, type: planType })),
     ),
     files: Schema.optional(Schema.Array(noteFile)),
   }),
@@ -177,15 +215,16 @@ const PatientFileTool = Tool.make("patient_file", {
 const PatientRecordTool = Tool.make("patient_record", {
   ...reading,
   description:
-    "Read what is filed for a patient: details, labs oldest first, plans and notes. `test`, a test name or Test ID, keeps one test's labs.",
+    "Call this when the doctor asks what is filed for a patient: details, labs oldest first, plans and notes. Pass `test`, a test name or Test ID, for one test's labs only.",
   parameters: Schema.Struct({ patientId: Schema.String, test: Schema.optional(Schema.String) }),
   success: Schema.Struct({
-    patient: Patient,
+    patient: Schema.Struct(patient),
     labs: Schema.Array(Lab),
     plans: Schema.Array(Plan),
     notes: Schema.Array(Schema.Struct({ ...note, files: Schema.Array(noteFile) })),
   }),
 })
+  .annotate(Tool.Strict, true)
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false)
   .annotate(Tool.OpenWorld, false);
@@ -193,7 +232,7 @@ const PatientRecordTool = Tool.make("patient_record", {
 const PatientReviewTool = Tool.make("patient_review", {
   ...reading,
   description:
-    "List what waits for the doctor: Inbox notes, notes with `needsYou`, and each patient's draft labs and plans.",
+    "Call this when the doctor asks what is waiting for them: Inbox notes, notes with a question in `needsYou`, and each patient's unverified drafts.",
   success: Schema.Struct({
     inbox: Schema.Array(WaitingNote),
     patients: Schema.Array(
@@ -206,6 +245,7 @@ const PatientReviewTool = Tool.make("patient_review", {
     ),
   }),
 })
+  .annotate(Tool.Strict, true)
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false)
   .annotate(Tool.OpenWorld, false);
@@ -213,10 +253,10 @@ const PatientReviewTool = Tool.make("patient_review", {
 const PatientUpcomingTool = Tool.make("patient_upcoming", {
   ...reading,
   description:
-    "List plans not yet done, soonest due first, with each patient's name, optionally only those due between `from` and `to`.",
+    "Call this when the doctor asks what is planned or due: plans not yet done, soonest first, with each patient's name. Pass `from` and `to` for a period.",
   parameters: Schema.Struct({
-    from: Schema.optional(Schema.String),
-    to: Schema.optional(Schema.String),
+    from: Schema.optional(IsoDate),
+    to: Schema.optional(IsoDate),
   }),
   success: Schema.Struct({
     plans: Schema.Array(
@@ -228,6 +268,7 @@ const PatientUpcomingTool = Tool.make("patient_upcoming", {
     ),
   }),
 })
+  .annotate(Tool.Strict, true)
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false)
   .annotate(Tool.OpenWorld, false);
@@ -235,11 +276,7 @@ const PatientUpcomingTool = Tool.make("patient_upcoming", {
 const PatientVerifyTool = Tool.make("patient_verify", {
   ...writing,
   description:
-    "Mark a note's drafts as verified, only after the doctor says what was filed is correct. Give `patientId` for this thread's note for that patient, or a `noteId`.",
-  parameters: Schema.Struct({
-    patientId: Schema.optional(Schema.String),
-    noteId: Schema.optional(Schema.String),
-  }),
+    "Call this only after the doctor says that what this thread filed is correct. It verifies the drafts on this thread's note for the patient the thread is linked to.",
   success: Schema.Struct({
     labsVerified: Schema.Number,
     plansPlanned: Schema.Number,
@@ -252,12 +289,13 @@ const PatientVerifyTool = Tool.make("patient_verify", {
 const PatientMoveNoteTool = Tool.make("patient_move_note", {
   ...writing,
   description:
-    "Give an Inbox note to a patient once the doctor says whose it is; its labs then get baselines and its thread is linked. Without `noteId` it moves this thread's Inbox note.",
-  parameters: Schema.Struct({ patientId: Schema.String, noteId: Schema.optional(Schema.String) }),
+    "Call this when the doctor says which patient this thread's Inbox note belongs to. It moves the note with its labs and plans to that patient, sets the labs' baselines, and links this thread to them.",
+  parameters: Schema.Struct({ patientId: Schema.String }),
   success: Schema.Struct({
     noteId: Schema.String,
     patientId: Schema.String,
     labs: Schema.Array(Lab),
+    relinkedFrom,
   }),
 })
   .annotate(Tool.Strict, true)

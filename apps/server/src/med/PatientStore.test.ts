@@ -43,6 +43,17 @@ const chatNote = (
   threadId = "thread-1",
 ) => store.upsertThreadNote({ threadId, patientId, title: "Visit", date: "2026-11-11" });
 
+type Store = PatientStore.PatientStore["Service"];
+
+// Filing needs the thread linked to the patient; the doctor's own link stands in for a URN here.
+const fileLinked = (
+  store: Store,
+  input: Parameters<Store["fileFromThread"]>[0] & { readonly patientId: string },
+) =>
+  store
+    .linkThread({ threadId: input.threadId, patientId: input.patientId })
+    .pipe(Effect.andThen(store.fileFromThread(input)));
+
 it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("PatientStore", (it) => {
   it("builds the same URN key however the URN is punctuated", () => {
     assert.strictEqual(PatientStore.urnKey("00-12-34-56"), "00123456");
@@ -1160,10 +1171,14 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("PatientStore", (
     }).pipe(Effect.provide(layerStore)),
   );
 
-  it.effect("files a thread's message in one step: note, labs, plans, files and the link", () =>
+  it.effect("files a linked thread's message in one step: note, labs, plans and files", () =>
     Effect.gen(function* () {
       const store = yield* PatientStore.PatientStore;
-      const patient = yield* store.createPatient({ name: "Wayan", urn: "00-12-34-56" });
+      const { patient } = yield* store.createPatientFromThread({
+        threadId: "thread-1",
+        name: "Wayan",
+        urn: "00-12-34-56",
+      });
       const message = { threadId: "thread-1", patientId: patient.id, title: "Lipid follow-up" };
       const sheet = { name: "lipid-panel.pdf", path: "patient-files/lipid-panel.pdf" };
 
@@ -1287,7 +1302,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("PatientStore", (
         "kind",
       ]);
       assert.deepStrictEqual(yield* refused({ patientId: "missing", labs: [ldl] }), [
-        "PatientNotFoundError",
+        "ThreadNotLinkedError",
         undefined,
       ]);
       assert.deepStrictEqual(yield* sql`SELECT id FROM notes WHERE thread_id = 'thread-2'`, []);
@@ -1302,7 +1317,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("PatientStore", (
       const other = yield* store.createPatient({ name: "Made" });
       const ldl = { testAsWritten: "LDL", value: 100, unit: "mg/dL", collected: "2026-04-10" };
       const sheet = { name: "lipid-panel.pdf", path: "patient-files/lipid-panel.pdf" };
-      const first = yield* store.fileFromThread({
+      const first = yield* fileLinked(store, {
         threadId: "thread-1",
         patientId: patient.id,
         title: "First visit",
@@ -1318,7 +1333,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("PatientStore", (
         ],
         files: [sheet],
       });
-      const second = yield* store.fileFromThread({
+      const second = yield* fileLinked(store, {
         threadId: "thread-2",
         patientId: patient.id,
         title: "Follow-up",
@@ -1326,7 +1341,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("PatientStore", (
         labs: [ldl, { testAsWritten: "HbA1c", value: 6.5, unit: "%", collected: "2026-04-10" }],
         plans: [{ title: "Repeat lipid panel", due: "2026-07-01", type: "lab" }],
       });
-      yield* store.fileFromThread({
+      yield* fileLinked(store, {
         threadId: "thread-3",
         patientId: other.id,
         title: "Someone else",
@@ -1382,7 +1397,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("PatientStore", (
       const sql = yield* MedDatabase.MedDatabase;
       const wayan = yield* store.createPatient({ name: "Wayan" });
       const made = yield* store.createPatient({ name: "Made" });
-      const verified = yield* store.fileFromThread({
+      const verified = yield* fileLinked(store, {
         threadId: "thread-1",
         patientId: wayan.id,
         title: "Visit",
@@ -1393,7 +1408,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("PatientStore", (
       });
       yield* store.verifyNote(verified.note.id);
       yield* sql`UPDATE plans SET status = 'done' WHERE title = 'MRI brain'`;
-      yield* store.fileFromThread({
+      yield* fileLinked(store, {
         threadId: "thread-2",
         patientId: made.id,
         title: "Visit",
@@ -1425,6 +1440,15 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("PatientStore", (
         "InvalidDateError",
         "from",
       ]);
+      assert.deepStrictEqual(yield* upcoming({ from: "2026-11-25", to: "2026-11-25" }), [visit]);
+      const backwards = yield* store
+        .listUpcomingPlans({ from: "2026-12-01", to: "2026-11-01" })
+        .pipe(Effect.flip);
+      assert.strictEqual(backwards._tag, "DateRangeError");
+      assert.strictEqual(backwards.message, "from must not be later than to.");
+
+      yield* store.updatePatient(made.id, { status: "archived" });
+      assert.deepStrictEqual(yield* upcoming(), [eeg, lipids]);
     }).pipe(Effect.provide(layerStore)),
   );
 
@@ -1437,27 +1461,27 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("PatientStore", (
       const ldl = { testAsWritten: "LDL", value: 100, unit: "mg/dL", collected: "2026-04-10" };
       const plan = { title: "Clinic visit", due: "2026-11-25", type: "follow_up" } as const;
       const message = { title: "Visit", date: "2026-11-11" };
-      const drafts = yield* store.fileFromThread({
+      const drafts = yield* fileLinked(store, {
         ...message,
         threadId: "thread-1",
         patientId: wayan.id,
         labs: [ldl, { ...ldl, testAsWritten: "HDL" }],
         plans: [plan],
       });
-      const cleared = yield* store.fileFromThread({
+      const cleared = yield* fileLinked(store, {
         ...message,
         threadId: "thread-2",
         patientId: wayan.id,
         labs: [ldl],
       });
       yield* store.verifyNote(cleared.note.id);
-      const question = yield* store.fileFromThread({
+      const question = yield* fileLinked(store, {
         ...message,
         threadId: "thread-3",
         patientId: made.id,
         needsYou: "Is the HbA1c unit % or mmol/mol?",
       });
-      yield* store.fileFromThread({ ...message, threadId: "thread-4", patientId: quiet.id });
+      yield* fileLinked(store, { ...message, threadId: "thread-4", patientId: quiet.id });
       const inbox = yield* store.fileFromThread({
         ...message,
         threadId: "thread-5",
@@ -1496,13 +1520,22 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("PatientStore", (
           },
         ],
       );
+
+      yield* store.updatePatient(wayan.id, { status: "archived" });
+      const afterArchiving = yield* store.listNeedsYou();
+      assert.deepStrictEqual(
+        afterArchiving.patients.map(({ patient }) => patient.name),
+        ["Made"],
+      );
+      assert.strictEqual(afterArchiving.inbox.length, 1);
     }).pipe(Effect.provide(layerStore)),
   );
 
-  it.effect("moves and verifies the note a thread has, found by the thread", () =>
+  it.effect("moves a thread's own Inbox note, and verifies its note for the linked patient", () =>
     Effect.gen(function* () {
       const store = yield* PatientStore.PatientStore;
       const patient = yield* store.createPatient({ name: "Wayan" });
+      const other = yield* store.createPatient({ name: "Made" });
       const ldl = { testAsWritten: "LDL", value: 100, unit: "mg/dL", collected: "2026-04-10" };
       const inbox = yield* store.fileFromThread({
         threadId: "thread-1",
@@ -1510,31 +1543,47 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("PatientStore", (
         title: "Unknown patient",
         labs: [{ ...ldl, value: 200, collected: "2026-01-10" }],
       });
-      yield* store.fileFromThread({
+      const elsewhere = yield* fileLinked(store, {
         threadId: "thread-2",
         patientId: patient.id,
         title: "Visit",
         labs: [ldl],
       });
-      const ofThread = { threadId: "thread-1", patientId: patient.id };
+      const toPatient = { threadId: "thread-1", patientId: patient.id };
 
+      // Nothing links thread-1 yet, and thread-3 has filed nothing at all.
+      const unlinked = yield* store.verifyThreadNote({ threadId: "thread-1" }).pipe(Effect.flip);
+      assert.strictEqual(unlinked._tag, "ThreadHasNoPatientError");
       assert.strictEqual(
-        yield* failureTag(store.verifyThreadNote(ofThread)),
+        unlinked.message,
+        "This thread is not linked to a patient; find the patient by URN, or move this thread's Inbox note to a patient, before verifying.",
+      );
+      assert.strictEqual(
+        yield* failureTag(
+          store.moveThreadNoteToPatient({ threadId: "thread-3", patientId: patient.id }),
+        ),
         "ThreadNoteNotFoundError",
       );
-      assert.deepInclude(yield* store.moveThreadNoteToPatient(ofThread), {
-        id: inbox.note.id,
-        patientId: patient.id,
-      });
+      assert.strictEqual((yield* store.listLabs({ inbox: true })).length, 1);
+
+      const moved = yield* store.moveThreadNoteToPatient(toPatient);
+      assert.deepInclude(moved.note, { id: inbox.note.id, patientId: patient.id });
+      assert.deepStrictEqual(
+        moved.labs.map((lab) => [lab.collected, lab.isBaseline, lab.sourceNoteId]),
+        [["2026-01-10", true, inbox.note.id]],
+      );
+      assert.isTrue(Option.isNone(moved.relinkedFrom));
       assert.deepStrictEqual(
         Option.map(yield* store.getThreadPatient("thread-1"), (linked) => linked.id),
         Option.some(patient.id),
       );
       assert.strictEqual(
-        yield* failureTag(store.moveThreadNoteToPatient(ofThread)),
+        yield* failureTag(store.moveThreadNoteToPatient(toPatient)),
         "ThreadNoteNotFoundError",
       );
-      assert.deepStrictEqual(yield* store.verifyThreadNote(ofThread), {
+
+      // Only this thread's note is verified: thread-2's result for the same patient stays a draft.
+      assert.deepStrictEqual(yield* store.verifyThreadNote({ threadId: "thread-1" }), {
         labsVerified: 1,
         plansPlanned: 0,
         patientActivated: true,
@@ -1545,12 +1594,350 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("PatientStore", (
           lab.status,
           lab.isBaseline,
           lab.changeFromBaseline,
+          lab.sourceNoteId,
         ]),
         [
-          ["2026-01-10", "verified", true, null],
-          ["2026-04-10", "draft", false, -100],
+          ["2026-01-10", "verified", true, null, inbox.note.id],
+          ["2026-04-10", "draft", false, -100, elsewhere.note.id],
         ],
       );
+
+      // A thread linked to a patient it has filed nothing for has no note to verify.
+      yield* store.linkThread({ threadId: "thread-1", patientId: other.id });
+      const noNote = yield* store.verifyThreadNote({ threadId: "thread-1" }).pipe(Effect.flip);
+      assert.strictEqual(noNote._tag, "ThreadNoteNotFoundError");
+      assert.strictEqual(noNote.message, `This thread has filed no note for patient ${other.id}.`);
+
+      // Moving a later Inbox note says which patient the thread was linked to before.
+      yield* store.fileFromThread({ threadId: "thread-1", patientId: null, title: "Another" });
+      const again = yield* store.moveThreadNoteToPatient(toPatient);
+      assert.deepStrictEqual(
+        Option.map(again.relinkedFrom, (previous) => previous.id),
+        Option.some(other.id),
+      );
+    }).pipe(Effect.provide(layerStore)),
+  );
+
+  it.effect(
+    "links a thread by an exact URN or by a patient created from one, never by a name",
+    () =>
+      Effect.gen(function* () {
+        const store = yield* PatientStore.PatientStore;
+        const wayan = yield* store.createPatient({ name: "Wayan Sudarma", urn: "00-12-34-56" });
+        const linked = (threadId: string) =>
+          store
+            .getThreadPatient(threadId)
+            .pipe(Effect.map(Option.map((patient: PatientStore.Patient) => patient.id)));
+        const find = (query: { readonly urn?: string; readonly name?: string }) =>
+          store.findPatientFromThread({ threadId: "thread-1", ...query }).pipe(
+            Effect.map((found) => ({
+              match: Option.getOrNull(Option.map(found.match, (patient) => patient.id)),
+              candidates: found.candidates.map((patient) => patient.id),
+              relinkedFrom: Option.getOrNull(
+                Option.map(found.relinkedFrom, (patient) => patient.name),
+              ),
+            })),
+          );
+
+        assert.deepStrictEqual(yield* find({ name: "wayan" }), {
+          match: null,
+          candidates: [wayan.id],
+          relinkedFrom: null,
+        });
+        assert.deepStrictEqual(yield* find({ urn: "99-99", name: "wayan" }), {
+          match: null,
+          candidates: [wayan.id],
+          relinkedFrom: null,
+        });
+        assert.deepStrictEqual(yield* linked("thread-1"), Option.none());
+
+        const matched = { match: wayan.id, candidates: [], relinkedFrom: null };
+        assert.deepStrictEqual(yield* find({ urn: "00123456" }), matched);
+        assert.deepStrictEqual(yield* linked("thread-1"), Option.some(wayan.id));
+        assert.deepStrictEqual(yield* find({ urn: "00 12 34 56" }), matched);
+        assert.deepStrictEqual(
+          yield* refusedField(store.findPatientFromThread({ threadId: "t" })),
+          ["BlankFieldError", "urn or name"],
+        );
+
+        // A patient created from a new URN takes the thread over, and says whom it left.
+        const created = yield* store.createPatientFromThread({
+          threadId: "thread-1",
+          name: "Ni Made Ayu",
+          urn: "00-77-88-99",
+          sex: "female",
+        });
+        assert.deepInclude(created.patient, { name: "Ni Made Ayu", status: "new", sex: "female" });
+        assert.strictEqual(created.patient.urnKey, "00778899");
+        assert.deepStrictEqual(
+          Option.map(created.relinkedFrom, (previous) => [previous.id, previous.name]),
+          Option.some([wayan.id, "Wayan Sudarma"]),
+        );
+        assert.deepStrictEqual(yield* linked("thread-1"), Option.some(created.patient.id));
+        assert.deepStrictEqual(yield* find({ urn: "00-12-34-56" }), {
+          ...matched,
+          relinkedFrom: "Ni Made Ayu",
+        });
+
+        // Without a URN there is no evidence to create a patient on, and a taken URN names its holder.
+        const create = (urn: string) =>
+          store.createPatientFromThread({ threadId: "thread-2", name: "Someone", urn });
+        assert.deepStrictEqual(yield* refusedField(create(" ")), ["BlankFieldError", "urn"]);
+        assert.deepStrictEqual(yield* refusedField(create("--")), ["BlankFieldError", "urn"]);
+        const taken = yield* create("00.12.34.56").pipe(Effect.flip);
+        assert.deepInclude(taken, {
+          _tag: "PatientUrnTakenError",
+          patientId: wayan.id,
+          patientName: "Wayan Sudarma",
+          status: "new",
+          urn: "00-12-34-56",
+        });
+        assert.deepStrictEqual(yield* linked("thread-2"), Option.none());
+        assert.strictEqual((yield* store.listPatients()).length, 2);
+      }).pipe(Effect.provide(layerStore)),
+  );
+
+  it.effect("files to a patient only from a thread linked to that patient, and never links", () =>
+    Effect.gen(function* () {
+      const store = yield* PatientStore.PatientStore;
+      const wayan = yield* store.createPatient({ name: "Wayan Sudarma", urn: "00-12-34-56" });
+      const made = yield* store.createPatient({ name: "Made" });
+      const ldl = { testAsWritten: "LDL", value: 100, unit: "mg/dL", collected: "2026-04-10" };
+      const file = (patientId: string | null) =>
+        store.fileFromThread({ threadId: "thread-1", patientId, title: "Visit", labs: [ldl] });
+      const refusal = (patientId: string) =>
+        `This thread is not linked to patient ${patientId}; find the patient by URN, create them from a URN, or file to the Inbox.`;
+
+      // A name's candidate is not evidence: the thread is linked to nobody.
+      const candidate = (yield* store.findPatientFromThread({ threadId: "thread-1", name: "made" }))
+        .candidates[0]!;
+      const toCandidate = yield* file(candidate.id).pipe(Effect.flip);
+      assert.strictEqual(toCandidate._tag, "ThreadNotLinkedError");
+      assert.strictEqual(toCandidate.message, refusal(made.id));
+      assert.isTrue(Option.isNone(yield* store.getThreadPatient("thread-1")));
+
+      // Linked to Wayan, the thread files to Wayan and is refused for Made.
+      yield* store.findPatientFromThread({ threadId: "thread-1", urn: "00-12-34-56" });
+      assert.strictEqual((yield* file(wayan.id)).note.patientId, wayan.id);
+      const toOther = yield* file(made.id).pipe(Effect.flip);
+      assert.strictEqual(toOther.message, refusal(made.id));
+      assert.deepStrictEqual(
+        Option.map(yield* store.getThreadPatient("thread-1"), (linked) => linked.id),
+        Option.some(wayan.id),
+      );
+      assert.deepStrictEqual(yield* store.listLabs({ patientId: made.id }), []);
+      assert.strictEqual((yield* store.listLabs({ patientId: wayan.id })).length, 1);
+
+      // The Inbox is always open, and filing there changes no link.
+      assert.strictEqual((yield* file(null)).note.patientId, null);
+      assert.deepStrictEqual(
+        Option.map(yield* store.getThreadPatient("thread-1"), (linked) => linked.id),
+        Option.some(wayan.id),
+      );
+    }).pipe(Effect.provide(layerStore)),
+  );
+
+  it.effect("files a repeated lab or plan once and returns the row it already has", () =>
+    Effect.gen(function* () {
+      const store = yield* PatientStore.PatientStore;
+      const patient = yield* store.createPatient({ name: "Wayan" });
+      const ldl = { testAsWritten: "LDL", value: 190, unit: "mg/dL", collected: "2026-01-10" };
+      const antibody = {
+        testAsWritten: "Anti-dsDNA",
+        value: null,
+        valueText: "negative",
+        collected: "2026-01-10",
+      };
+      const plan = { title: "Repeat lipid panel", due: "2026-12-01", type: "lab" } as const;
+      const message = {
+        threadId: "thread-1",
+        patientId: patient.id,
+        title: "Lipid follow-up",
+        labs: [ldl, antibody],
+        plans: [plan],
+      };
+      const ids = (rows: ReadonlyArray<{ readonly id: string }>) => rows.map((row) => row.id);
+
+      const first = yield* fileLinked(store, message);
+      // The same message again, as an agent sends it after a timeout; LDL-C is the same test.
+      const retry = yield* store.fileFromThread({
+        ...message,
+        labs: [{ ...ldl, testAsWritten: "LDL-C" }, antibody],
+      });
+
+      assert.deepStrictEqual(ids(retry.labs), ids(first.labs));
+      assert.deepStrictEqual(ids(retry.plans), ids(first.plans));
+      assert.strictEqual((yield* store.listLabs({ patientId: patient.id })).length, 2);
+      assert.strictEqual((yield* store.listPlans({ patientId: patient.id })).length, 1);
+
+      // Another value, text, unit, date or due date is another row; a repeat inside one call is not.
+      const changed = yield* store.fileFromThread({
+        ...message,
+        labs: [
+          { ...ldl, value: 191 },
+          { ...ldl, valueText: "190,0" },
+          { ...ldl, unit: "mg%" },
+          { ...ldl, collected: "2026-01-11" },
+          { ...ldl, collected: "2026-01-11" },
+          { ...antibody, valueText: "positive" },
+        ],
+        plans: [
+          { ...plan, due: "2026-12-02" },
+          { ...plan, title: " Repeat lipid panel ", type: "follow_up" },
+        ],
+      });
+      assert.strictEqual(new Set([...ids(first.labs), ...ids(changed.labs)]).size, 7);
+      assert.strictEqual(changed.labs[3]!.id, changed.labs[4]!.id);
+      assert.strictEqual((yield* store.listLabs({ patientId: patient.id })).length, 7);
+      assert.deepStrictEqual(
+        (yield* store.listPlans({ patientId: patient.id })).map((filed) => [filed.due, filed.type]),
+        [
+          ["2026-12-01", "lab"],
+          ["2026-12-02", "lab"],
+        ],
+      );
+      assert.strictEqual(changed.plans[1]!.id, first.plans[0]!.id);
+
+      // The same result on another thread's note is that note's own row.
+      const elsewhere = yield* fileLinked(store, { ...message, threadId: "thread-2" });
+      assert.notStrictEqual(elsewhere.labs[0]!.id, first.labs[0]!.id);
+      assert.strictEqual((yield* store.listLabs({ patientId: patient.id })).length, 9);
+    }).pipe(Effect.provide(layerStore)),
+  );
+
+  it.effect("adds each filing's question to needsYou, and keeps the title it has", () =>
+    Effect.gen(function* () {
+      const store = yield* PatientStore.PatientStore;
+      const file = (input: Partial<Parameters<Store["fileFromThread"]>[0]>) =>
+        store
+          .fileFromThread({ threadId: "thread-1", patientId: null, ...input })
+          .pipe(Effect.map(({ note }) => [note.title, note.summary, note.needsYou]));
+      const unit = "Is the HbA1c unit % or mmol/mol?";
+      const whose = "Named only as Wayan.";
+
+      assert.deepStrictEqual(yield* refusedField(file({ summary: "No title yet." })), [
+        "BlankFieldError",
+        "title",
+      ]);
+      assert.deepStrictEqual(
+        yield* file({ title: "Lab sheet", summary: "First.", needsYou: unit }),
+        ["Lab sheet", "First.", unit],
+      );
+      // A later filing without a title or summary changes neither; its question is one more line.
+      assert.deepStrictEqual(yield* file({ needsYou: whose }), [
+        "Lab sheet",
+        "First.",
+        `${unit}\n${whose}`,
+      ]);
+      assert.deepStrictEqual(yield* file({ needsYou: ` ${unit} `, summary: "Second." }), [
+        "Lab sheet",
+        "Second.",
+        `${unit}\n${whose}`,
+      ]);
+      assert.deepStrictEqual(yield* file({ title: "Lipid sheet" }), [
+        "Lipid sheet",
+        "Second.",
+        `${unit}\n${whose}`,
+      ]);
+      assert.deepStrictEqual(yield* refusedField(file({ title: " " })), [
+        "BlankFieldError",
+        "title",
+      ]);
+
+      // Only an explicit clear empties it; with a question, the question is all that is left.
+      assert.deepStrictEqual(yield* file({ clearNeedsYou: true, needsYou: whose }), [
+        "Lipid sheet",
+        "Second.",
+        whose,
+      ]);
+      assert.deepStrictEqual(yield* file({ clearNeedsYou: false }), [
+        "Lipid sheet",
+        "Second.",
+        whose,
+      ]);
+      assert.deepStrictEqual(yield* file({ clearNeedsYou: true }), ["Lipid sheet", "Second.", ""]);
+    }).pipe(Effect.provide(layerStore)),
+  );
+
+  it.effect("says which baseline a result was compared with, or why it was not compared", () =>
+    Effect.gen(function* () {
+      const store = yield* PatientStore.PatientStore;
+      const patient = yield* store.createPatient({ name: "Wayan" });
+      const results = [
+        { testAsWritten: "LDL", value: 190, unit: "mg/dL", collected: "2026-01-10" },
+        { testAsWritten: "LDL", value: 2.6, unit: "mmol/L", collected: "2026-04-10" },
+        { testAsWritten: "LDL", value: 2.0, unit: "g/L", collected: "2026-05-10" },
+        { testAsWritten: "LDL", value: 150, collected: "2026-06-10" },
+        { testAsWritten: "LDL", value: null, valueText: "hemolysed", collected: "2026-07-10" },
+        { testAsWritten: "HDL", value: 40, collected: "2026-01-10" },
+        { testAsWritten: "HDL", value: 45, unit: "mg%", collected: "2026-04-10" },
+        {
+          testAsWritten: "Anti-dsDNA",
+          value: null,
+          valueText: "negative",
+          collected: "2026-01-10",
+        },
+      ];
+      const comparison = (labs: ReadonlyArray<PatientStore.Lab>) =>
+        labs.map((lab) => [lab.baseline, lab.changeUnit, lab.notCompared]);
+      const expected = [
+        [null, null, "first_result"],
+        [{ value: 190, unit: "mg/dL", collected: "2026-01-10" }, "mg/dL", null],
+        [null, null, "no_verified_conversion"],
+        [null, null, "result_has_no_unit"],
+        [null, null, "result_has_no_number"],
+        [null, null, "first_result"],
+        [null, null, "baseline_has_no_unit"],
+        [null, null, "result_has_no_number"],
+      ];
+
+      const filed = yield* fileLinked(store, {
+        threadId: "thread-1",
+        patientId: patient.id,
+        title: "Lipids",
+        labs: results,
+      });
+      assert.deepStrictEqual(comparison(filed.labs), expected);
+      // Published pair: 2.6 mmol/L is 100 mg/dL, so the change of -90 is in mg/dL.
+      assert.closeTo(filed.labs[1]!.changeFromBaseline!, -90, 1);
+
+      // A record read says the same, and a retried filing returns the rows with their comparison.
+      const record = yield* store.getPatientRecord({ patientId: patient.id });
+      assert.sameDeepMembers(comparison(record.labs), expected);
+      const retry = yield* store.fileFromThread({
+        threadId: "thread-1",
+        patientId: patient.id,
+        labs: results,
+      });
+      assert.deepStrictEqual(comparison(retry.labs), expected);
+
+      // The baseline's unit is given as it was written; the change is in that unit, spelled out.
+      const hemoglobin = yield* store.fileFromThread({
+        threadId: "thread-1",
+        patientId: patient.id,
+        labs: [
+          { testAsWritten: "Hb", value: 12, unit: "gr/dl", collected: "2026-01-10" },
+          { testAsWritten: "Hb", value: 110, unit: "g/L", collected: "2026-04-10" },
+        ],
+      });
+      assert.deepStrictEqual(comparison(hemoglobin.labs), [
+        [null, null, "first_result"],
+        [{ value: 12, unit: "gr/dl", collected: "2026-01-10" }, "g/dL", null],
+      ]);
+      // Worked by hand: 110 g/L is 11 g/dL; 11 - 12 = -1.
+      assert.closeTo(hemoglobin.labs[1]!.changeFromBaseline!, -1, 1e-9);
+
+      // Inbox results belong to no patient, so nothing is there to compare them with.
+      const inbox = yield* store.fileFromThread({
+        threadId: "thread-2",
+        patientId: null,
+        title: "Unknown patient",
+        labs: [results[0]!, results[1]!],
+      });
+      assert.deepStrictEqual(comparison(inbox.labs), [
+        [null, null, "in_inbox"],
+        [null, null, "in_inbox"],
+      ]);
     }).pipe(Effect.provide(layerStore)),
   );
 
