@@ -29,8 +29,18 @@ Keep this list complete. Each entry is a place an upstream merge can conflict.
 | `apps/desktop/src/app/DesktopStatePaths.ts`     | Same default folder                                  | Same                                            |
 | `apps/server/src/telemetry/AnalyticsService.ts` | Telemetry off unless `T3CODE_TELEMETRY_ENABLED=true` | Patient chats must not feed upstream analytics  |
 
+## Patient data
+
+Patient data lives in `t3med.sqlite`, a second SQLite file in the same state directory as upstream's database. Upstream's database is never given fork tables: its migrations are numbered, the migrator skips every id up to the highest one recorded, and a fork migration there would sooner or later take a number upstream also uses.
+
+- Everything is under `apps/server/src/med/`: the database layer (`MedDatabase.ts`), its own migration list (`Migrations/`, recorded in the table `t3med_migrations`), the patient service (`PatientStore.ts`) and lab arithmetic (`labs.ts`). No upstream file is edited for it.
+- `MedDatabase` has its own service tag, so nothing that asks for upstream's `SqlClient` can reach patient tables, and the other way round.
+- The file is opened with the SQLite client directly, not through `persistence/Sqlite.ts`: that module runs upstream's migrations on whatever file it opens.
+- Not yet part of the server's composition in `server.ts`. The first transport that needs the service adds `PatientStore.layer` over `MedDatabase.layerConfig` there and a row in the table above.
+
 ## Not done yet
 
 - The updater still points at upstream releases. A foreground server does not self-update, but the sidebar may offer upstream's update; do not accept it.
 - Icons are still upstream's.
-- No patient features yet: database, patient tools for agents, sidebar, patient pages and right-panel surfaces.
+- Patient features beyond the store: patient tools for agents, sidebar, patient pages and right-panel surfaces.
+- Notes for filed documents (lab sheets, imaging reports) and their files have tables but nothing writes them yet.
