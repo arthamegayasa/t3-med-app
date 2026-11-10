@@ -1,25 +1,46 @@
 /**
  * Lab result arithmetic. Everything here refuses rather than guesses: an unknown test, a qualified
- * or ambiguous test name, or a unit that does not belong to the test fails with `NoConversion`, so
- * the caller stores the result as written instead of a wrong number.
+ * or ambiguous test name, a missing unit, or a unit that does not belong to the test fails with a
+ * `NoConversion` error, so the caller stores the result as written instead of a wrong number.
  */
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
-export class NoConversion extends Schema.TaggedError<NoConversion>()("NoConversion", {
-  reason: Schema.Literals(["unknown_test", "unit_not_for_test", "unit_is_file_path"]),
-}) {
+class UnknownTestError extends Schema.TaggedError<UnknownTestError>()("UnknownTestError", {}) {
   override get message(): string {
-    switch (this.reason) {
-      case "unknown_test":
-        return "No verified conversion exists for this test.";
-      case "unit_not_for_test":
-        return "No verified conversion exists for this test between these units.";
-      case "unit_is_file_path":
-        return "The unit is a file path, not a unit; write a unit that starts with / as cells/uL.";
-    }
+    return "No verified conversion exists for this test.";
   }
 }
+
+class UnitNotForTestError extends Schema.TaggedError<UnitNotForTestError>()(
+  "UnitNotForTestError",
+  {},
+) {
+  override get message(): string {
+    return "No verified conversion exists for this test between these units.";
+  }
+}
+
+class UnitIsFilePathError extends Schema.TaggedError<UnitIsFilePathError>()(
+  "UnitIsFilePathError",
+  {},
+) {
+  override get message(): string {
+    return "The unit is a file path, not a unit; write a unit that starts with / as cells/uL.";
+  }
+}
+
+class MissingUnitError extends Schema.TaggedError<MissingUnitError>()("MissingUnitError", {}) {
+  override get message(): string {
+    return "A result without a unit cannot be converted or compared.";
+  }
+}
+
+export type NoConversion =
+  | UnknownTestError
+  | UnitNotForTestError
+  | UnitIsFilePathError
+  | MissingUnitError;
 
 // Each table maps a unit to how many base units one of that unit is worth; the base unit has
 // factor 1. Factors are the standard SI conversion constants; tests pin them to published pairs.
@@ -189,9 +210,13 @@ const normaliseName = (name: string) =>
     .replace(/[^a-z0-9]+/g, " ")
     .trim();
 
+// A symbol outside this set changes what is measured ("Kalsium++" is ionised calcium,
+// "µ-Albumin" is urine microalbumin), so such a name is never matched.
+const PLAIN_NAME = /^[A-Za-z0-9\s\-_.,/()]*$/;
+
 /** The Test ID for a test name as written, or null. */
 export const resolveTest = (name: string): string | null =>
-  NAME_TO_TEST_ID.get(normaliseName(name)) ?? null;
+  PLAIN_NAME.test(name) ? (NAME_TO_TEST_ID.get(normaliseName(name)) ?? null) : null;
 
 /**
  * The unit in this module's spelling. An unknown unit comes back cleaned but with its case kept,
@@ -199,9 +224,11 @@ export const resolveTest = (name: string): string | null =>
  */
 export const normaliseUnit = (unit: string): Result.Result<string, NoConversion> => {
   const cleaned = unit.trim().replaceAll(" ", "").replaceAll("µ", "u").replaceAll("μ", "u");
+  // Two results with the unit left off are not known to share a unit.
+  if (cleaned === "") return Result.fail(new MissingUnitError());
   // Git Bash rewrites an argument such as /uL into a Windows path.
   if (cleaned.includes(":") || cleaned.includes("\\")) {
-    return Result.fail(new NoConversion({ reason: "unit_is_file_path" }));
+    return Result.fail(new UnitIsFilePathError());
   }
   const text = cleaned
     .toLowerCase()
@@ -223,7 +250,7 @@ const convertHba1c = (
 ): Result.Result<number, NoConversion> => {
   if (source === "%" && target === "mmol/mol") return Result.succeed(10.929 * (value - 2.15));
   if (source === "mmol/mol" && target === "%") return Result.succeed(value / 10.929 + 2.15);
-  return Result.fail(new NoConversion({ reason: "unit_not_for_test" }));
+  return Result.fail(new UnitNotForTestError());
 };
 
 /** `value` expressed in `toUnit` for the named test. */
@@ -241,9 +268,9 @@ export const convert = (
   const testId = resolveTest(test);
   if (testId === "hba1c") return convertHba1c(value, source.success, target.success);
   const factors = testId === null ? undefined : UNIT_FACTORS[testId];
-  if (factors === undefined) return Result.fail(new NoConversion({ reason: "unknown_test" }));
+  if (factors === undefined) return Result.fail(new UnknownTestError());
   if (!Object.hasOwn(factors, source.success) || !Object.hasOwn(factors, target.success)) {
-    return Result.fail(new NoConversion({ reason: "unit_not_for_test" }));
+    return Result.fail(new UnitNotForTestError());
   }
   return Result.succeed((value * factors[source.success]!) / factors[target.success]!);
 };
@@ -266,6 +293,7 @@ export const compareToBaseline = (input: {
       value,
       unit: yield* normaliseUnit(input.baselineUnit),
       change,
-      changePercent: input.baseline === 0 ? null : (change / input.baseline) * 100,
+      // Relative to the baseline's size, so the sign follows the change.
+      changePercent: input.baseline === 0 ? null : (change / Math.abs(input.baseline)) * 100,
     };
   });

@@ -69,12 +69,12 @@ describe("convert", () => {
 // Indonesian lab sheets actually write them.
 describe("refusals", () => {
   it("refuses an unknown test instead of guessing", () => {
-    expect(refusal(convert("procalcitonin", 0.5, "ng/mL", "ug/L"))).toBe("NoConversion");
+    expect(refusal(convert("procalcitonin", 0.5, "ng/mL", "ug/L"))).toBe("UnknownTestError");
   });
 
   it("refuses a unit that does not belong to the test", () => {
-    expect(refusal(convert("ldl", 100, "mg/dL", "g/L"))).toBe("NoConversion");
-    expect(refusal(convert("ldl", 100, "toString", "mg/dL"))).toBe("NoConversion");
+    expect(refusal(convert("ldl", 100, "mg/dL", "g/L"))).toBe("UnitNotForTestError");
+    expect(refusal(convert("ldl", 100, "toString", "mg/dL"))).toBe("UnitNotForTestError");
   });
 
   it("returns an unknown test with identical units unchanged", () => {
@@ -82,14 +82,18 @@ describe("refusals", () => {
   });
 
   it("does not treat unknown units that differ only in case as the same", () => {
-    expect(refusal(convert("procalcitonin", 5, "mU/L", "MU/L"))).toBe("NoConversion");
+    expect(refusal(convert("procalcitonin", 5, "mU/L", "MU/L"))).toBe("UnknownTestError");
     expect(Result.getOrThrow(normaliseUnit(" mU / L "))).toBe("mU/L");
   });
 
   it("refuses a unit mangled into a file path", () => {
     const mangled = "C:/Program Files/Git/uL";
-    expect(refusal(convert("Leukosit", 9800, mangled, mangled))).toBe("NoConversion");
-    expect(refusal(normaliseUnit("\\Git\\uL"))).toBe("NoConversion");
+    expect(refusal(convert("Leukosit", 9800, mangled, mangled))).toBe("UnitIsFilePathError");
+    expect(refusal(normaliseUnit("\\Git\\uL"))).toBe("UnitIsFilePathError");
+  });
+
+  it.each(["", "   "])("never converts or compares a result without a unit (%j)", (unit) => {
+    expect(refusal(convert("GDP", 5.6, unit, unit))).toBe("MissingUnitError");
   });
 });
 
@@ -182,6 +186,14 @@ describe("resolveTest", () => {
   ])("resolves the qualified or ambiguous name %s to nothing", (written) => {
     expect(resolveTest(written)).toBeNull();
   });
+
+  // "Kalsium++" is ionised calcium and "µ-Albumin" is urine microalbumin: other tests.
+  it.each(["Kalsium++", "Calcium++", "µ-Albumin", "K+", "Na+"])(
+    "resolves %s, a name carrying a symbol the table does not know, to nothing",
+    (written) => {
+      expect(resolveTest(written)).toBeNull();
+    },
+  );
 });
 
 // HbA1c pairs come from the NGSP/IFCC conversion table. Baseline changes are worked by hand from
@@ -200,7 +212,7 @@ describe("HbA1c", () => {
   });
 
   it("refuses any other pair of HbA1c units", () => {
-    expect(refusal(convert("HbA1c", 6.5, "%", "g/dL"))).toBe("NoConversion");
+    expect(refusal(convert("HbA1c", 6.5, "%", "g/dL"))).toBe("UnitNotForTestError");
   });
 });
 
@@ -260,7 +272,7 @@ describe("compareToBaseline", () => {
           unit: "g/L",
         }),
       ),
-    ).toBe("NoConversion");
+    ).toBe("UnitNotForTestError");
   });
 
   it("gives no percentage change for a zero baseline", () => {
@@ -273,5 +285,27 @@ describe("compareToBaseline", () => {
     });
     expect(result.change).toBe(12);
     expect(result.changePercent).toBeNull();
+  });
+
+  it("does not compare two results without units", () => {
+    // 100 (mg/dL) then 5.6 (mmol/L) with the units left off must not read as a 94 % fall.
+    expect(
+      refusal(
+        compareToBaseline({ test: "GDP", baseline: 100, baselineUnit: "", value: 5.6, unit: "" }),
+      ),
+    ).toBe("MissingUnitError");
+  });
+
+  it("keeps the sign of the change in the percentage when the baseline is negative", () => {
+    // Base excess -4 then -2: a rise of 2, which is +50 % of the baseline's size.
+    const result = compared({
+      test: "Base excess",
+      baseline: -4,
+      baselineUnit: "mmol/L",
+      value: -2,
+      unit: "mmol/L",
+    });
+    expect(result.change).toBe(2);
+    expectApprox(result.changePercent!, 50);
   });
 });
