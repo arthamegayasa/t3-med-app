@@ -68,6 +68,30 @@ it.layer(NodeServices.layer)("MedDatabase", (it) => {
     }),
   );
 
+  it.effect("names the file when it cannot be opened or migrated", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3med-db-test-" });
+      const notADatabase = path.join(directory, "t3med.sqlite");
+      yield* fs.writeFileString(notADatabase, "This is a text file, not a database.\n".repeat(200));
+      const isADirectory = path.join(directory, "folder.sqlite");
+      yield* fs.makeDirectory(isADirectory);
+
+      for (const dbPath of [notADatabase, isADirectory]) {
+        const error = yield* MedDatabase.MedDatabase.pipe(
+          Effect.provide(MedDatabase.layerFromPath(dbPath)),
+          Effect.flip,
+        );
+        assert.strictEqual(error._tag, "MedDatabaseOpenError");
+        assert.strictEqual(
+          error.message,
+          `The patient database at ${dbPath} could not be opened or migrated.`,
+        );
+      }
+    }),
+  );
+
   // The service checks its inputs first, so only direct writes show what the schema itself refuses.
   it.effect("refuses duplicate keys and values outside a column's choices", () =>
     Effect.gen(function* () {
