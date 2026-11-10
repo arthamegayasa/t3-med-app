@@ -14,6 +14,7 @@ T3 Med is T3 Code organised around patients instead of code projects, for one do
 - Install `vp` (`irm https://vite.plus/ps1 | iex`), then from the repository root: `vp i`, `vp run --filter t3 build`.
 - Run the built server: `node apps/server/dist/bin.mjs serve --port 3899` with the Node that `vp` provides (Node 26). It serves the web UI on that port.
 - The background service does not exist on Windows; the server runs in the foreground.
+- `start-t3-med.cmd` in the repository root starts the built server on port 3899 with the patient workspace (`D:\T3 Projects\T3 Med`) as its project and opens the browser. Closing its window stops T3 Med.
 
 ## Changes to upstream files
 
