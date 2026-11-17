@@ -273,7 +273,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("med HTTP routes"
           },
         ]);
 
-        // Diagnoses and the store's own columns are not part of the contract, so they stay home.
+        // Diagnoses and the store's own columns are not in this route's schema, so they stay home.
         assert.deepStrictEqual((yield* get(`/api/med/patients/${wayan.id}`)).body, {
           patient: { ...wayanSummary, sex: "male", dateOfBirth: "1968-03-02" },
           notes: [waitingNote],
