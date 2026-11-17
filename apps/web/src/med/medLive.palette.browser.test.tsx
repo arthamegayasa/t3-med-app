@@ -3,7 +3,7 @@
  * (`CommandPalette.browser.test.tsx`), which looks the input up by a placeholder that names
  * projects. The intent still works; the palette finds no project.
  */
-import { EnvironmentId, ProjectId } from "@t3tools/contracts";
+import { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
 import { expect, it, vi } from "vite-plus/test";
 import { page } from "vite-plus/test/browser";
 
@@ -49,6 +49,12 @@ function setup() {
   ];
   entities.threads = [
     makeThreadFixture({ environmentId, projectId, title: "T3 Med lipid follow-up" }),
+    makeThreadFixture({
+      environmentId,
+      projectId,
+      id: ThreadId.make("thread-unrelated"),
+      title: "Unrelated visit",
+    }),
   ];
 }
 
@@ -66,4 +72,7 @@ it("opens a search intent with its query in the focused input, and finds no proj
   // Upstream lists the workspace under "Projects" here; a doctor has no use for it.
   expect(page.getByText("Projects", { exact: true }).query()).toBeNull();
   expect(page.getByRole("option", { name: /^T3 Med$/ }).query()).toBeNull();
+  // Nor is a thread found by the workspace's name, or labelled with it.
+  expect(page.getByText(/Project:/).query()).toBeNull();
+  expect(page.getByText("Unrelated visit").query()).toBeNull();
 });

@@ -38,6 +38,7 @@ import { formatRelativeTimeLabel } from "../timestampFormat";
 import { buildThreadActionItems, ITEM_ICON_CLASS } from "./CommandPalette.logic";
 import { useEnvironmentLookups, useProjectLookups } from "./CommandPaletteLookups";
 import { ThreadCommandSubtitle } from "./ThreadCommandSubtitle";
+import { patientPaletteProjectIndex } from "../med/medHidden";
 import {
   ThreadRowLeadingStatus,
   ThreadRowTrailingStatus,
@@ -120,7 +121,7 @@ export function useCommandPaletteThreadItems(input: {
         }
       : {}),
     ...(activeThread ? { activeThread } : {}),
-    projectByKey,
+    projectByKey: patientPaletteProjectIndex(projectByKey),
     icon: <MessageSquareIcon className={ITEM_ICON_CLASS} />,
     renderLeadingContent: (thread) => <ThreadRowLeadingStatus thread={thread} />,
     renderTrailingContent: (thread) => (

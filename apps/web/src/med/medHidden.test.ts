@@ -6,6 +6,7 @@ import { getCommandPaletteInputPlaceholder } from "../components/CommandPalette.
 import { commandLabel } from "../components/settings/KeybindingsSettings.logic";
 import {
   filterAvailableSettingsSearchItems,
+  searchSettings,
   SETTINGS_NAV_GROUPS,
   SETTINGS_SECTION_LABELS,
 } from "../components/settings/settingsSearch";
@@ -160,6 +161,23 @@ describe("Settings in a patient workspace", () => {
     ]) {
       expect(ids.has(id), id).toBe(true);
     }
+  });
+});
+
+describe("Settings search in a patient workspace", () => {
+  it("finds no row by a word for something that is not shown", () => {
+    const shown = patientSettingsSearchItems(everySetting);
+    // Upstream finds the code font and word wrap under "diffs", and fonts under "terminal".
+    expect(searchSettings("diffs", everySetting).map((item) => item.id)).toContain("code-font");
+    for (const query of ["diff", "diffs", "terminal", "worktree", "git"]) {
+      expect(
+        searchSettings(query, shown).map((item) => item.id),
+        query,
+      ).toEqual([]);
+    }
+    // The same rows are still found by what they are.
+    expect(searchSettings("monospace", shown).map((item) => item.id)).toContain("code-font");
+    expect(searchSettings("word wrap", shown)[0]?.id).toBe("word-wrap");
   });
 });
 

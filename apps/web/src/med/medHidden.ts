@@ -117,22 +117,56 @@ export function patientSettingsNavGroups<Group extends { readonly paths: Readonl
   });
 }
 
-/** Settings search, in Settings and in the command palette, without what is hidden. */
+// Words upstream lets a visible row be found by, for things that are not shown here.
+const HIDDEN_SEARCH_WORDS: ReadonlySet<string> = new Set([
+  "diff",
+  "diffs",
+  "terminal",
+  "git",
+  "worktree",
+  "worktrees",
+  "branch",
+  "commit",
+]);
+
+const withoutHiddenWords = (terms: string): string =>
+  terms
+    .split(" ")
+    .filter((word) => !HIDDEN_SEARCH_WORDS.has(word.toLowerCase()))
+    .join(" ");
+
+/**
+ * Settings search, in Settings and in the command palette, without what is hidden. A row that
+ * stays is no longer found by a word for something hidden: `diff` finds nothing.
+ */
 export function patientSettingsSearchItems<
-  Item extends { readonly id: string; readonly to: string; readonly targetId?: string },
+  Item extends {
+    readonly id: string;
+    readonly to: string;
+    readonly targetId?: string;
+    readonly searchTerms?: ReadonlyArray<string>;
+  },
 >(items: ReadonlyArray<Item>): ReadonlyArray<Item> {
   if (!T3MED) return items;
-  return items.filter(
-    (item) =>
-      !isHiddenSettingsPath(item.to) &&
-      !HIDDEN_SETTINGS_TARGETS.has(item.id) &&
-      !HIDDEN_SETTINGS_SEARCH_ONLY.has(item.id) &&
-      !(item.targetId !== undefined && HIDDEN_SETTINGS_TARGETS.has(item.targetId)) &&
-      !(
-        item.id.startsWith(KEYBINDING_ANCHOR_PREFIX) &&
-        hidesKeybindingCommand(item.id.slice(KEYBINDING_ANCHOR_PREFIX.length))
-      ),
-  );
+  return items
+    .filter(
+      (item) =>
+        !isHiddenSettingsPath(item.to) &&
+        !HIDDEN_SETTINGS_TARGETS.has(item.id) &&
+        !HIDDEN_SETTINGS_SEARCH_ONLY.has(item.id) &&
+        !(item.targetId !== undefined && HIDDEN_SETTINGS_TARGETS.has(item.targetId)) &&
+        !(
+          item.id.startsWith(KEYBINDING_ANCHOR_PREFIX) &&
+          hidesKeybindingCommand(item.id.slice(KEYBINDING_ANCHOR_PREFIX.length))
+        ),
+    )
+    .map((item) => {
+      if (item.searchTerms === undefined) return item;
+      const searchTerms = item.searchTerms.map(withoutHiddenWords);
+      return searchTerms.every((terms, index) => terms === item.searchTerms?.[index])
+        ? item
+        : { ...item, searchTerms };
+    });
 }
 
 // Pages outside Settings that are about code.
@@ -286,6 +320,16 @@ const NO_PALETTE_PROJECTS: ReadonlyArray<never> = [];
 /** The projects the palette's search can find: none, so the workspace's name finds no group. */
 export const patientPaletteProjects = <Item>(projects: ReadonlyArray<Item>): ReadonlyArray<Item> =>
   T3MED ? NO_PALETTE_PROJECTS : projects;
+
+const NO_PALETTE_PROJECT_INDEX: ReadonlyMap<string, never> = new Map<string, never>();
+
+/**
+ * The projects the palette labels and matches its thread rows with: none, so a thread is not
+ * found by the workspace's name and carries no `Project: ...` line.
+ */
+export const patientPaletteProjectIndex = <Index extends ReadonlyMap<string, unknown>>(
+  projects: Index,
+): Index | ReadonlyMap<string, never> => (T3MED ? NO_PALETTE_PROJECT_INDEX : projects);
 
 /** A thread as a sidebar row shows it: without its Git branch and worktree. */
 export const patientCheckout = <
