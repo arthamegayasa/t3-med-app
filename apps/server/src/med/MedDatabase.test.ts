@@ -13,6 +13,7 @@ import * as ServerConfig from "../config.ts";
 import * as MedDatabase from "./MedDatabase.ts";
 import Migration0001 from "./Migrations/001_PatientStore.ts";
 import Migration0002 from "./Migrations/002_ThreadPatientsByPatient.ts";
+import Migration0003 from "./Migrations/003_Corrections.ts";
 import * as PatientStore from "./PatientStore.ts";
 
 const tableNames = Effect.gen(function* () {
@@ -156,6 +157,85 @@ it.layer(NodeServices.layer)("MedDatabase", (it) => {
         assert.deepStrictEqual([done.status, done.doneOn], ["done", "2026-11-20"]);
         yield* store.setRemoved({ row: "plan", id: "pl1", removed: true });
         assert.lengthOf(yield* store.listPlans({ patientId: "p1" }), 0);
+      }).pipe(
+        Effect.provide(
+          PatientStore.layer.pipe(
+            Layer.provide(MedDatabase.layerFromPath(dbPath)),
+            Layer.provide(NodeCrypto.layer),
+          ),
+        ),
+      );
+    }),
+  );
+
+  it.effect("brings a file from before migration 004 up to date, with nothing made up", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3med-db-test-" });
+      const dbPath = path.join(directory, "t3med.sqlite");
+      const at = "2026-11-01T00:00:00.000Z";
+
+      // The file as migration 003 left it: an archived patient, a question, and a correction.
+      yield* Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        yield* Migrator.make({})({
+          loader: Migrator.fromRecord({
+            "1_PatientStore": Migration0001,
+            "2_ThreadPatientsByPatient": Migration0002,
+            "3_Corrections": Migration0003,
+          }),
+          table: "t3med_migrations",
+        });
+        yield* sql`
+          INSERT INTO patients (id, name, status, created_at, updated_at)
+          VALUES ('p1', 'Wayan', 'archived', ${at}, ${at}), ('p2', 'Made', 'active', ${at}, ${at})
+        `;
+        yield* sql`
+          INSERT INTO lab_tests (id, name, test_id, created_at, updated_at)
+          VALUES ('t1', 'LDL', 'ldl', ${at}, ${at})
+        `;
+        yield* sql`
+          INSERT INTO notes (
+            id, patient_id, thread_id, title, date, kind, needs_you, created_at, updated_at
+          )
+          VALUES ('n2', 'p2', 'thread-2', 'Labs', '2026-11-01', 'chat', 'Which lab?', ${at}, ${at})
+        `;
+        yield* sql`
+          INSERT INTO labs (
+            id, patient_id, lab_test_id, test_as_written, value, value_text, unit, collected,
+            status, is_baseline, source_note_id, created_at, updated_at
+          )
+          VALUES (
+            'l1', 'p2', 't1', 'LDL', 78, '78', 'mg/dL', '2026-11-01',
+            'verified', 1, 'n2', ${at}, ${at}
+          )
+        `;
+        yield* sql`
+          INSERT INTO lab_revisions (
+            id, lab_id, lab_test_id, test_as_written, value, value_text, unit, reference_range,
+            collected, status, created_at
+          )
+          VALUES ('r1', 'l1', 't1', 'LDL', 7.8, '7.8', 'mg/dL', '', '2026-11-01', 'draft', ${at})
+        `;
+      }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: dbPath })));
+
+      yield* Effect.gen(function* () {
+        const store = yield* PatientStore.PatientStore;
+        // Nobody recorded who corrected, so nobody is named.
+        const record = yield* store.getPatientRecord({ patientId: "p2" });
+        assert.deepStrictEqual(
+          record.labs.map((lab) => lab.revisions.map((was) => [was.valueText, was.correctedBy])),
+          [[["7.8", null]]],
+        );
+        // The question still waits.
+        assert.deepStrictEqual(
+          (yield* store.listNeedsYou()).patients.map((waiting) => waiting.patient.id),
+          ["p2"],
+        );
+        // Archived before the status held was recorded: brought back as active.
+        const back = yield* store.updatePatient("p1", { archived: false });
+        assert.strictEqual(back.status, "active");
       }).pipe(
         Effect.provide(
           PatientStore.layer.pipe(

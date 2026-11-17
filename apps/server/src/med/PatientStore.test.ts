@@ -1,7 +1,7 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
-import { urnKey } from "@t3tools/contracts/med";
+import { urnKey, writtenNumberReadings } from "@t3tools/contracts/med";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -2658,6 +2658,302 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("PatientStore", (
       // A thread that has moved on to another patient still reaches what its own note filed.
       yield* store.linkThread({ threadId: "thread-1", patientId: made.id });
       assert.deepStrictEqual(yield* attempts("thread-1", ofWayan), allowed);
+    }).pipe(Effect.provide(layerStore)),
+  );
+
+  it.effect("makes a plan a draft whenever an agent changed its title or due date", () =>
+    Effect.gen(function* () {
+      const store = yield* PatientStore.PatientStore;
+      const patient = yield* store.createPatient({ name: "Wayan" });
+      const filed = yield* fileLinked(store, {
+        threadId: "thread-1",
+        patientId: patient.id,
+        title: "Plans",
+        plans: [
+          { title: "Clinic visit", due: "2026-11-25", type: "follow_up" },
+          { title: "EEG", due: "2026-11-27", type: "procedure" },
+          { title: "MRI", due: "2026-11-28", type: "imaging" },
+          { title: "Lipids", due: "2026-11-29", type: "lab" },
+        ],
+      });
+      yield* store.verifyNote(filed.note.id);
+      const [visit, eeg, mri, lipids] = filed.plans.map((plan) => plan.id);
+      const threadId = "thread-1";
+
+      // Closed and retitled in one call, then reopened: the doctor never saw the new title.
+      yield* store.updatePlan({ threadId, planId: visit!, status: "done", title: "Home visit" });
+      assert.deepInclude(yield* store.updatePlan({ threadId, planId: visit!, status: "open" }), {
+        title: "Home visit",
+        status: "draft",
+      });
+
+      // Changed while closed, in a call of its own, and reopened by the doctor.
+      yield* store.updatePlan({ planId: eeg!, status: "cancelled" });
+      yield* store.updatePlan({ threadId, planId: eeg!, due: "2026-12-05" });
+      assert.deepInclude(yield* store.updatePlan({ planId: eeg!, status: "open" }), {
+        due: "2026-12-05",
+        status: "draft",
+      });
+
+      // Changed, then moved from done to cancelled before it is opened again.
+      yield* store.updatePlan({ threadId, planId: mri!, status: "done", title: "MRI brain" });
+      yield* store.updatePlan({ threadId, planId: mri!, status: "cancelled" });
+      assert.strictEqual(
+        (yield* store.updatePlan({ threadId, planId: mri!, status: "open" })).status,
+        "draft",
+      );
+
+      // Done or cancelled by an agent with nothing else changed takes effect, and reopening
+      // gives the confirmed plan back. The doctor's own change of a title confirms it still.
+      yield* store.updatePlan({ threadId, planId: lipids!, status: "done" });
+      assert.strictEqual(
+        (yield* store.updatePlan({ threadId, planId: lipids!, status: "open" })).status,
+        "planned",
+      );
+      yield* store.updatePlan({ planId: lipids!, status: "cancelled", title: "Lipid panel" });
+      assert.deepInclude(yield* store.updatePlan({ threadId, planId: lipids!, status: "open" }), {
+        title: "Lipid panel",
+        status: "planned",
+      });
+    }).pipe(Effect.provide(layerStore)),
+  );
+
+  it("reads a written result as a number in Indonesian and in English notation", () => {
+    const readings = (text: string) => [...writtenNumberReadings(text)].toSorted((a, b) => a - b);
+    assert.deepStrictEqual(readings("165"), [165]);
+    assert.deepStrictEqual(readings(" -0.5 "), [-0.5]);
+    assert.deepStrictEqual(readings("2,6"), [2.6]);
+    assert.deepStrictEqual(readings("2.6"), [2.6]);
+    assert.deepStrictEqual(readings("9800"), [9800]);
+    assert.deepStrictEqual(readings("9.800"), [9.8, 9800]);
+    assert.deepStrictEqual(readings("9,800"), [9.8, 9800]);
+    assert.deepStrictEqual(readings("1.234.567,5"), [1234567.5]);
+    assert.deepStrictEqual(readings("1,234,567.5"), [1234567.5]);
+    assert.deepStrictEqual(readings("12.34"), [12.34]);
+    for (const text of ["negative", "<0,5", "1+", "", "1,2,3", "1.2.3", "12 mg/dL", "4,5-5,5"]) {
+      assert.deepStrictEqual(readings(text), [], text);
+    }
+  });
+
+  it.effect("corrects the number and the result as written together, never one alone", () =>
+    Effect.gen(function* () {
+      const store = yield* PatientStore.PatientStore;
+      const patient = yield* store.createPatient({ name: "Wayan" });
+      const filed = yield* fileLinked(store, {
+        threadId: "thread-1",
+        patientId: patient.id,
+        title: "Labs",
+        labs: [
+          { testAsWritten: "LDL", value: 160, unit: "mg/dL", collected: "2026-01-10" },
+          { testAsWritten: "LDL", value: 150, unit: "mg/dL", collected: "2026-02-10" },
+        ],
+      });
+      const labId = filed.labs[1]!.id;
+      const stored = store
+        .listLabs({ patientId: patient.id })
+        .pipe(Effect.map((labs) => labs.map((lab) => [lab.value, lab.valueText])));
+      const refusal = (fields: { readonly value?: number | null; readonly valueText?: string }) =>
+        store.correctLab({ labId, ...fields }).pipe(
+          Effect.match({
+            onFailure: (error) =>
+              error._tag === "LabValueMismatchError" ? error.reason : error._tag,
+            onSuccess: () => "succeeded",
+          }),
+        );
+
+      // A number written alone would be stored with no number and drop out of comparison.
+      assert.strictEqual(yield* refusal({ valueText: "165" }), "text_is_a_number");
+      assert.strictEqual(yield* refusal({ valueText: "2,6" }), "text_is_a_number");
+      assert.strictEqual(yield* refusal({ value: null, valueText: "165" }), "text_is_a_number");
+      // The number and the text say two things.
+      assert.strictEqual(
+        yield* refusal({ value: 160, valueText: "negative" }),
+        "text_is_not_the_number",
+      );
+      assert.strictEqual(
+        yield* refusal({ value: 160, valueText: "165" }),
+        "text_is_not_the_number",
+      );
+      assert.strictEqual(yield* refusal({ value: 26, valueText: "2,6" }), "text_is_not_the_number");
+      assert.deepStrictEqual(yield* stored, [
+        [160, "160"],
+        [150, "150"],
+      ]);
+      // A refusal says which field, and no value.
+      const message = yield* store.correctLab({ labId, value: 160, valueText: "negative" }).pipe(
+        Effect.flip,
+        Effect.map((error) => error.message),
+      );
+      assert.notInclude(message, "160");
+      assert.notInclude(message, "negative");
+
+      // Either notation reads as the number.
+      for (const [value, valueText] of [
+        [2.6, "2,6"],
+        [2.6, "2.6"],
+        [9800, "9.800"],
+        [9800, "9800"],
+        [9.8, "9.800"],
+        [165, "165"],
+      ] as const) {
+        assert.deepInclude(yield* store.correctLab({ labId, value, valueText }), {
+          value,
+          valueText,
+        });
+      }
+      // The number alone is written as it is; a result that is no number has none.
+      assert.deepInclude(yield* store.correctLab({ labId, value: 170 }), {
+        value: 170,
+        valueText: "170",
+      });
+      assert.deepInclude(yield* store.correctLab({ labId, valueText: "<0,5" }), {
+        value: null,
+        valueText: "<0,5",
+        notCompared: "result_has_no_number",
+      });
+      assert.deepInclude(yield* store.correctLab({ labId, value: null, valueText: "negative" }), {
+        value: null,
+        valueText: "negative",
+      });
+    }).pipe(Effect.provide(layerStore)),
+  );
+
+  it.effect("adds nothing when a retried filing repeats a result since corrected or removed", () =>
+    Effect.gen(function* () {
+      const store = yield* PatientStore.PatientStore;
+      const patient = yield* store.createPatient({ name: "Wayan" });
+      const message = {
+        threadId: "thread-1",
+        patientId: patient.id,
+        title: "Labs",
+        labs: [
+          { testAsWritten: "LDL", value: 120, unit: "mg/dL", collected: "2026-01-10" },
+          { testAsWritten: "HDL", value: 40, unit: "mg/dL", collected: "2026-01-10" },
+        ],
+        plans: [{ title: "Clinic visit", due: "2026-11-25", type: "follow_up" }],
+      } as const;
+      const filed = yield* fileLinked(store, message);
+      const [ldl, hdl] = filed.labs;
+      const plan = filed.plans[0]!;
+      const values = store
+        .listLabs({ patientId: patient.id })
+        .pipe(Effect.map((labs) => labs.map((lab) => [lab.testAsWritten, lab.value])));
+
+      // 120 was a typo for 12; the same call again must not bring 120 back.
+      yield* store.correctLab({ labId: ldl!.id, value: 12 });
+      const again = yield* store.fileFromThread(message);
+      assert.deepStrictEqual(
+        again.labs.map((lab) => [lab.id, lab.value]),
+        [
+          [ldl!.id, 12],
+          [hdl!.id, 40],
+        ],
+      );
+      assert.deepStrictEqual(yield* values, [
+        ["LDL", 12],
+        ["HDL", 40],
+      ]);
+
+      // Removed, filed again, restored: one row each, not two.
+      yield* store.setLabRemoved({ labId: hdl!.id, removed: true });
+      yield* store.setPlanRemoved({ planId: plan.id, removed: true });
+      const afterRemoval = yield* store.fileFromThread(message);
+      assert.deepStrictEqual(
+        afterRemoval.labs.map((lab) => lab.id),
+        [ldl!.id],
+      );
+      assert.deepStrictEqual(afterRemoval.plans, []);
+      yield* store.setLabRemoved({ labId: hdl!.id, removed: false });
+      yield* store.setPlanRemoved({ planId: plan.id, removed: false });
+      assert.deepStrictEqual(yield* values, [
+        ["LDL", 12],
+        ["HDL", 40],
+      ]);
+      assert.lengthOf(yield* store.listPlans({ patientId: patient.id }), 1);
+
+      // A correction undone leaves the first value, which is still not filed twice.
+      yield* store.undoLabCorrection({ labId: ldl!.id });
+      yield* store.fileFromThread(message);
+      assert.deepStrictEqual(yield* values, [
+        ["LDL", 120],
+        ["HDL", 40],
+      ]);
+    }).pipe(Effect.provide(layerStore)),
+  );
+
+  it.effect("brings an archived patient back to the status held before", () =>
+    Effect.gen(function* () {
+      const store = yield* PatientStore.PatientStore;
+      const fresh = yield* store.createPatient({ name: "Wayan" });
+      const seen = yield* store.createPatient({ name: "Made" });
+      yield* store.updatePatient(seen.id, { status: "active" });
+      const status = (patientId: string, fields: Parameters<Store["updatePatient"]>[1]) =>
+        store.updatePatient(patientId, fields).pipe(Effect.map((patient) => patient.status));
+
+      assert.strictEqual(yield* status(fresh.id, { archived: true }), "archived");
+      // Archiving twice does not forget what the patient was.
+      assert.strictEqual(yield* status(fresh.id, { archived: true }), "archived");
+      assert.strictEqual(yield* status(fresh.id, { archived: false }), "new");
+      assert.strictEqual(yield* status(seen.id, { archived: true }), "archived");
+      assert.strictEqual(yield* status(seen.id, { archived: false }), "active");
+      // Bringing back a patient who is not archived changes nothing.
+      assert.strictEqual(yield* status(fresh.id, { archived: false }), "new");
+      // The agent's status field archives the same way.
+      assert.strictEqual(yield* status(fresh.id, { status: "archived" }), "archived");
+      assert.strictEqual(yield* status(fresh.id, { archived: false }), "new");
+    }).pipe(Effect.provide(layerStore)),
+  );
+
+  it.effect("refuses a URN with no letter or digit, on a new patient and on a change", () =>
+    Effect.gen(function* () {
+      const store = yield* PatientStore.PatientStore;
+      const patient = yield* store.createPatient({ name: "Wayan", urn: "00-12-34-56" });
+      assert.deepStrictEqual(yield* refusedField(store.updatePatient(patient.id, { urn: "---" })), [
+        "BlankFieldError",
+        "urn",
+      ]);
+      assert.deepStrictEqual(
+        yield* refusedField(store.createPatient({ name: "Made", urn: " . " })),
+        ["BlankFieldError", "urn"],
+      );
+      assert.strictEqual((yield* store.getPatient(patient.id)).urn, "00-12-34-56");
+      // No URN at all is still allowed, and clears the one a patient has.
+      assert.isNull((yield* store.updatePatient(patient.id, { urn: null })).urn);
+      assert.isNull((yield* store.updatePatient(patient.id, { urn: "  " })).urn);
+    }).pipe(Effect.provide(layerStore)),
+  );
+
+  it.effect("changes nothing, and no timestamp, when a plan is sent no change", () =>
+    Effect.gen(function* () {
+      const store = yield* PatientStore.PatientStore;
+      const patient = yield* store.createPatient({ name: "Wayan" });
+      const filed = yield* fileLinked(store, {
+        threadId: "thread-1",
+        patientId: patient.id,
+        title: "Plans",
+        plans: [{ title: "Clinic visit", due: "2026-11-25", type: "follow_up" }],
+      });
+      const plan = filed.plans[0]!;
+      const activity = store.getPatient(patient.id).pipe(Effect.map((read) => read.lastActivityAt));
+      const before = yield* activity;
+      yield* TestClock.adjust(Duration.minutes(1));
+
+      const same = yield* store.updatePlan({ planId: plan.id });
+      assert.strictEqual(same.updatedAt, plan.updatedAt);
+      assert.strictEqual(
+        (yield* store.updatePlan({ planId: plan.id, title: " Clinic visit ", due: "2026-11-25" }))
+          .updatedAt,
+        plan.updatedAt,
+      );
+      assert.strictEqual(
+        (yield* store.updatePlan({ planId: plan.id, status: "open" })).updatedAt,
+        plan.updatedAt,
+      );
+      assert.strictEqual(yield* activity, before);
+
+      const changed = yield* store.updatePlan({ planId: plan.id, due: "2026-11-26" });
+      assert.notStrictEqual(changed.updatedAt, plan.updatedAt);
+      assert.notStrictEqual(yield* activity, before);
     }).pipe(Effect.provide(layerStore)),
   );
 

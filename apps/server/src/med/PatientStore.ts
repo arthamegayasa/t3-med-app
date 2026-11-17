@@ -1,5 +1,5 @@
 /**
- * Patients and what agents file for them. Every row an agent writes is a draft until the doctor
+ * T3 Med: patients and what agents file for them. Every row an agent writes is a draft until the doctor
  * verifies it, and a note with no patient sits in the Inbox.
  */
 import { urnKey } from "@t3tools/contracts/med";
@@ -2472,29 +2472,35 @@ const make = Effect.gen(function* () {
         }
         const title = fields.title === undefined ? plan.title : fields.title.trim();
         const due = fields.due ?? plan.due;
-        yield* sql`
-          UPDATE plans SET ${sql.update({
-            title,
-            due,
-            // An agent's change to what the doctor confirmed waits for the doctor again.
-            status:
-              threadId !== undefined &&
-              moved === "planned" &&
-              (title !== plan.title || due !== plan.due)
-                ? "draft"
-                : moved,
-            done_on: moved === "done" ? (fields.doneOn ?? plan.doneOn ?? day) : null,
-            reopens_as:
-              moved === "done" || moved === "cancelled"
-                ? wasOpen
-                  ? plan.status
-                  : plan.reopensAs
-                : null,
-            updated_at: at,
-          })}
-          WHERE id = ${planId}
-        `.pipe(failedIn("updatePlan:update"));
-        yield* touchNote(plan.sourceNoteId, at);
+        // What an agent wrote waits for the doctor: the plan is a draft now if it is open, and
+        // a draft when it is next opened if it is closed, whatever closes or moves it meanwhile.
+        const agentWrote = threadId !== undefined && (title !== plan.title || due !== plan.due);
+        const closed = moved === "done" || moved === "cancelled";
+        const after = {
+          title,
+          due,
+          status: agentWrote && moved === "planned" ? "draft" : moved,
+          done_on: moved === "done" ? (fields.doneOn ?? plan.doneOn ?? day) : null,
+          reopens_as: !closed
+            ? null
+            : agentWrote
+              ? "draft"
+              : wasOpen
+                ? plan.status
+                : plan.reopensAs,
+        };
+        const changed =
+          after.title !== plan.title ||
+          after.due !== plan.due ||
+          after.status !== plan.status ||
+          after.done_on !== plan.doneOn ||
+          after.reopens_as !== plan.reopensAs;
+        if (changed) {
+          yield* sql`
+            UPDATE plans SET ${sql.update({ ...after, updated_at: at })} WHERE id = ${planId}
+          `.pipe(failedIn("updatePlan:update"));
+          yield* touchNote(plan.sourceNoteId, at);
+        }
         const rows = yield* selectPlans(sql`pl.id = ${planId}`);
         return rows[0] ?? (yield* Effect.die(new PlanNotFoundError({ planId })));
       }).pipe(sql.withTransaction, Effect.catchTags(transactionFailure("updatePlan")));
