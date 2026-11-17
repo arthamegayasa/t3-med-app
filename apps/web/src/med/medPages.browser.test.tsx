@@ -1223,8 +1223,11 @@ it("names each thread's patient on its sidebar row from one read, with the URN i
   for (const title of ["A question about dosing", "Another machine"]) {
     expect(row(title).element().getAttribute("aria-label")).not.toMatch(/Suartini|Sudarma|Wrong/);
   }
-  // Four rows, one request.
-  expect(state.requests).toEqual(["GET /api/med/thread-patients"]);
+  // Four rows, one request, and none that asks about one of them.
+  expect(state.requests.filter((request) => request.endsWith("/thread-patients"))).toEqual([
+    "GET /api/med/thread-patients",
+  ]);
+  expect(state.requests.filter((request) => request.includes("/threads/row-"))).toEqual([]);
 
   await userEvent.hover(row("LDL follow-up"));
   await expect.element(page.getByText("URN 00-12-34-56")).toBeVisible();

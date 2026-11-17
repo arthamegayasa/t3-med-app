@@ -1,7 +1,7 @@
 /**
  * T3 Med: the upstream tests a patient workspace skips, each with its reason. Upstream's test
  * files are not edited; `medSkippedTests.setup.ts` applies this list. Only a test of a hidden
- * control belongs here: live behaviour passes, or has a twin in `medLiveBehaviour.browser.test.tsx`.
+ * control belongs here: live behaviour passes, or has a twin in a `medLive.*.browser.test.tsx`.
  */
 import { T3MED } from "./t3med";
 
@@ -30,17 +30,17 @@ const SKIPPED: ReadonlyArray<MedSkippedTest> = [
   {
     file: "src/components/ChatView.browser.test.tsx",
     name: "a new draft does not load its reserved thread before the server lists it",
-    reason: `${NO_PROJECT_IN_SIDEBAR} Fork-owned twin: medLiveBehaviour.browser.test.tsx.`,
+    reason: `${NO_PROJECT_IN_SIDEBAR} Twin: medLive.chat.browser.test.tsx.`,
   },
   {
     file: "src/components/ChatView.browser.test.tsx",
     name: "an interrupted image-only first send of a new thread says it may not have been sent",
-    reason: `${NO_PROJECT_IN_SIDEBAR} Fork-owned twin: medLiveBehaviour.browser.test.tsx.`,
+    reason: `${NO_PROJECT_IN_SIDEBAR} Twin: medLive.chat.browser.test.tsx.`,
   },
   {
     file: "src/components/ChatView.browser.test.tsx",
     name: "a stashed prompt ending in a file chip restores with the chip",
-    reason: `${NO_PROJECT_IN_SIDEBAR} Fork-owned twin: medLiveBehaviour.browser.test.tsx.`,
+    reason: `${NO_PROJECT_IN_SIDEBAR} Twin: medLive.chat.browser.test.tsx.`,
   },
   {
     file: "src/components/ChatView.browser.test.tsx",
@@ -55,7 +55,8 @@ const SKIPPED: ReadonlyArray<MedSkippedTest> = [
   {
     file: "src/components/CommandPalette.browser.test.tsx",
     name: "CommandPalette open intents > opens a search intent with its query in the focused input",
-    reason: "T3 Med's palette lists no project to find. Fork-owned twin: medLiveBehaviour.",
+    reason:
+      "T3 Med's palette lists no project to find. Fork-owned twin: medLive.palette.browser.test.tsx.",
   },
   {
     file: "src/components/threadActionMenu.logic.test.ts",
@@ -71,6 +72,22 @@ const SKIPPED: ReadonlyArray<MedSkippedTest> = [
     file: "src/rightPanelStore.test.ts",
     name: "rightPanelStore > restores each environment, thread and PR surface's detail tab after reload and URL reopen",
     reason: "T3 Med drops a saved pull request tab when the panel's state is loaded.",
+  },
+  {
+    file: "src/components/CommandPalette.browser.test.tsx",
+    name: "CommandPalette open intents > opens a searched project's latest listed thread, not a newer subagent, delegated task, or parked thread",
+    reason: "T3 Med's palette finds no project by search.",
+  },
+  {
+    file: "src/components/chat/MessagesTimeline.browser.test.tsx",
+    name: "MessagesTimeline automation prompts > shows edit-from-here once an automation prompt is expanded",
+    reason: "T3 Med has no Edit from here: it would not take back what was filed for a patient.",
+  },
+  {
+    file: "src/components/settings/StorageSettings.browser.test.tsx",
+    name: /./,
+    reason:
+      "T3 Med hides Maintenance's artifact, log and cleanup sections, which is all this file renders.",
   },
   {
     file: "src/components/GitHubStarPrompt.test.ts",
@@ -116,13 +133,12 @@ const SKIPPED: ReadonlyArray<MedSkippedTest> = [
   {
     file: "src/components/onboarding/WelcomePage.import.browser.test.tsx",
     name: "waits for a ready agent to start, and Start without an agent still finishes setup",
-    reason: `${NO_PROJECTS_ON_WELCOME} Fork-owned twin: medLiveBehaviour.browser.test.tsx.`,
+    reason: `${NO_PROJECTS_ON_WELCOME} Twin: medLive.welcome.browser.test.tsx.`,
   },
   {
     file: "src/components/onboarding/WelcomePage.import.browser.test.tsx",
     name: "offers Update for a signed-in agent whose version is broken, and keeps Start off",
-    reason:
-      "T3 Med offers no provider update button. Fork-owned twin: medLiveBehaviour.browser.test.tsx.",
+    reason: "T3 Med offers no provider update button. Twin: medLive.welcome.browser.test.tsx.",
   },
   {
     file: "src/components/onboarding/WelcomePage.import.browser.test.tsx",
@@ -133,7 +149,7 @@ const SKIPPED: ReadonlyArray<MedSkippedTest> = [
     file: "src/components/settings/KeybindingsSettings.browser.test.tsx",
     name: "re-enables Save when a When editor closes on an expression it could not parse",
     reason:
-      "T3 Med lists no Terminal: Toggle shortcut. Fork-owned twin: medLiveBehaviour.browser.test.tsx.",
+      "T3 Med lists no Terminal: Toggle shortcut. Twin: medLive.keybindings.browser.test.tsx.",
   },
   ...[
     "offers every environment while no project is selected",
@@ -159,7 +175,7 @@ const SKIPPED: ReadonlyArray<MedSkippedTest> = [
     file: "src/components/settings/SettingsSidebarNav.composition.browser.test.tsx",
     name: "moves Tab through every settings section",
     reason:
-      "T3 Med's Settings has no Code group and fewer pages. Fork-owned twin: medLiveBehaviour.browser.test.tsx.",
+      "T3 Med's Settings has no Code group and fewer pages. Twin: medLive.settingsNav.browser.test.tsx.",
   },
   {
     file: "src/components/settings/SettingsSidebarNav.composition.browser.test.tsx",
