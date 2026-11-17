@@ -10,6 +10,13 @@ import * as Path from "effect/Path";
 
 import { MED_APP_ID, MED_PACKAGE_NAME, MED_PRODUCT_NAME } from "../lib/med-identity.ts";
 
+/**
+ * Upstream allows 80 files in the unpacked Windows app, the count of its Linux-built package.
+ * Built on Windows the package also carries the prepared compile cache (23 files at v0.1.10),
+ * which only a host that can run the packaged app generates: 90 files in all.
+ */
+export const MED_WINDOWS_PAYLOAD_FILE_LIMIT = 110;
+
 export const MED_ARTIFACT_NAME = "T3-Med-${version}-${arch}.${ext}";
 
 export const MED_DESKTOP_ICON_ASSETS = {

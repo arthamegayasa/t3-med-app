@@ -47,6 +47,7 @@ import { resolveTaggedSourceVersion } from "./lib/tagged-source-version.ts";
 import {
   applyMedWebIcons,
   MED_DESKTOP_ICON_ASSETS,
+  MED_WINDOWS_PAYLOAD_FILE_LIMIT,
   medStagePackageJson,
 } from "./med/desktop-package.ts";
 
@@ -4111,6 +4112,7 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
     yield* validateWindowsPackagedPayload({
       stageDistDir,
       appExecutableName: `${resolveDesktopProductName(appVersion)}.exe`,
+      fileLimit: MED_WINDOWS_PAYLOAD_FILE_LIMIT,
       targetArch: options.arch,
       appVersion,
       expectWslRuntime: bundlesWslRuntime({
