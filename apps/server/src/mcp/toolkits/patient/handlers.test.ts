@@ -888,7 +888,9 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("patient tools", 
       expect(names).toContain("PatientStore.fileFromThread");
       expect(names).toContain("PatientStore.correctLab");
       expect(names).toContain("PatientStore.updatePlan");
-      expect(names).toContain("PatientStore.setRemoved");
+      expect(names.filter((name) => /^PatientStore\.set(Lab|Plan)Removed$/.test(name))).not.toEqual(
+        [],
+      );
       expect(names).toContain("PatientStore.returnThreadNoteToInbox");
       expect(JSON.stringify(recorded)).not.toContain("Sekarwangi");
       expect(JSON.stringify(recorded)).not.toContain("00-55-66-77");

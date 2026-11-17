@@ -2138,6 +2138,8 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("PatientStore", (
       });
       assert.deepStrictEqual(corrected.revisions, [
         {
+          id: corrected.revisions[0]!.id,
+          correctedBy: "doctor",
           testAsWritten: "LDL",
           value: 8,
           valueText: "8",
@@ -2182,23 +2184,23 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("PatientStore", (
       assert.lengthOf((yield* store.correctLab({ labId: typo!.id, unit: "mg/dL" })).revisions, 3);
 
       // Undone one step at a time, back to what was first filed and verified.
-      assert.deepInclude(yield* store.undoLabCorrection(typo!.id), {
+      assert.deepInclude(yield* store.undoLabCorrection({ labId: typo!.id }), {
         labTestId: first!.labTestId,
         collected: "2026-01-02",
         isBaseline: true,
         status: "draft",
       });
       assert.deepInclude(yield* read(hdl!.id), { isBaseline: true, changeFromBaseline: null });
-      assert.deepInclude(yield* store.undoLabCorrection(typo!.id), {
+      assert.deepInclude(yield* store.undoLabCorrection({ labId: typo!.id }), {
         collected: "2026-03-10",
         value: 80,
         changeFromBaseline: -80,
         status: "draft",
       });
-      const undone = yield* store.undoLabCorrection(typo!.id);
+      const undone = yield* store.undoLabCorrection({ labId: typo!.id });
       assert.deepInclude(undone, { value: 8, valueText: "8", status: "verified", revisions: [] });
       assert.strictEqual(
-        yield* failureTag(store.undoLabCorrection(typo!.id)),
+        yield* failureTag(store.undoLabCorrection({ labId: typo!.id })),
         "NoLabCorrectionError",
       );
 
@@ -2267,9 +2269,9 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("PatientStore", (
       };
       assert.deepStrictEqual(yield* seen, whole);
 
-      yield* store.setRemoved({ row: "lab", id: first!.id, removed: true });
-      yield* store.setRemoved({ row: "lab", id: first!.id, removed: true });
-      yield* store.setRemoved({ row: "plan", id: plan.id, removed: true });
+      yield* store.setLabRemoved({ labId: first!.id, removed: true });
+      yield* store.setLabRemoved({ labId: first!.id, removed: true });
+      yield* store.setPlanRemoved({ planId: plan.id, removed: true });
       assert.deepStrictEqual(yield* seen, {
         labs: [[second!.id, true, null]],
         plans: 0,
@@ -2293,16 +2295,16 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("PatientStore", (
         patientActivated: true,
       });
 
-      yield* store.setRemoved({ row: "lab", id: first!.id, removed: false });
-      yield* store.setRemoved({ row: "plan", id: plan.id, removed: false });
+      yield* store.setLabRemoved({ labId: first!.id, removed: false });
+      yield* store.setPlanRemoved({ planId: plan.id, removed: false });
       assert.deepStrictEqual(yield* seen, { ...whole, drafts: [1, 1], waiting: [[1, 1]] });
 
       assert.strictEqual(
-        yield* failureTag(store.setRemoved({ row: "lab", id: plan.id, removed: true })),
+        yield* failureTag(store.setLabRemoved({ labId: plan.id, removed: true })),
         "LabNotFoundError",
       );
       assert.strictEqual(
-        yield* failureTag(store.setRemoved({ row: "plan", id: "missing", removed: false })),
+        yield* failureTag(store.setPlanRemoved({ planId: "missing", removed: false })),
         "PlanNotFoundError",
       );
     }).pipe(Effect.provide(layerStore)),
@@ -2429,7 +2431,10 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("PatientStore", (
         ];
       });
       const set = (row: "lab" | "plan", id: string, verified: boolean) =>
-        store.setVerified({ row, id, verified });
+        Effect.gen(function* () {
+          if (row === "lab") yield* store.setLabVerified({ labId: id, verified });
+          else yield* store.setPlanVerified({ planId: id, verified });
+        });
 
       yield* set("lab", filed.labs[0]!.id, true);
       assert.deepStrictEqual(yield* statuses, ["active", "verified", "draft", "draft", "draft"]);
@@ -2630,11 +2635,9 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("PatientStore", (
       const attempts = (threadId: string, filed: typeof ofWayan) =>
         Effect.all([
           failureTag(store.correctLab({ threadId, labId: filed.labs[0]!.id, value: 101 })),
+          failureTag(store.setLabRemoved({ threadId, labId: filed.labs[0]!.id, removed: false })),
           failureTag(
-            store.setRemoved({ threadId, row: "lab", id: filed.labs[0]!.id, removed: false }),
-          ),
-          failureTag(
-            store.setRemoved({ threadId, row: "plan", id: filed.plans[0]!.id, removed: false }),
+            store.setPlanRemoved({ threadId, planId: filed.plans[0]!.id, removed: false }),
           ),
           failureTag(store.updatePlan({ threadId, planId: filed.plans[0]!.id, due: "2026-11-26" })),
         ]);
@@ -2954,6 +2957,194 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("PatientStore", (
       const changed = yield* store.updatePlan({ planId: plan.id, due: "2026-11-26" });
       assert.notStrictEqual(changed.updatedAt, plan.updatedAt);
       assert.notStrictEqual(yield* activity, before);
+    }).pipe(Effect.provide(layerStore)),
+  );
+
+  it.effect("undoes the correction it names and no other, and says who corrected", () =>
+    Effect.gen(function* () {
+      const store = yield* PatientStore.PatientStore;
+      const patient = yield* store.createPatient({ name: "Wayan" });
+      const threadId = "thread-1";
+      const filed = yield* fileLinked(store, {
+        threadId,
+        patientId: patient.id,
+        title: "Labs",
+        labs: [{ testAsWritten: "LDL", value: 120, unit: "mg/dL", collected: "2026-01-10" }],
+      });
+      const labId = filed.labs[0]!.id;
+      const now = store.listLabs({ patientId: patient.id }).pipe(
+        Effect.map((labs) => ({
+          value: labs[0]!.value,
+          was: labs[0]!.revisions.map((revision) => [revision.value, revision.correctedBy]),
+        })),
+      );
+
+      const byDoctor = yield* store.correctLab({ labId, value: 125 });
+      const doctorsRevision = byDoctor.revisions[0]!.id;
+      const byAgent = yield* store.correctLab({ labId, threadId, value: 130 });
+      assert.deepStrictEqual(yield* now, {
+        value: 130,
+        was: [
+          [125, "agent"],
+          [120, "doctor"],
+        ],
+      });
+
+      // The doctor's Undo was for 120 to 125. The agent has corrected since: nothing is undone.
+      assert.strictEqual(
+        yield* failureTag(store.undoLabCorrection({ labId, revisionId: doctorsRevision })),
+        "RowChangedError",
+      );
+      assert.strictEqual((yield* now).value, 130);
+
+      const undone = yield* store.undoLabCorrection({
+        labId,
+        revisionId: byAgent.revisions[0]!.id,
+      });
+      assert.strictEqual(undone.value, 125);
+      assert.strictEqual(
+        (yield* store.undoLabCorrection({ labId, revisionId: doctorsRevision })).value,
+        120,
+      );
+      // Undone already: a second click finds the row changed, not another correction to undo.
+      assert.strictEqual(
+        yield* failureTag(store.undoLabCorrection({ labId, revisionId: doctorsRevision })),
+        "RowChangedError",
+      );
+      assert.strictEqual(
+        yield* failureTag(store.undoLabCorrection({ labId })),
+        "NoLabCorrectionError",
+      );
+      assert.deepStrictEqual(yield* now, { value: 120, was: [] });
+    }).pipe(Effect.provide(layerStore)),
+  );
+
+  it.effect("refuses an undo of a result or plan that changed since the change it undoes", () =>
+    Effect.gen(function* () {
+      const store = yield* PatientStore.PatientStore;
+      const patient = yield* store.createPatient({ name: "Wayan" });
+      const threadId = "thread-1";
+      const filed = yield* fileLinked(store, {
+        threadId,
+        patientId: patient.id,
+        title: "Visit",
+        labs: [{ testAsWritten: "LDL", value: 120, unit: "mg/dL", collected: "2026-01-10" }],
+        plans: [{ title: "Clinic visit", due: "2026-11-25", type: "follow_up" }],
+      });
+      yield* store.verifyNote(filed.note.id);
+      const labId = filed.labs[0]!.id;
+      const planId = filed.plans[0]!.id;
+      const later = TestClock.adjust(Duration.minutes(1));
+      const plan = store
+        .listPlans({ patientId: patient.id })
+        .pipe(Effect.map((plans) => [plans[0]?.title, plans[0]?.status]));
+
+      // Marked done by the doctor; an agent reopens and retitles it; the doctor's Undo is late.
+      yield* later;
+      const done = yield* store.updatePlan({ planId, status: "done" });
+      yield* later;
+      yield* store.updatePlan({ threadId, planId, status: "open", title: "Home visit" });
+      assert.strictEqual(
+        yield* failureTag(
+          store.updatePlan({ planId, status: "open", ifUpdatedAt: done.updatedAt }),
+        ),
+        "RowChangedError",
+      );
+      assert.deepStrictEqual(yield* plan, ["Home visit", "draft"]);
+      // A retitle undone against the row as it now is goes through.
+      const current = (yield* store.listPlans({ patientId: patient.id }))[0]!;
+      assert.strictEqual(
+        (yield* store.updatePlan({
+          planId,
+          title: "Clinic visit",
+          ifUpdatedAt: current.updatedAt,
+        })).title,
+        "Clinic visit",
+      );
+
+      // Verified, then returned to draft from the toast, unless it changed in between.
+      yield* later;
+      const verified = yield* store.setPlanVerified({ planId, verified: true });
+      yield* later;
+      yield* store.updatePlan({ threadId, planId, due: "2026-12-01" });
+      assert.strictEqual(
+        yield* failureTag(
+          store.setPlanVerified({ planId, verified: true, ifUpdatedAt: verified.updatedAt }),
+        ),
+        "RowChangedError",
+      );
+
+      // Removed by the doctor; an agent puts it back and changes it; the Undo does not claim it.
+      yield* later;
+      const removed = yield* store.setPlanRemoved({ planId, removed: true });
+      yield* later;
+      yield* store.setPlanRemoved({ threadId, planId, removed: false });
+      assert.strictEqual(
+        yield* failureTag(
+          store.setPlanRemoved({ planId, removed: false, ifUpdatedAt: removed.updatedAt }),
+        ),
+        "RowChangedError",
+      );
+
+      // The same for a result: removed, restored and corrected by an agent meanwhile.
+      yield* later;
+      const labRemoved = yield* store.setLabRemoved({ labId, removed: true });
+      const untouched = yield* store.setLabRemoved({
+        labId,
+        removed: false,
+        ifUpdatedAt: labRemoved.updatedAt,
+      });
+      yield* later;
+      const labVerified = yield* store.setLabVerified({
+        labId,
+        verified: false,
+        ifUpdatedAt: untouched.updatedAt,
+      });
+      yield* later;
+      yield* store.correctLab({ threadId, labId, value: 12 });
+      assert.strictEqual(
+        yield* failureTag(
+          store.setLabVerified({ labId, verified: true, ifUpdatedAt: labVerified.updatedAt }),
+        ),
+        "RowChangedError",
+      );
+      assert.strictEqual(
+        yield* failureTag(
+          store.setLabRemoved({ labId, removed: true, ifUpdatedAt: labVerified.updatedAt }),
+        ),
+        "RowChangedError",
+      );
+      assert.deepStrictEqual(
+        (yield* store.listLabs({ patientId: patient.id })).map((lab) => [lab.value, lab.status]),
+        [[12, "draft"]],
+      );
+    }).pipe(Effect.provide(layerStore)),
+  );
+
+  it.effect("takes a spelling off or adds one without replacing the others", () =>
+    Effect.gen(function* () {
+      const store = yield* PatientStore.PatientStore;
+      const patient = yield* store.createPatient({
+        name: "Wayan Sudarma",
+        alsoWrittenAs: ["I Wayan"],
+      });
+      // The doctor's rename, a spelling an agent adds meanwhile, then the rename undone.
+      const renamed = yield* store.updatePatient(patient.id, { name: "Wayan Sudarme" });
+      assert.deepStrictEqual(renamed.alsoWrittenAs, ["I Wayan", "Wayan Sudarma"]);
+      yield* store.updatePatient(patient.id, { addSpelling: "Wyn Sudarma" });
+      const undone = yield* store.updatePatient(patient.id, {
+        name: "Wayan Sudarma",
+        removeSpellings: ["wayan  sudarme"],
+      });
+      assert.deepStrictEqual(
+        [undone.name, undone.alsoWrittenAs],
+        ["Wayan Sudarma", ["I Wayan", "Wyn Sudarma"]],
+      );
+      const swapped = yield* store.updatePatient(patient.id, {
+        removeSpellings: ["I Wayan"],
+        addSpellings: ["Pak Wayan", "Wyn Sudarma"],
+      });
+      assert.deepStrictEqual(swapped.alsoWrittenAs, ["Wyn Sudarma", "Pak Wayan"]);
     }).pipe(Effect.provide(layerStore)),
   );
 

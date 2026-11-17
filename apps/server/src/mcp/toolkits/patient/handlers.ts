@@ -246,9 +246,12 @@ const handlers = {
     Effect.gen(function* () {
       const store = yield* PatientStore.PatientStore;
       const removed = restore !== true;
-      yield* store
-        .setRemoved({ row, id, removed, threadId: yield* callingThread })
-        .pipe(Effect.mapError(refused));
+      const threadId = yield* callingThread;
+      yield* (
+        row === "lab"
+          ? store.setLabRemoved({ labId: id, removed, threadId })
+          : store.setPlanRemoved({ planId: id, removed, threadId })
+      ).pipe(Effect.mapError(refused));
       return { removed };
     }),
   ),

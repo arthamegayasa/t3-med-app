@@ -155,7 +155,7 @@ it.layer(NodeServices.layer)("MedDatabase", (it) => {
           doneOn: "2026-11-20",
         });
         assert.deepStrictEqual([done.status, done.doneOn], ["done", "2026-11-20"]);
-        yield* store.setRemoved({ row: "plan", id: "pl1", removed: true });
+        yield* store.setPlanRemoved({ planId: "pl1", removed: true });
         assert.lengthOf(yield* store.listPlans({ patientId: "p1" }), 0);
       }).pipe(
         Effect.provide(
