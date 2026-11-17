@@ -36,6 +36,7 @@ vi.mock(import("./SettingsScopeContext"), async (original) => ({
 
 import { Dialog, DialogPopup, DialogTitle } from "../ui/dialog";
 import { KeybindingsSettingsPanel } from "./KeybindingsSettings";
+import { T3MED } from "../../med/t3med";
 
 // The modal dialog's inert layer swallows pointer events in this harness, so drive the DOM.
 async function activate(locator: Locator, action: "click" | "focus") {
@@ -124,23 +125,29 @@ it("Esc in the keybindings search clears the query without closing Settings", as
   expect(onOpenChange).not.toHaveBeenCalled();
 });
 
-it("re-enables Save when a When editor closes on an expression it could not parse", async () => {
-  await using screen = await render(
-    <RegistryProvider>
-      <KeybindingsSettingsPanel />
-    </RegistryProvider>,
-  );
-  const whenTrigger = screen.getByRole("button", { name: "Edit when clause for Terminal: Toggle" });
-  const expression = screen.getByRole("textbox", { name: "When expression" });
+// T3 Med lists no Terminal: Toggle shortcut (docs/t3-med/FORK.md).
+it.skipIf(T3MED)(
+  "re-enables Save when a When editor closes on an expression it could not parse",
+  async () => {
+    await using screen = await render(
+      <RegistryProvider>
+        <KeybindingsSettingsPanel />
+      </RegistryProvider>,
+    );
+    const whenTrigger = screen.getByRole("button", {
+      name: "Edit when clause for Terminal: Toggle",
+    });
+    const expression = screen.getByRole("textbox", { name: "When expression" });
 
-  await whenTrigger.click();
-  await userEvent.type(expression, "terminalFocus");
-  await userEvent.type(expression, " &&");
-  await expect.element(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+    await whenTrigger.click();
+    await userEvent.type(expression, "terminalFocus");
+    await userEvent.type(expression, " &&");
+    await expect.element(screen.getByRole("button", { name: "Save" })).toBeDisabled();
 
-  await userEvent.keyboard("{Escape}");
-  await whenTrigger.click();
+    await userEvent.keyboard("{Escape}");
+    await whenTrigger.click();
 
-  await expect.element(expression).toHaveValue("terminalFocus");
-  await expect.element(screen.getByRole("button", { name: "Save" })).toBeEnabled();
-});
+    await expect.element(expression).toHaveValue("terminalFocus");
+    await expect.element(screen.getByRole("button", { name: "Save" })).toBeEnabled();
+  },
+);

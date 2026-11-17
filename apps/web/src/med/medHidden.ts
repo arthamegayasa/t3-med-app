@@ -25,6 +25,9 @@ const HIDDEN_SETTINGS_PATHS: ReadonlySet<string> = new Set([
 const HIDDEN_SETTINGS_SEARCH_ONLY: ReadonlySet<string> = new Set([
   "project-defaults",
   "speech-project-dictionary",
+  // Their rows are left out where `SettingsPanels.tsx` would render them.
+  "update-track",
+  "cli-command",
 ]);
 
 // Single rows and sections of pages that stay, by the anchor id upstream's search gives them.
@@ -54,9 +57,7 @@ const HIDDEN_SETTINGS_TARGETS: ReadonlySet<string> = new Set([
   // Sharing & access
   "wsl-backend",
   "local-environment",
-  // About: upstream's releases, CLI, phone app, setup page and privacy policy
-  "update-track",
-  "cli-command",
+  // About: upstream's phone app, setup page and privacy policy
   "mobile-app",
   "welcome-page",
   "privacy-policy",

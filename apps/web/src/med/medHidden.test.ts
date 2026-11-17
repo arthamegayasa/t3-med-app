@@ -131,8 +131,6 @@ describe("Settings in a patient workspace", () => {
       "worktree-fast-checkout",
       "wsl-backend",
       "local-environment",
-      "update-track",
-      "cli-command",
       "mobile-app",
       "welcome-page",
       "privacy-policy",

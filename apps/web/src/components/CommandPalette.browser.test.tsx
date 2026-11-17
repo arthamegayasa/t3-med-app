@@ -11,6 +11,7 @@ import { removeLocalStorageItem } from "../hooks/useLocalStorage";
 import { makeThreadFixture } from "../test-fixtures";
 import type { Project, Thread } from "../types";
 import { CommandPalette } from "./CommandPalette";
+import { T3MED } from "../med/t3med";
 
 const entities = vi.hoisted(() => ({
   projects: [] as ReadonlyArray<Project>,
@@ -96,40 +97,45 @@ describe("CommandPalette open intents", () => {
     await expect.element(page.getByPlaceholder("Search...")).toHaveFocus();
   });
 
-  it("highlights the first project when New thread in... opens from the root list", async () => {
-    const environmentId = EnvironmentId.make("local");
-    const project = (id: string, title: string): Project => ({
-      id: ProjectId.make(id),
-      environmentId,
-      title,
-      workspaceRoot: `/work/${id}`,
-      repositoryIdentity: null,
-      defaultModelSelection: null,
-      createdAt: "2026-03-01T00:00:00.000Z",
-      updatedAt: "2026-03-01T00:00:00.000Z",
-      scripts: [],
-    });
-    setup({
-      projects: [project("acme", "Acme"), project("beta", "Beta"), project("gamma", "Gamma")],
-    });
-    await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
+  // T3 Med's palette has no New thread in... (docs/t3-med/FORK.md).
+  it.skipIf(T3MED)(
+    "highlights the first project when New thread in... opens from the root list",
+    async () => {
+      const environmentId = EnvironmentId.make("local");
+      const project = (id: string, title: string): Project => ({
+        id: ProjectId.make(id),
+        environmentId,
+        title,
+        workspaceRoot: `/work/${id}`,
+        repositoryIdentity: null,
+        defaultModelSelection: null,
+        createdAt: "2026-03-01T00:00:00.000Z",
+        updatedAt: "2026-03-01T00:00:00.000Z",
+        scripts: [],
+      });
+      setup({
+        projects: [project("acme", "Acme"), project("beta", "Beta"), project("gamma", "Gamma")],
+      });
+      await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
 
-    openCommandPalette({});
-    await expect
-      .element(page.getByPlaceholder("Search commands, projects, and threads..."))
-      .toHaveFocus();
-    await userEvent.keyboard("{ArrowDown}");
-    await expect
-      .element(page.getByRole("option", { name: /^New thread in\.\.\./ }))
-      .toHaveAttribute("data-highlighted");
-    await userEvent.keyboard("{Enter}");
+      openCommandPalette({});
+      await expect
+        .element(page.getByPlaceholder("Search commands, projects, and threads..."))
+        .toHaveFocus();
+      await userEvent.keyboard("{ArrowDown}");
+      await expect
+        .element(page.getByRole("option", { name: /^New thread in\.\.\./ }))
+        .toHaveAttribute("data-highlighted");
+      await userEvent.keyboard("{Enter}");
 
-    await expect.element(page.getByPlaceholder("Search...")).toHaveFocus();
-    await expect.element(page.getByRole("option").first()).toHaveAttribute("data-highlighted");
-    await expect.element(page.getByRole("option").nth(1)).not.toHaveAttribute("data-highlighted");
-  });
+      await expect.element(page.getByPlaceholder("Search...")).toHaveFocus();
+      await expect.element(page.getByRole("option").first()).toHaveAttribute("data-highlighted");
+      await expect.element(page.getByRole("option").nth(1)).not.toHaveAttribute("data-highlighted");
+    },
+  );
 
-  it("opens a search intent with its query in the focused input", async () => {
+  // T3 Med's palette lists no project to find (docs/t3-med/FORK.md).
+  it.skipIf(T3MED)("opens a search intent with its query in the focused input", async () => {
     setup();
     await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
 

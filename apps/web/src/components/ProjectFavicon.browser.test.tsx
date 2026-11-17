@@ -5,6 +5,7 @@ import { expect, it, vi } from "vite-plus/test";
 
 import { render } from "../../test/render";
 import { ProjectFavicon, type ProjectFaviconProject } from "./ProjectFavicon";
+import { T3MED } from "../med/t3med";
 
 const state = vi.hoisted(() => ({ favicon: undefined as Atom.Atom<string | null> | undefined }));
 vi.mock(import("../state/assets"), () => ({
@@ -24,7 +25,8 @@ function setup() {
   return { activeResources };
 }
 
-it("only activates the favicon resource after removing a custom icon", async () => {
+// T3 Med draws no project icon (docs/t3-med/FORK.md).
+it.skipIf(T3MED)("only activates the favicon resource after removing a custom icon", async () => {
   const { activeResources } = setup();
   const registry = AtomRegistry.make();
   const project: ProjectFaviconProject = {

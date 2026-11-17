@@ -20,6 +20,7 @@ import { expect, it, vi } from "vite-plus/test";
 
 import "~/index.css";
 import { act, render } from "../../../test/render";
+import { T3MED } from "../../med/t3med";
 
 type SessionResult = AsyncResult.AsyncResult<AuthSessionState, Error>;
 type Project = { id: ProjectId; environmentId: EnvironmentId; workspaceRoot: string };
@@ -371,93 +372,110 @@ function setup() {
   return now;
 }
 
-it("rechecks after project creation and can retry its history without recreating the project", async () => {
-  using _now = setup();
-  const creation = deferred<void>();
-  state.createProject.mockImplementationOnce(async (input: CreateProjectInput) => {
-    await creation.promise;
-    return recordProject(input);
-  });
-  await using _screen = await mountWelcome();
-  await click("Import 2 projects and start");
-  expect(state.createProject).toHaveBeenCalledOnce();
-  await act(async () => {
-    setGrant(primaryId, false);
-    creation.resolve();
-    await creation.promise;
-  });
-  expect(state.importThreads).not.toHaveBeenCalled();
-  expect(state.createProject).toHaveBeenCalledOnce();
-  expect(state.onDone).not.toHaveBeenCalled();
-  await vi.waitFor(() => expect(pageText()).toContain(permissionMessage));
+// T3 Med's welcome page has no Projects section, phone step or version notice (docs/t3-med/FORK.md).
+it.skipIf(T3MED)(
+  "rechecks after project creation and can retry its history without recreating the project",
+  async () => {
+    using _now = setup();
+    const creation = deferred<void>();
+    state.createProject.mockImplementationOnce(async (input: CreateProjectInput) => {
+      await creation.promise;
+      return recordProject(input);
+    });
+    await using _screen = await mountWelcome();
+    await click("Import 2 projects and start");
+    expect(state.createProject).toHaveBeenCalledOnce();
+    await act(async () => {
+      setGrant(primaryId, false);
+      creation.resolve();
+      await creation.promise;
+    });
+    expect(state.importThreads).not.toHaveBeenCalled();
+    expect(state.createProject).toHaveBeenCalledOnce();
+    expect(state.onDone).not.toHaveBeenCalled();
+    await vi.waitFor(() => expect(pageText()).toContain(permissionMessage));
 
-  await act(async () => setGrant(primaryId, true));
-  // The first project now exists, so only the second counts as new.
-  await click("Import 1 project and start");
-  expect(state.createProject).toHaveBeenCalledTimes(2);
-  expect(state.importThreads).toHaveBeenCalledTimes(2);
-  expect(state.onDone).toHaveBeenCalledOnce();
-});
+    await act(async () => setGrant(primaryId, true));
+    // The first project now exists, so only the second counts as new.
+    await click("Import 1 project and start");
+    expect(state.createProject).toHaveBeenCalledTimes(2);
+    expect(state.importThreads).toHaveBeenCalledTimes(2);
+    expect(state.onDone).toHaveBeenCalledOnce();
+  },
+);
 
-it("completes accepted imports when permission is revoked after the final server write", async () => {
-  using _now = setup();
-  appAtomRegistry.set(candidatesAtom(), [candidate("/projects/first")]);
-  const imported = deferred<{ importedCount: number; skippedCount: number }>();
-  state.importThreads.mockImplementationOnce(async () =>
-    AsyncResult.success(await imported.promise),
-  );
-  await using _screen = await mountWelcome();
-  await click("Import 1 project and start");
-  await act(async () => {
-    setGrant(primaryId, false);
-    imported.resolve({ importedCount: 1, skippedCount: 0 });
-    await imported.promise;
-  });
-  expect(state.createProject).toHaveBeenCalledOnce();
-  expect(state.importThreads).toHaveBeenCalledOnce();
-  expect(state.completeOnboarding).toHaveBeenCalledOnce();
-  expect(state.onDone).toHaveBeenCalledOnce();
-});
+// T3 Med's welcome page has no Projects section, phone step or version notice (docs/t3-med/FORK.md).
+it.skipIf(T3MED)(
+  "completes accepted imports when permission is revoked after the final server write",
+  async () => {
+    using _now = setup();
+    appAtomRegistry.set(candidatesAtom(), [candidate("/projects/first")]);
+    const imported = deferred<{ importedCount: number; skippedCount: number }>();
+    state.importThreads.mockImplementationOnce(async () =>
+      AsyncResult.success(await imported.promise),
+    );
+    await using _screen = await mountWelcome();
+    await click("Import 1 project and start");
+    await act(async () => {
+      setGrant(primaryId, false);
+      imported.resolve({ importedCount: 1, skippedCount: 0 });
+      await imported.promise;
+    });
+    expect(state.createProject).toHaveBeenCalledOnce();
+    expect(state.importThreads).toHaveBeenCalledOnce();
+    expect(state.completeOnboarding).toHaveBeenCalledOnce();
+    expect(state.onDone).toHaveBeenCalledOnce();
+  },
+);
 
-it("finishes setup without landing when the imported project never reaches the client", async () => {
-  using _now = setup();
-  appAtomRegistry.set(candidatesAtom(), [candidate("/projects/first")]);
-  // The server accepts the project, but it never shows up in the client's projects.
-  state.createProject.mockResolvedValue(AsyncResult.success(undefined));
-  state.waitForProject.mockRejectedValue(new Error("The project did not appear."));
-  state.completeOnboarding.mockRejectedValueOnce(new Error("offline"));
-  await using _screen = await mountWelcome();
-  using toastAdd = vi.spyOn(toastManager, "add");
+// T3 Med's welcome page has no Projects section, phone step or version notice (docs/t3-med/FORK.md).
+it.skipIf(T3MED)(
+  "finishes setup without landing when the imported project never reaches the client",
+  async () => {
+    using _now = setup();
+    appAtomRegistry.set(candidatesAtom(), [candidate("/projects/first")]);
+    // The server accepts the project, but it never shows up in the client's projects.
+    state.createProject.mockResolvedValue(AsyncResult.success(undefined));
+    state.waitForProject.mockRejectedValue(new Error("The project did not appear."));
+    state.completeOnboarding.mockRejectedValueOnce(new Error("offline"));
+    await using _screen = await mountWelcome();
+    using toastAdd = vi.spyOn(toastManager, "add");
 
-  await click("Import 1 project and start");
-  await vi.waitFor(() => expect(state.completeOnboarding).toHaveBeenCalledOnce());
-  // A failed completion hands the step back instead of leaving it importing.
-  await vi.waitFor(() => expect(button("Import 1 project and start").disabled).toBe(false));
-  expect(state.onDone).not.toHaveBeenCalled();
+    await click("Import 1 project and start");
+    await vi.waitFor(() => expect(state.completeOnboarding).toHaveBeenCalledOnce());
+    // A failed completion hands the step back instead of leaving it importing.
+    await vi.waitFor(() => expect(button("Import 1 project and start").disabled).toBe(false));
+    expect(state.onDone).not.toHaveBeenCalled();
 
-  await click("Import 1 project and start");
-  await vi.waitFor(() => expect(state.onDone).toHaveBeenCalledOnce());
-  expect(state.onDone).toHaveBeenCalledWith(undefined);
-  // The retry skips the project it already imported, but still counts its thread.
-  await vi.waitFor(() =>
-    expect(toastAdd).toHaveBeenCalledWith(
-      expect.objectContaining({ type: "success", title: "Imported 1 thread" }),
-    ),
-  );
-});
+    await click("Import 1 project and start");
+    await vi.waitFor(() => expect(state.onDone).toHaveBeenCalledOnce());
+    expect(state.onDone).toHaveBeenCalledWith(undefined);
+    // The retry skips the project it already imported, but still counts its thread.
+    await vi.waitFor(() =>
+      expect(toastAdd).toHaveBeenCalledWith(
+        expect.objectContaining({ type: "success", title: "Imported 1 thread" }),
+      ),
+    );
+  },
+);
 
-it("waits for a ready agent to start, and Start without an agent still finishes setup", async () => {
-  using _now = setup();
-  appAtomRegistry.set(state.providers as Atom.Writable<ReadonlyArray<ServerProvider>>, []);
-  await using _screen = await mountWelcome();
-  expect(button("Import 2 projects and start").disabled).toBe(true);
+// T3 Med's welcome page has no Projects section, phone step or version notice (docs/t3-med/FORK.md).
+it.skipIf(T3MED)(
+  "waits for a ready agent to start, and Start without an agent still finishes setup",
+  async () => {
+    using _now = setup();
+    appAtomRegistry.set(state.providers as Atom.Writable<ReadonlyArray<ServerProvider>>, []);
+    await using _screen = await mountWelcome();
+    expect(button("Import 2 projects and start").disabled).toBe(true);
 
-  await click("Start without an agent");
-  await vi.waitFor(() => expect(state.onDone).toHaveBeenCalledOnce());
-  expect(state.createProject).toHaveBeenCalledTimes(2);
-});
+    await click("Start without an agent");
+    await vi.waitFor(() => expect(state.onDone).toHaveBeenCalledOnce());
+    expect(state.createProject).toHaveBeenCalledTimes(2);
+  },
+);
 
-it("blocks leaving the page until the imported projects have landed", async () => {
+// T3 Med's welcome page has no Projects section, phone step or version notice (docs/t3-med/FORK.md).
+it.skipIf(T3MED)("blocks leaving the page until the imported projects have landed", async () => {
   using _now = setup();
   const creation = deferred<void>();
   state.createProject.mockImplementationOnce(async (input: CreateProjectInput) => {
@@ -507,50 +525,59 @@ it("blocks leaving the page until the imported projects have landed", async () =
   expect(state.createProject).toHaveBeenCalledTimes(2);
 });
 
-it("gives projects a later scan finds the default, unless the main box was unchecked", async () => {
-  using _now = setup();
-  await using _screen = await mountWelcome();
-  // Turning on another agent rescans and finds a recent project the user has not seen.
-  const findProject = (path: string) =>
-    act(async () =>
-      appAtomRegistry.set(candidatesAtom(), [
-        ...appAtomRegistry.get(candidatesAtom()),
-        candidate(path),
-      ]),
-    );
+// T3 Med's welcome page has no Projects section, phone step or version notice (docs/t3-med/FORK.md).
+it.skipIf(T3MED)(
+  "gives projects a later scan finds the default, unless the main box was unchecked",
+  async () => {
+    using _now = setup();
+    await using _screen = await mountWelcome();
+    // Turning on another agent rescans and finds a recent project the user has not seen.
+    const findProject = (path: string) =>
+      act(async () =>
+        appAtomRegistry.set(candidatesAtom(), [
+          ...appAtomRegistry.get(candidatesAtom()),
+          candidate(path),
+        ]),
+      );
 
-  await click("Review all 2");
-  await click("Select none");
-  await findProject("/projects/third");
-  await vi.waitFor(() => expect(button("Import 1 project and start").disabled).toBe(false));
+    await click("Review all 2");
+    await click("Select none");
+    await findProject("/projects/third");
+    await vi.waitFor(() => expect(button("Import 1 project and start").disabled).toBe(false));
 
-  const importProjects = document.querySelector<HTMLElement>('[role="checkbox"]');
-  await act(async () => importProjects?.click());
-  await findProject("/projects/fourth");
-  await vi.waitFor(() => expect(button("Start").disabled).toBe(false));
-});
-
-it("keeps the project choice across a visit to Settings until setup finishes", async () => {
-  using _now = setup();
-  {
-    await using _first = await mountWelcome();
     const importProjects = document.querySelector<HTMLElement>('[role="checkbox"]');
     await act(async () => importProjects?.click());
+    await findProject("/projects/fourth");
     await vi.waitFor(() => expect(button("Start").disabled).toBe(false));
-  }
-  // Coming back from Settings mounts the page again.
-  {
-    await using _second = await mountWelcome();
-    expect(button("Start").disabled).toBe(false);
-    await click("Start");
-    await vi.waitFor(() => expect(state.onDone).toHaveBeenCalledOnce());
-    expect(state.createProject).not.toHaveBeenCalled();
-  }
-  await using _third = await mountWelcome();
-  expect(button("Import 2 projects and start").disabled).toBe(false);
-});
+  },
+);
 
-it("stays busy while setup saves after an import with nothing to open", async () => {
+// T3 Med's welcome page has no Projects section, phone step or version notice (docs/t3-med/FORK.md).
+it.skipIf(T3MED)(
+  "keeps the project choice across a visit to Settings until setup finishes",
+  async () => {
+    using _now = setup();
+    {
+      await using _first = await mountWelcome();
+      const importProjects = document.querySelector<HTMLElement>('[role="checkbox"]');
+      await act(async () => importProjects?.click());
+      await vi.waitFor(() => expect(button("Start").disabled).toBe(false));
+    }
+    // Coming back from Settings mounts the page again.
+    {
+      await using _second = await mountWelcome();
+      expect(button("Start").disabled).toBe(false);
+      await click("Start");
+      await vi.waitFor(() => expect(state.onDone).toHaveBeenCalledOnce());
+      expect(state.createProject).not.toHaveBeenCalled();
+    }
+    await using _third = await mountWelcome();
+    expect(button("Import 2 projects and start").disabled).toBe(false);
+  },
+);
+
+// T3 Med's welcome page has no Projects section, phone step or version notice (docs/t3-med/FORK.md).
+it.skipIf(T3MED)("stays busy while setup saves after an import with nothing to open", async () => {
   using _now = setup();
   appAtomRegistry.set(candidatesAtom(), [candidate("/projects/first")]);
   state.importThreads.mockResolvedValue(AsyncResult.success({ importedCount: 0, skippedCount: 1 }));
@@ -569,56 +596,65 @@ it("stays busy while setup saves after an import with nothing to open", async ()
   expect(state.createProject).toHaveBeenCalledOnce();
 });
 
-it("leaves projects already in T3 Code out of the default import, unless the box is checked", async () => {
-  using _now = setup();
-  const existing = ProjectId.make("existing");
-  const justAdded = ProjectId.make("just-added");
-  appAtomRegistry.set(projectsAtom(), [
-    { id: existing, environmentId: primaryId, workspaceRoot: "/projects/first" },
-    // Added a moment ago, so the cached scan does not know it exists yet.
-    { id: justAdded, environmentId: primaryId, workspaceRoot: "/projects/second" },
-  ]);
-  appAtomRegistry.set(candidatesAtom(), [
-    candidate("/projects/first", { alreadyImported: true, projectId: existing }),
-    candidate("/projects/second"),
-    candidate("/projects/third"),
-  ]);
-  {
+// T3 Med's welcome page has no Projects section, phone step or version notice (docs/t3-med/FORK.md).
+it.skipIf(T3MED)(
+  "leaves projects already in T3 Code out of the default import, unless the box is checked",
+  async () => {
+    using _now = setup();
+    const existing = ProjectId.make("existing");
+    const justAdded = ProjectId.make("just-added");
+    appAtomRegistry.set(projectsAtom(), [
+      { id: existing, environmentId: primaryId, workspaceRoot: "/projects/first" },
+      // Added a moment ago, so the cached scan does not know it exists yet.
+      { id: justAdded, environmentId: primaryId, workspaceRoot: "/projects/second" },
+    ]);
+    appAtomRegistry.set(candidatesAtom(), [
+      candidate("/projects/first", { alreadyImported: true, projectId: existing }),
+      candidate("/projects/second"),
+      candidate("/projects/third"),
+    ]);
+    {
+      await using _screen = await mountWelcome();
+      await vi.waitFor(() => expect(pageText()).toContain("Import 1 project and their threads"));
+    }
+
+    // With every project already in T3 Code, checking the box still picks them.
+    appAtomRegistry.set(candidatesAtom(), appAtomRegistry.get(candidatesAtom()).slice(0, 2));
     await using _screen = await mountWelcome();
-    await vi.waitFor(() => expect(pageText()).toContain("Import 1 project and their threads"));
-  }
+    const importProjects = document.querySelector<HTMLElement>('[role="checkbox"]');
+    await act(async () => importProjects?.click());
+    await vi.waitFor(() => expect(pageText()).toContain("Import 2 projects and their threads"));
+    expect(button("Import threads and start").disabled).toBe(false);
+  },
+);
 
-  // With every project already in T3 Code, checking the box still picks them.
-  appAtomRegistry.set(candidatesAtom(), appAtomRegistry.get(candidatesAtom()).slice(0, 2));
-  await using _screen = await mountWelcome();
-  const importProjects = document.querySelector<HTMLElement>('[role="checkbox"]');
-  await act(async () => importProjects?.click());
-  await vi.waitFor(() => expect(pageText()).toContain("Import 2 projects and their threads"));
-  expect(button("Import threads and start").disabled).toBe(false);
-});
+// T3 Med's welcome page has no Projects section, phone step or version notice (docs/t3-med/FORK.md).
+it.skipIf(T3MED)(
+  "keeps the started projects checked when the page opens again after a quit",
+  async () => {
+    using _now = setup();
+    const imported = deferred<{ importedCount: number; skippedCount: number }>();
+    state.importThreads.mockImplementationOnce(async () =>
+      AsyncResult.success(await imported.promise),
+    );
+    {
+      await using _first = await mountWelcome();
+      await click("Import 2 projects and start");
+      await vi.waitFor(() => expect(state.importThreads).toHaveBeenCalledOnce());
+    }
+    // The app quit during the first project's history; it now exists in T3 Code.
+    const [first] = appAtomRegistry.get(projectsAtom());
+    appAtomRegistry.set(candidatesAtom(), [
+      candidate("/projects/first", { alreadyImported: true, projectId: first!.id }),
+      candidate("/projects/second"),
+    ]);
+    await using _second = await mountWelcome();
+    await vi.waitFor(() => expect(pageText()).toContain("Import 2 projects and their threads"));
+  },
+);
 
-it("keeps the started projects checked when the page opens again after a quit", async () => {
-  using _now = setup();
-  const imported = deferred<{ importedCount: number; skippedCount: number }>();
-  state.importThreads.mockImplementationOnce(async () =>
-    AsyncResult.success(await imported.promise),
-  );
-  {
-    await using _first = await mountWelcome();
-    await click("Import 2 projects and start");
-    await vi.waitFor(() => expect(state.importThreads).toHaveBeenCalledOnce());
-  }
-  // The app quit during the first project's history; it now exists in T3 Code.
-  const [first] = appAtomRegistry.get(projectsAtom());
-  appAtomRegistry.set(candidatesAtom(), [
-    candidate("/projects/first", { alreadyImported: true, projectId: first!.id }),
-    candidate("/projects/second"),
-  ]);
-  await using _second = await mountWelcome();
-  await vi.waitFor(() => expect(pageText()).toContain("Import 2 projects and their threads"));
-});
-
-it("keeps the project controls when a later scan fails", async () => {
+// T3 Med's welcome page has no Projects section, phone step or version notice (docs/t3-med/FORK.md).
+it.skipIf(T3MED)("keeps the project controls when a later scan fails", async () => {
   using _now = setup();
   await using _screen = await mountWelcome();
   state.scanError = "The scan timed out.";
@@ -643,27 +679,31 @@ it("keeps saved picks when Start comes before the project list loads", async () 
   expect(localStorage.getItem(welcomeImportSelectionKey(primaryId))).toBe(saved);
 });
 
-it("offers Update for a signed-in agent whose version is broken, and keeps Start off", async () => {
-  using _now = setup();
-  appAtomRegistry.set(state.providers as Atom.Writable<ReadonlyArray<ServerProvider>>, [
-    {
-      ...readyClaude,
-      compatibilityAdvisory: {
-        status: "broken",
-        message: "Update Claude Code to 2.0 or later.",
-        recommendedVersion: "2.0.0",
-        recommendedRange: null,
+// T3 Med's welcome page has no Projects section, phone step or version notice (docs/t3-med/FORK.md).
+it.skipIf(T3MED)(
+  "offers Update for a signed-in agent whose version is broken, and keeps Start off",
+  async () => {
+    using _now = setup();
+    appAtomRegistry.set(state.providers as Atom.Writable<ReadonlyArray<ServerProvider>>, [
+      {
+        ...readyClaude,
+        compatibilityAdvisory: {
+          status: "broken",
+          message: "Update Claude Code to 2.0 or later.",
+          recommendedVersion: "2.0.0",
+          recommendedRange: null,
+        },
       },
-    },
-  ]);
-  await using _screen = await mountWelcome();
-  await vi.waitFor(() => expect(pageText()).toContain("Update Claude Code to 2.0 or later."));
-  const update = [...document.querySelectorAll("a")].find(
-    (element) => element.textContent?.trim() === "Update",
-  );
-  expect(update?.getAttribute("href")).toContain("/settings/providers");
-  expect(button("Import 2 projects and start").disabled).toBe(true);
-});
+    ]);
+    await using _screen = await mountWelcome();
+    await vi.waitFor(() => expect(pageText()).toContain("Update Claude Code to 2.0 or later."));
+    const update = [...document.querySelectorAll("a")].find(
+      (element) => element.textContent?.trim() === "Update",
+    );
+    expect(update?.getAttribute("href")).toContain("/settings/providers");
+    expect(button("Import 2 projects and start").disabled).toBe(true);
+  },
+);
 
 it("checks an agent again once its install command finishes in the setup terminal", async () => {
   using _now = setup();
@@ -753,64 +793,71 @@ it("starts without importing when this connection cannot import projects", async
   expect(state.createProject).not.toHaveBeenCalled();
 });
 
-it("says the phone is set up only once this computer is shared with the signed-in account", async () => {
-  using _now = setup();
-  state.cloud = true;
-  state.auth = { isLoaded: true, isSignedIn: true, userId: "user_1" };
-  appAtomRegistry.set(
-    sessionAtom(primaryId),
-    AsyncResult.success(
-      session([AuthOrchestrationOperateScope, AuthRelayReadScope, AuthRelayWriteScope]),
-    ),
-  );
-  state.linkError = "Could not read T3 Connect link state.";
-  await using _screen = await mountWelcome();
-  await click("Set up");
-  // A failed read says so instead of asking to share the computer again.
-  await vi.waitFor(() => expect(pageText()).toContain("Could not check T3 Connect."));
-  expect(pageText()).not.toContain("Set up T3 Connect");
+// T3 Med's welcome page has no Projects section, phone step or version notice (docs/t3-med/FORK.md).
+it.skipIf(T3MED)(
+  "says the phone is set up only once this computer is shared with the signed-in account",
+  async () => {
+    using _now = setup();
+    state.cloud = true;
+    state.auth = { isLoaded: true, isSignedIn: true, userId: "user_1" };
+    appAtomRegistry.set(
+      sessionAtom(primaryId),
+      AsyncResult.success(
+        session([AuthOrchestrationOperateScope, AuthRelayReadScope, AuthRelayWriteScope]),
+      ),
+    );
+    state.linkError = "Could not read T3 Connect link state.";
+    await using _screen = await mountWelcome();
+    await click("Set up");
+    // A failed read says so instead of asking to share the computer again.
+    await vi.waitFor(() => expect(pageText()).toContain("Could not check T3 Connect."));
+    expect(pageText()).not.toContain("Set up T3 Connect");
 
-  state.linkError = null;
-  await act(async () =>
-    appAtomRegistry.set(state.linkState as Atom.Writable<EnvironmentCloudLinkStateResult | null>, {
-      linked: false,
-      cloudUserId: null,
-      relayUrl: null,
-      relayIssuer: null,
-      publishAgentActivity: false,
-    }),
-  );
-  // Signed in, but "Not now" on the share step left this computer unreachable.
-  await vi.waitFor(() => expect(pageText()).toContain("Set up T3 Connect"));
-
-  const share = (reachability: EnvironmentCloudLinkStateResult["reachability"]) =>
-    act(async () =>
+    state.linkError = null;
+    await act(async () =>
       appAtomRegistry.set(
         state.linkState as Atom.Writable<EnvironmentCloudLinkStateResult | null>,
         {
-          linked: true,
-          cloudUserId: "user_1",
+          linked: false,
+          cloudUserId: null,
           relayUrl: null,
           relayIssuer: null,
-          managedTunnelActive: true,
-          publishAgentActivity: true,
-          reachability,
+          publishAgentActivity: false,
         },
       ),
     );
-  const checkedAt = "2026-01-01T00:00:00.000Z";
-  await share({
-    status: "unreachable",
-    checkedAt,
-    cause: "connector_not_running",
-    reason: "The tunnel is not running.",
-    hint: null,
-    fix: "Turn T3 Connect off and on.",
-  });
-  await vi.waitFor(() => expect(pageText()).toContain("Check T3 Connect"));
-  expect(pageText()).not.toContain("Your phone can reach this computer.");
+    // Signed in, but "Not now" on the share step left this computer unreachable.
+    await vi.waitFor(() => expect(pageText()).toContain("Set up T3 Connect"));
 
-  await share({ status: "reachable", checkedAt, readyConnections: 4, protocol: "quic" });
-  await vi.waitFor(() => expect(pageText()).toContain("Your phone can reach this computer."));
-  expect(pageText()).not.toContain("Check T3 Connect");
-});
+    const share = (reachability: EnvironmentCloudLinkStateResult["reachability"]) =>
+      act(async () =>
+        appAtomRegistry.set(
+          state.linkState as Atom.Writable<EnvironmentCloudLinkStateResult | null>,
+          {
+            linked: true,
+            cloudUserId: "user_1",
+            relayUrl: null,
+            relayIssuer: null,
+            managedTunnelActive: true,
+            publishAgentActivity: true,
+            reachability,
+          },
+        ),
+      );
+    const checkedAt = "2026-01-01T00:00:00.000Z";
+    await share({
+      status: "unreachable",
+      checkedAt,
+      cause: "connector_not_running",
+      reason: "The tunnel is not running.",
+      hint: null,
+      fix: "Turn T3 Connect off and on.",
+    });
+    await vi.waitFor(() => expect(pageText()).toContain("Check T3 Connect"));
+    expect(pageText()).not.toContain("Your phone can reach this computer.");
+
+    await share({ status: "reachable", checkedAt, readyConnections: 4, protocol: "quic" });
+    await vi.waitFor(() => expect(pageText()).toContain("Your phone can reach this computer."));
+    expect(pageText()).not.toContain("Check T3 Connect");
+  },
+);

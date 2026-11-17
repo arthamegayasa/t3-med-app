@@ -7,6 +7,7 @@ import { render } from "../../../test/render";
 import { TYPOGRAPHY_ADVANCED_STORAGE_KEY } from "../../appearanceFonts";
 import { getLocalStorageItem, removeLocalStorageItem } from "../../hooks/useLocalStorage";
 import { TypographySection } from "./TypographySettings";
+import { T3MED } from "../../med/t3med";
 
 const state = vi.hoisted(() => ({ searchTargetId: null as string | null }));
 
@@ -33,11 +34,15 @@ function setup(searchTargetId: string | null) {
 }
 
 describe("TypographySection", () => {
-  it("persists the advanced flag the terminal reads when a deep link targets an advanced row", async () => {
-    using _storage = setup("terminal-font");
-    await using screen = await render(<TypographySection />);
+  // T3 Med has no Terminal font row (docs/t3-med/FORK.md).
+  it.skipIf(T3MED)(
+    "persists the advanced flag the terminal reads when a deep link targets an advanced row",
+    async () => {
+      using _storage = setup("terminal-font");
+      await using screen = await render(<TypographySection />);
 
-    await expect.element(screen.getByRole("heading", { name: "Terminal font" })).toBeVisible();
-    expect(getLocalStorageItem(TYPOGRAPHY_ADVANCED_STORAGE_KEY, Schema.Boolean)).toBe(true);
-  });
+      await expect.element(screen.getByRole("heading", { name: "Terminal font" })).toBeVisible();
+      expect(getLocalStorageItem(TYPOGRAPHY_ADVANCED_STORAGE_KEY, Schema.Boolean)).toBe(true);
+    },
+  );
 });

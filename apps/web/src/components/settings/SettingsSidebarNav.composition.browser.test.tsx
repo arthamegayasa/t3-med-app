@@ -5,6 +5,7 @@ import { act, render } from "../../../test/render";
 import { SidebarProvider } from "../ui/sidebar";
 import { SettingsSidebarNav } from "./SettingsSidebarNav";
 import { SETTINGS_NAV_GROUPS, SETTINGS_SECTION_LABELS } from "./settingsSearch";
+import { T3MED } from "../../med/t3med";
 
 vi.mock("./useAvailableSettingsSearchItems", () => ({
   useAvailableSettingsSearchItems: () => [
@@ -71,7 +72,8 @@ it("opens search from the physical Slash and F keys on non-US layouts", async ()
   }
 });
 
-it("moves Tab through every settings section", async () => {
+// T3 Med's Settings has no Code group and fewer pages (docs/t3-med/FORK.md).
+it.skipIf(T3MED)("moves Tab through every settings section", async () => {
   await page.viewport(1280, 800);
   await using _screen = await renderNav();
   await userEvent.click(page.getByRole("combobox", { name: "Search settings" }));
@@ -89,25 +91,29 @@ it("moves Tab through every settings section", async () => {
   expect(tabbed).toEqual(sections);
 });
 
-it.each([1280, 390])("names each group by a heading outside it at %ipx wide", async (width) => {
-  await page.viewport(width, 800);
-  await using _screen = await renderNav();
+// T3 Med's Settings has no Code group and fewer pages (docs/t3-med/FORK.md).
+it.skipIf(T3MED).each([1280, 390])(
+  "names each group by a heading outside it at %ipx wide",
+  async (width) => {
+    await page.viewport(width, 800);
+    await using _screen = await renderNav();
 
-  for (const name of ["Agents", "Code", "Connections"]) {
-    const heading = page.getByRole("heading", { name, level: 3 });
-    await expect.element(heading).toBeInTheDocument();
-    const group = page.getByRole("group", { name }).element();
-    expect(group.getAttribute("aria-labelledby")).toBe(heading.element().id);
-    expect(group.contains(heading.element()), `the ${name} heading is inside its group`).toBe(
-      false,
-    );
-  }
-  const groups = page.getByRole("group").elements();
-  expect(groups).toHaveLength(SETTINGS_NAV_GROUPS.length);
-  for (const group of groups) {
-    const first = group.querySelector("[data-settings-section]")?.textContent;
-    const heading = document.getElementById(group.getAttribute("aria-labelledby") ?? "");
-    expect(heading?.tagName, `the group starting at ${first} has no heading`).toBe("H3");
-  }
-  expect(page.getByRole("tree").query()).toBeNull();
-});
+    for (const name of ["Agents", "Code", "Connections"]) {
+      const heading = page.getByRole("heading", { name, level: 3 });
+      await expect.element(heading).toBeInTheDocument();
+      const group = page.getByRole("group", { name }).element();
+      expect(group.getAttribute("aria-labelledby")).toBe(heading.element().id);
+      expect(group.contains(heading.element()), `the ${name} heading is inside its group`).toBe(
+        false,
+      );
+    }
+    const groups = page.getByRole("group").elements();
+    expect(groups).toHaveLength(SETTINGS_NAV_GROUPS.length);
+    for (const group of groups) {
+      const first = group.querySelector("[data-settings-section]")?.textContent;
+      const heading = document.getElementById(group.getAttribute("aria-labelledby") ?? "");
+      expect(heading?.tagName, `the group starting at ${first} has no heading`).toBe("H3");
+    }
+    expect(page.getByRole("tree").query()).toBeNull();
+  },
+);
