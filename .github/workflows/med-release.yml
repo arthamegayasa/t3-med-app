@@ -35,9 +35,7 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.version }}
       tag: ${{ steps.version.outputs.tag }}
-      upstream: ${{ steps.version.outputs.upstream }}
       installer: ${{ steps.verify.outputs.installer }}
-      size: ${{ steps.verify.outputs.size }}
       sha256: ${{ steps.verify.outputs.sha256 }}
     steps:
       # By hand, as upstream's release-desktop.yml checks out. actions/checkout fails here on
@@ -58,8 +56,25 @@ jobs:
       - name: Setup dependencies
         uses: ./.github/actions/setup-ci-deps
 
+      # Only what is on med is released. The checkout above holds one commit; this adds the
+      # commits (no files) behind it and behind med, and the release tags, which is what the
+      # question, the version and the release notes need. A tag on any other commit, and a
+      # manual run started on another branch, stop here.
+      - name: Refuse a commit that is not on med
+        shell: bash
+        env:
+          GIT_TERMINAL_PROMPT: "0"
+        run: |
+          git fetch --no-tags --filter=tree:0 --unshallow origin \
+            "+refs/heads/med:refs/remotes/origin/med" "+refs/tags/med-v*:refs/tags/med-v*"
+          node scripts/med/release-commit.ts \
+            --event "$GITHUB_EVENT_NAME" \
+            --ref "$GITHUB_REF" \
+            --sha "$GITHUB_SHA"
+
       # A pushed tag names its version; a manual run takes its input, or the next version. A
-      # version that is not above every existing release is refused here, before anything builds.
+      # version that is not above every release, and every tag left by a build that failed, is
+      # refused here, before anything builds. This token is not shown draft releases.
       - name: Resolve the version
         id: version
         shell: bash
@@ -68,10 +83,12 @@ jobs:
           REQUESTED_VERSION: ${{ inputs.version }}
         run: |
           existing="$(gh release list -R "$GITHUB_REPOSITORY" --limit 500 --json tagName --jq '[.[].tagName] | join(",")')"
+          tags="$(git tag --list 'med-v*' | tr '\n' ',')"
           node scripts/med/release-version.ts \
             --ref "$GITHUB_REF" \
             --requested "$REQUESTED_VERSION" \
-            --existing "$existing" | tee -a "$GITHUB_OUTPUT"
+            --existing "$existing" \
+            --tags "$tags" | tee -a "$GITHUB_OUTPUT"
 
       - name: Add the Rust target
         shell: bash
@@ -79,15 +96,18 @@ jobs:
 
       # The same script the owner runs by hand. It builds upstream's resource monitor, then runs
       # upstream's scripts/build-desktop-artifact.ts with the fork's identity and update feed.
-      # Unsigned: this repository has no code-signing certificate and no secret.
+      # Unsigned: this repository has no code-signing certificate and no secret. The stage
+      # folder is kept for the next step, which reads the installer's configuration from it.
       - name: Build the installer
         shell: cmd
         env:
           MED_VERSION: ${{ steps.version.outputs.version }}
-        run: call build-t3-med-installer.cmd --build-version %MED_VERSION%
+        run: call build-t3-med-installer.cmd --build-version %MED_VERSION% --keep-stage
 
-      # Reads the update feed out of the installer itself, and checks the published metadata
-      # against the installer's own bytes. A package that names any other feed is not released.
+      # Reads the update feed and the app's own manifest out of the installer itself, checks the
+      # published metadata against the installer's bytes, and reads the configuration the
+      # installer was made from. Not released: a package that names any other feed, carries a
+      # version other than the one being released, or would delete app data on uninstall.
       - name: Verify the packaged update configuration
         id: verify
         shell: bash
@@ -97,7 +117,7 @@ jobs:
           installer="release/T3-Med-$MED_VERSION-x64.exe"
           unpacked="$RUNNER_TEMP/med-installer"
           7z e "$installer" "-o$unpacked/nsis" app-64.7z -r -y > /dev/null
-          7z e "$unpacked/nsis/app-64.7z" "-o$unpacked/app" app-update.yml -r -y > /dev/null
+          7z e "$unpacked/nsis/app-64.7z" "-o$unpacked/app" app-update.yml app.asar -r -y > /dev/null
           echo "app-update.yml in the installer:"
           cat "$unpacked/app/app-update.yml"
           echo "latest.yml:"
@@ -106,7 +126,29 @@ jobs:
             --version "$MED_VERSION" \
             --installer "$installer" \
             --latest-yml release/latest.yml \
-            --app-update-yml "$unpacked/app/app-update.yml" | tee -a "$GITHUB_OUTPUT"
+            --app-update-yml "$unpacked/app/app-update.yml" \
+            --app-asar "$unpacked/app/app.asar" | tee -a "$GITHUB_OUTPUT"
+
+      # What changed since the release before: the fork's own commit subjects, an upstream merge
+      # as one line, then the fixed lines. The app shows the list above the "Full changelog"
+      # fold as the update's "What's changed"; the rest is for the release page.
+      - name: Write the release notes
+        shell: bash
+        env:
+          MED_VERSION: ${{ steps.version.outputs.version }}
+          MED_UPSTREAM: ${{ steps.version.outputs.upstream }}
+          MED_INSTALLER: ${{ steps.verify.outputs.installer }}
+          MED_SIZE: ${{ steps.verify.outputs.size }}
+          MED_SHA256: ${{ steps.verify.outputs.sha256 }}
+        run: |
+          node scripts/med/release-notes.ts \
+            --version "$MED_VERSION" \
+            --head "$GITHUB_SHA" \
+            --upstream "$MED_UPSTREAM" \
+            --installer "$MED_INSTALLER" \
+            --size "$MED_SIZE" \
+            --sha256 "$MED_SHA256" > release/release-notes.md
+          cat release/release-notes.md
 
       - name: Upload the release files
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -116,6 +158,7 @@ jobs:
             release/T3-Med-${{ steps.version.outputs.version }}-x64.exe
             release/T3-Med-${{ steps.version.outputs.version }}-x64.exe.blockmap
             release/latest.yml
+            release/release-notes.md
           if-no-files-found: error
           compression-level: 0
           retention-days: 7
@@ -131,9 +174,7 @@ jobs:
     env:
       MED_VERSION: ${{ needs.build.outputs.version }}
       MED_TAG: ${{ needs.build.outputs.tag }}
-      MED_UPSTREAM: ${{ needs.build.outputs.upstream }}
       MED_INSTALLER: ${{ needs.build.outputs.installer }}
-      MED_SIZE: ${{ needs.build.outputs.size }}
       MED_SHA256: ${{ needs.build.outputs.sha256 }}
     steps:
       - name: Download the release files
@@ -146,32 +187,15 @@ jobs:
         run: echo "$MED_SHA256  release/$MED_INSTALLER" | sha256sum --check
 
       # gh uploads the files to a draft and publishes it when they are all there, so an installed
-      # app never finds a release without its latest.yml. The app shows the list above the
-      # "Full changelog" fold as the update's "What's changed"; the rest is for the release page.
+      # app never finds a release without its latest.yml. The notes were written by the build.
       - name: Publish the GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          cat > "$RUNNER_TEMP/notes.md" <<EOF
-          - T3 Med $MED_VERSION for Windows (x64), built on T3 Code $MED_UPSTREAM.
-
-          <details>
-          <summary>Full changelog</summary>
-
-          $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/commits/$MED_TAG
-
-          </details>
-
-          An installed T3 Med finds this release by itself and offers it from the update button in its sidebar. To install T3 Med for the first time, download \`$MED_INSTALLER\`.
-
-          The installer is not code-signed. SHA-256 of \`$MED_INSTALLER\` ($MED_SIZE bytes):
-
-          \`$MED_SHA256\`
-          EOF
           gh release create "$MED_TAG" -R "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \
             --title "T3 Med $MED_VERSION" \
-            --notes-file "$RUNNER_TEMP/notes.md" \
+            --notes-file release/release-notes.md \
             --latest \
             "release/$MED_INSTALLER" \
             "release/$MED_INSTALLER.blockmap" \

@@ -43,6 +43,44 @@ describe("resolveReleaseVersion", () => {
     );
   });
 
+  it("never reuses the number of a tag whose build failed and left no release", () => {
+    const tags = [...existing, "med-v2026.11.3"];
+    assert.deepEqual(
+      resolveReleaseVersion({ ref: "refs/heads/med", requested: "", existing, tags, today }),
+      { ok: true, version: "2026.11.4", tag: "med-v2026.11.4" },
+    );
+    assert.isFalse(
+      resolveReleaseVersion({
+        ref: "refs/heads/med",
+        requested: "2026.11.3",
+        existing,
+        tags,
+        today,
+      }).ok,
+    );
+    // The pushed tag itself is among the tags, and is the one this run builds.
+    assert.deepEqual(
+      resolveReleaseVersion({
+        ref: "refs/tags/med-v2026.11.3",
+        requested: "",
+        existing,
+        tags,
+        today,
+      }),
+      { ok: true, version: "2026.11.3", tag: "med-v2026.11.3" },
+    );
+    // A second run for a tag that already has its release is refused before it builds.
+    assert.isFalse(
+      resolveReleaseVersion({
+        ref: "refs/tags/med-v2026.11.3",
+        requested: "",
+        existing: tags,
+        tags,
+        today,
+      }).ok,
+    );
+  });
+
   it("refuses a tag or a version of another shape", () => {
     for (const ref of [
       "refs/tags/v0.1.11",

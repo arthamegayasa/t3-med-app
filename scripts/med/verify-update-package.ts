@@ -1,16 +1,21 @@
 /**
- * T3 Med: checks a built installer before the release workflow publishes it, from what is in
- * the package and not from source: the `app-update.yml` taken out of the installer, the only
- * place an installed app reads its feed from, and the `latest.yml` it verifies a download by.
+ * T3 Med: checks a built installer before the release workflow publishes it, from the package
+ * and not from source: its `app-update.yml` (the feed), the `latest.yml` beside it, the version
+ * inside its `app.asar`, and the staged `package.json` electron-builder made the installer
+ * from, which is not in the package.
  */
 // @effect-diagnostics nodeBuiltinImport:off - A command-line entry point with no Effect runtime.
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeProcess from "node:process";
 import * as NodeURL from "node:url";
 
-import { MED_RELEASE_OWNER, MED_RELEASE_REPO } from "@t3tools/shared/medRelease";
+import { extractFile } from "@electron/asar";
+import { MED_RELEASE_OWNER, MED_RELEASE_REPO, MED_UPDATE_FEED } from "@t3tools/shared/medRelease";
+
+import { MED_APP_ID, MED_PACKAGE_NAME } from "../lib/med-identity.ts";
 
 /** The top-level `key: value` lines of a file electron-builder wrote. */
 function topLevelEntries(text: string): ReadonlyMap<string, string> {
@@ -122,6 +127,75 @@ export function checkLatestYml(text: string, installer: BuiltInstaller): Readonl
   return problems;
 }
 
+const record = (value: unknown): Record<string, unknown> =>
+  typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
+
+/**
+ * What is wrong with the manifest inside the packaged `app.asar`: the version the installed app
+ * reports, and compares a release with, must be the version being released.
+ */
+export function checkPackagedManifest(text: string, version: string): ReadonlyArray<string> {
+  const manifest = record(JSON.parse(text));
+  const problems: Array<string> = [];
+  if (manifest.version !== version) {
+    problems.push(`The packaged app is version ${String(manifest.version)}, not ${version}.`);
+  }
+  if (manifest.name !== MED_PACKAGE_NAME) {
+    problems.push(`The packaged app is named ${String(manifest.name)}, not ${MED_PACKAGE_NAME}.`);
+  }
+  return problems;
+}
+
+/**
+ * What is wrong with the configuration the installer was built from. Patient data is outside
+ * every folder the uninstaller knows; the one thing it can delete besides the program is
+ * Electron's profile, and only when this configuration says so.
+ */
+export function checkInstallerConfiguration(text: string, version: string): ReadonlyArray<string> {
+  const stage = record(JSON.parse(text));
+  const build = record(stage.build);
+  const nsis = record(build.nsis);
+  const problems: Array<string> = [];
+  if (nsis.deleteAppDataOnUninstall !== false) {
+    problems.push(
+      `The installer's deleteAppDataOnUninstall is ${String(nsis.deleteAppDataOnUninstall)}, not false: an uninstall would delete app data.`,
+    );
+  }
+  if (JSON.stringify(build.publish) !== JSON.stringify([MED_UPDATE_FEED])) {
+    problems.push(
+      `The installer is published to ${JSON.stringify(build.publish)}, not to the fork's releases alone.`,
+    );
+  }
+  if (build.appId !== MED_APP_ID) {
+    problems.push(`The installer's appId is ${String(build.appId)}, not ${MED_APP_ID}.`);
+  }
+  if (stage.version !== version) {
+    problems.push(`The installer was built as version ${String(stage.version)}, not ${version}.`);
+  }
+  return problems;
+}
+
+// The prefix of the folder upstream's packaging script stages a Windows build in.
+const STAGE_PREFIX = "t3code-desktop-win-stage-";
+
+/** The one stage folder a build run with `--keep-stage` left in the temp directory. */
+function keptStageFolder(): string {
+  const temp = NodeOS.tmpdir();
+  const stages = NodeFS.readdirSync(temp).filter((name) => name.startsWith(STAGE_PREFIX));
+  if (stages.length !== 1) {
+    NodeProcess.stderr.write(
+      `Expected one ${STAGE_PREFIX}* folder in ${temp}, from a build run with --keep-stage, and found ${stages.length}. Pass --stage <folder>.\n`,
+    );
+    NodeProcess.exit(2);
+  }
+  return NodePath.join(temp, stages[0]!);
+}
+
+function optionalArgument(name: string): string | undefined {
+  const index = NodeProcess.argv.indexOf(`--${name}`);
+  return index === -1 ? undefined : NodeProcess.argv[index + 1];
+}
+
 function argument(name: string): string {
   const index = NodeProcess.argv.indexOf(`--${name}`);
   const value = index === -1 ? undefined : NodeProcess.argv[index + 1];
@@ -148,6 +222,17 @@ function main(): void {
       : [`The installer is named ${installer.fileName}, not T3-Med-${version}-x64.exe.`]),
     ...checkAppUpdateYml(NodeFS.readFileSync(argument("app-update-yml"), "utf8")),
     ...checkLatestYml(NodeFS.readFileSync(argument("latest-yml"), "utf8"), installer),
+    ...checkPackagedManifest(
+      extractFile(argument("app-asar"), "package.json").toString("utf8"),
+      version,
+    ),
+    ...checkInstallerConfiguration(
+      NodeFS.readFileSync(
+        NodePath.join(optionalArgument("stage") ?? keptStageFolder(), "app", "package.json"),
+        "utf8",
+      ),
+      version,
+    ),
   ];
   if (problems.length > 0) {
     NodeProcess.stderr.write(`${problems.join("\n")}\n`);

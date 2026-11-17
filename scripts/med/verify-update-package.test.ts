@@ -2,7 +2,13 @@
 // writes: `app-update.yml` inside the installer, and `latest.yml` beside it.
 import { assert, describe, it } from "vite-plus/test";
 
-import { type BuiltInstaller, checkAppUpdateYml, checkLatestYml } from "./verify-update-package.ts";
+import {
+  type BuiltInstaller,
+  checkAppUpdateYml,
+  checkInstallerConfiguration,
+  checkLatestYml,
+  checkPackagedManifest,
+} from "./verify-update-package.ts";
 
 const APP_UPDATE = [
   "provider: github",
@@ -101,5 +107,72 @@ describe("checkLatestYml", () => {
     assert.isNotEmpty(checkLatestYml(elsewhere, installer));
     const two = LATEST.replace("path:", "  - url: T3-Med-2026.11.2-arm64.exe\npath:");
     assert.isNotEmpty(checkLatestYml(two, installer));
+  });
+});
+
+describe("checkPackagedManifest", () => {
+  const manifest = (fields: object) =>
+    JSON.stringify({ name: "t3med", version: "2026.11.3", main: "boot.cjs", ...fields });
+
+  it("accepts the app that carries the version being released", () => {
+    assert.deepEqual(checkPackagedManifest(manifest({}), "2026.11.3"), []);
+  });
+
+  it("refuses an app that would report another version than its tag", () => {
+    assert.deepEqual(checkPackagedManifest(manifest({ version: "0.1.9" }), "2026.11.3"), [
+      "The packaged app is version 0.1.9, not 2026.11.3.",
+    ]);
+    assert.deepEqual(checkPackagedManifest(manifest({ name: "t3code" }), "2026.11.3"), [
+      "The packaged app is named t3code, not t3med.",
+    ]);
+  });
+});
+
+describe("checkInstallerConfiguration", () => {
+  const fork = { provider: "github", owner: "arthamegayasa", repo: "t3-med-app" };
+  const stage = (build: object, version = "2026.11.3") =>
+    JSON.stringify({
+      name: "t3med",
+      version,
+      build: {
+        appId: "com.arthamegayasa.t3med",
+        publish: [{ ...fork, releaseType: "release" }],
+        nsis: { differentialPackage: true, deleteAppDataOnUninstall: false },
+        ...build,
+      },
+    });
+
+  it("accepts the configuration the fork's packaging writes", () => {
+    assert.deepEqual(checkInstallerConfiguration(stage({}), "2026.11.3"), []);
+  });
+
+  it("refuses an installer whose uninstall would delete app data", () => {
+    for (const nsis of [{ deleteAppDataOnUninstall: true }, { differentialPackage: true }]) {
+      const problems = checkInstallerConfiguration(stage({ nsis }), "2026.11.3");
+      assert.lengthOf(problems, 1);
+      assert.include(problems[0], "an uninstall would delete app data");
+    }
+  });
+
+  it("refuses any feed but the fork's, a second feed, another app id and another version", () => {
+    const upstream = { provider: "github", owner: "pingdotgg", repo: "t3code" };
+    for (const publish of [
+      [{ ...upstream, releaseType: "release" }],
+      [
+        { ...fork, releaseType: "release" },
+        { provider: "generic", url: "http://localhost:3000" },
+      ],
+      [{ ...fork, releaseType: "prerelease" }],
+      undefined,
+    ]) {
+      assert.lengthOf(checkInstallerConfiguration(stage({ publish }), "2026.11.3"), 1);
+    }
+    assert.deepEqual(
+      checkInstallerConfiguration(stage({ appId: "com.t3tools.t3code" }), "2026.11.3"),
+      ["The installer's appId is com.t3tools.t3code, not com.arthamegayasa.t3med."],
+    );
+    assert.deepEqual(checkInstallerConfiguration(stage({}, "0.1.9"), "2026.11.3"), [
+      "The installer was built as version 0.1.9, not 2026.11.3.",
+    ]);
   });
 });
