@@ -291,7 +291,7 @@ Only a test of a hidden control is listed. A test of behaviour that is still liv
 
 Upstream's own cases for the thread details card and panel, the details items, the popover of the panel store and the keybinding search pass untouched again.
 
-Three browser tests fail on Windows whatever the fork does, and failed the same way on `med` before: `appearanceFonts.browser.test.ts` (the numbered-list gutter), `files/AttachmentFilePreview.browser.test.tsx` (the source row at five lines, mixed heights), and in `packages/provider-acp` two unit tests (`clientPolicy.test.ts`, a symlink case; `clientTerminals.test.ts`, a shell case).
+Two browser tests fail on Windows whatever the fork does, and failed the same way on `med` before: `appearanceFonts.browser.test.ts` (the numbered-list gutter) and `files/AttachmentFilePreview.browser.test.tsx` (the source row at five lines, mixed heights). Two unit tests of `packages/provider-acp` fail on Windows in files the fork does not touch: a symlink case in `clientPolicy.test.ts` and a shell case in `clientTerminals.test.ts`.
 
 ## Updates
 
