@@ -1,3 +1,18 @@
+# T3 Med
+
+T3 Med is a neurologist's patient workspace: a Windows desktop app in which a chat with an AI agent files a patient's labs, plans and notes and reads them back. It is [T3 Code](https://github.com/pingdotgg/t3code) organised around patients instead of code projects.
+
+- **A personal project.** One doctor builds T3 Med for their own use, on top of T3 Code by [pingdotgg](https://github.com/pingdotgg/t3code). Nearly everything here is their work: thank you.
+- **No warranty, not a medical device.** T3 Med comes with no warranty, is not a medical device, and is not offered for clinical use by anyone else. The installer is not code-signed, so Windows warns before it runs.
+- **No patient data.** This repository holds no patient data. The app keeps patient data only on the user's own machine, in `~/.t3med`, and has no server of its own. What is typed into a chat goes to the AI provider the user signed in to, as in T3 Code.
+- **Getting it.** The Windows installer is on the [latest release](https://github.com/arthamegayasa/t3-med-app/releases/latest). An installed copy updates itself from these releases.
+- **What differs from T3 Code** is recorded in [docs/t3-med/FORK.md](./docs/t3-med/FORK.md).
+- **Licence.** T3 Code's [MIT licence](./LICENSE) is kept as it is, and T3 Med's changes are under the same licence.
+
+## T3 Code's own README
+
+Everything below is T3 Code's README as its authors wrote it. Its download links lead to T3 Code, not to T3 Med.
+
 <p align="center">
   <a href="https://t3.codes">
     <img src="./assets/prod/t3-black-web-icon-192x192.png" width="80" height="80" alt="T3 Code logo" />
