@@ -295,7 +295,7 @@ const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
 export const SidebarChromeFooter = memo(function SidebarChromeFooter() {
   return (
     <SidebarFooter>
-      <SidebarProviderUpdatePill />
+      {T3MED ? null : <SidebarProviderUpdatePill />}
       {T3MED ? null : <SidebarUpdateArchitectureWarning />}
       <SidebarUtilityMenu />
     </SidebarFooter>

@@ -77,6 +77,7 @@ import {
   settleCustomModelSave,
 } from "./customModelSaves.logic";
 import { getProviderRestartNotice } from "../ProviderUpdateLaunchNotification.logic";
+import { T3MED } from "../../med/t3med";
 import {
   getProviderVersionAdvisoryPresentation,
   PROVIDER_STATUS_STYLES,
@@ -1155,7 +1156,7 @@ export function ProviderInstanceCard({
                   {versionLabel}
                 </code>
               ) : null}
-              {versionAdvisoryNode}
+              {T3MED ? null : versionAdvisoryNode}
             </span>
             <span className="mt-0.5 flex items-start gap-1.5 text-xs leading-normal text-muted-foreground/80">
               {statusDotNode && !updateProgress ? (
@@ -1217,7 +1218,7 @@ export function ProviderInstanceCard({
         </Badge>
       ) : null}
       {versionCodeNode}
-      {versionAdvisoryNode}
+      {T3MED ? null : versionAdvisoryNode}
       <span
         inert={readOnly}
         aria-disabled={readOnly || undefined}

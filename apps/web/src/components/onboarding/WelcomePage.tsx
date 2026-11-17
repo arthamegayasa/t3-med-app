@@ -115,6 +115,7 @@ import { toastManager } from "../ui/toast";
 import { WorkspacePageHeader } from "../WorkspacePageHeader";
 import { cn } from "../../lib/utils";
 import { formatRelativeTime } from "../../timestampFormat";
+import { T3MED } from "../../med/t3med";
 
 const AGENT_ONBOARDING_THREAD_ID = ThreadId.make("onboarding-agent-setup");
 const SCAN_LIMIT_MESSAGE = "Scan limit reached. Some projects or conversations may be missing.";
@@ -248,7 +249,7 @@ export function WelcomePage({
     onDone: finish,
   });
   // Without import permission, starting simply skips the projects.
-  const selected = projectImport.canWrite ? projectImport.selected : [];
+  const selected = projectImport.canWrite && !T3MED ? projectImport.selected : [];
   const newCount = selected.filter(projectImport.isNew).length;
   const start = () => {
     keepChoicesRef.current = scans.some((scan) => scan.data === null);
@@ -290,7 +291,7 @@ export function WelcomePage({
                 projectImport={projectImport}
                 isImporting={isImporting}
               />
-              {showPhone ? <PhoneSection environmentId={environmentId} /> : null}
+              {showPhone && !T3MED ? <PhoneSection environmentId={environmentId} /> : null}
             </div>
             <div className="mt-6 flex flex-wrap items-center justify-between gap-3">
               {agentReady ? (
@@ -317,7 +318,7 @@ export function WelcomePage({
                 </Button>
               </div>
             </div>
-            <TelemetryNotice environmentId={environmentId} />
+            {T3MED ? null : <TelemetryNotice environmentId={environmentId} />}
           </div>
         </div>
       </div>
@@ -771,7 +772,7 @@ function ProjectsSection({
     setSelectedKeys,
     visibleImportError,
   } = projectImport;
-  if (scan === undefined) return null;
+  if (T3MED || scan === undefined) return null;
   if (scan.isPending && candidates.length === 0) {
     return (
       <WelcomeSection title="Projects">

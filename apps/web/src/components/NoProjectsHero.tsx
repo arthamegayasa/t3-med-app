@@ -9,12 +9,15 @@ import { Button } from "./ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "./ui/empty";
 import { SidebarInset } from "./ui/sidebar";
 import { WorkspacePageHeader } from "./WorkspacePageHeader";
+import { MedNoWorkspace } from "../med/MedNoWorkspace";
+import { T3MED } from "../med/t3med";
 
 export function NoProjectsHero() {
   const contentArea = workspaceAreaProps("home", 1, "Home");
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const { scratchEnvironmentId, startScratchThread } = useScratchProject();
   const scratchTargetEnvironmentId = scratchEnvironmentId(primaryEnvironmentId);
+  if (T3MED) return <MedNoWorkspace />;
 
   return (
     <SidebarInset
