@@ -41,7 +41,10 @@ it.live("t3 update refuses, and says how T3 Med is updated", () =>
       Effect.flip,
     );
     assert.strictEqual(error.message, MED_UPDATE_REFUSAL);
-    assert.include(MED_UPDATE_REFUSAL, "merging upstream");
+    // It says how each of the two ways of running T3 Med is updated.
+    assert.include(MED_UPDATE_REFUSAL, "Help > Check for Updates...");
+    assert.include(MED_UPDATE_REFUSAL, "start-t3-med.cmd");
+    assert.include(MED_UPDATE_REFUSAL, "Nothing was downloaded or changed.");
     // Refused before anything is looked up or written: the home stays empty.
     assert.deepStrictEqual(yield* Effect.promise(() => NodeFSP.readdir(baseDir)), []);
   }).pipe(Effect.scoped),

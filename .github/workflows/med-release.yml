@@ -1,0 +1,163 @@
+name: T3 Med release
+
+# T3 Med's own release, and the only workflow this fork runs: the Windows x64 installer and the
+# update metadata an installed T3 Med reads, published as a GitHub Release of this repository.
+# Nothing else is published anywhere. How to release, and what the version means, is in
+# docs/t3-med/FORK.md, "Updates".
+
+on:
+  push:
+    tags:
+      - "med-v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release, as <year>.<month>.<release> (2026.11.2). Empty: the next one."
+        required: false
+        default: ""
+        type: string
+
+# Each job asks for what it needs. The build never holds a token that can write.
+permissions: {}
+
+# Two releases never build at once: the second would not see the first when it checks its version.
+concurrency:
+  group: med-release
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build the Windows installer
+    runs-on: windows-2025
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+      upstream: ${{ steps.version.outputs.upstream }}
+      installer: ${{ steps.verify.outputs.installer }}
+      size: ${{ steps.verify.outputs.size }}
+      sha256: ${{ steps.verify.outputs.sha256 }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      # Upstream's own setup: Vite+, the Node.js and pnpm the repository pins, and `vp install`.
+      - name: Setup dependencies
+        uses: ./.github/actions/setup-ci-deps
+
+      # A pushed tag names its version; a manual run takes its input, or the next version. A
+      # version that is not above every existing release is refused here, before anything builds.
+      - name: Resolve the version
+        id: version
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REQUESTED_VERSION: ${{ inputs.version }}
+        run: |
+          existing="$(gh release list -R "$GITHUB_REPOSITORY" --limit 500 --json tagName --jq '[.[].tagName] | join(",")')"
+          node scripts/med/release-version.ts \
+            --ref "$GITHUB_REF" \
+            --requested "$REQUESTED_VERSION" \
+            --existing "$existing" | tee -a "$GITHUB_OUTPUT"
+
+      - name: Add the Rust target
+        shell: bash
+        run: rustup target add x86_64-pc-windows-msvc
+
+      # The same script the owner runs by hand. It builds upstream's resource monitor, then runs
+      # upstream's scripts/build-desktop-artifact.ts with the fork's identity and update feed.
+      # Unsigned: this repository has no code-signing certificate and no secret.
+      - name: Build the installer
+        shell: cmd
+        env:
+          MED_VERSION: ${{ steps.version.outputs.version }}
+        run: call build-t3-med-installer.cmd --build-version %MED_VERSION%
+
+      # Reads the update feed out of the installer itself, and checks the published metadata
+      # against the installer's own bytes. A package that names any other feed is not released.
+      - name: Verify the packaged update configuration
+        id: verify
+        shell: bash
+        env:
+          MED_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          installer="release/T3-Med-$MED_VERSION-x64.exe"
+          unpacked="$RUNNER_TEMP/med-installer"
+          7z e "$installer" "-o$unpacked/nsis" app-64.7z -r -y > /dev/null
+          7z e "$unpacked/nsis/app-64.7z" "-o$unpacked/app" app-update.yml -r -y > /dev/null
+          echo "app-update.yml in the installer:"
+          cat "$unpacked/app/app-update.yml"
+          echo "latest.yml:"
+          cat release/latest.yml
+          node scripts/med/verify-update-package.ts \
+            --version "$MED_VERSION" \
+            --installer "$installer" \
+            --latest-yml release/latest.yml \
+            --app-update-yml "$unpacked/app/app-update.yml" | tee -a "$GITHUB_OUTPUT"
+
+      - name: Upload the release files
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: med-release
+          path: |
+            release/T3-Med-${{ steps.version.outputs.version }}-x64.exe
+            release/T3-Med-${{ steps.version.outputs.version }}-x64.exe.blockmap
+            release/latest.yml
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+
+  publish:
+    name: Publish the release
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      # Creates the release and, for a manual run, its tag. Nothing else is written.
+      contents: write
+    env:
+      MED_VERSION: ${{ needs.build.outputs.version }}
+      MED_TAG: ${{ needs.build.outputs.tag }}
+      MED_UPSTREAM: ${{ needs.build.outputs.upstream }}
+      MED_INSTALLER: ${{ needs.build.outputs.installer }}
+      MED_SIZE: ${{ needs.build.outputs.size }}
+      MED_SHA256: ${{ needs.build.outputs.sha256 }}
+    steps:
+      - name: Download the release files
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: med-release
+          path: release
+
+      - name: Check the installer against the build's checksum
+        run: echo "$MED_SHA256  release/$MED_INSTALLER" | sha256sum --check
+
+      # gh uploads the files to a draft and publishes it when they are all there, so an installed
+      # app never finds a release without its latest.yml.
+      - name: Publish the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cat > "$RUNNER_TEMP/notes.md" <<EOF
+          T3 Med $MED_VERSION for Windows (x64), built on T3 Code $MED_UPSTREAM.
+
+          An installed T3 Med finds this release by itself and offers it from the update button in its sidebar. To install T3 Med for the first time, download \`$MED_INSTALLER\`.
+
+          The installer is not code-signed. SHA-256 of \`$MED_INSTALLER\` ($MED_SIZE bytes):
+
+          \`$MED_SHA256\`
+          EOF
+          gh release create "$MED_TAG" -R "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "T3 Med $MED_VERSION" \
+            --notes-file "$RUNNER_TEMP/notes.md" \
+            --latest \
+            "release/$MED_INSTALLER" \
+            "release/$MED_INSTALLER.blockmap" \
+            release/latest.yml
+          gh release view "$MED_TAG" -R "$GITHUB_REPOSITORY" --json url,isDraft,isPrerelease,assets \
+            --jq '{url, isDraft, isPrerelease, assets: [.assets[] | {name, size}]}'

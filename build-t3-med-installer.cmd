@@ -1,6 +1,9 @@
 @echo off
 rem Builds the T3 Med desktop installer for Windows into the release folder, with upstream's
-rem packaging script. Unsigned. See docs\t3-med\FORK.md, "The desktop app".
+rem packaging script. Unsigned. See docs\t3-med\FORK.md, "The desktop app" and "Updates".
+rem The release workflow (.github\workflows\med-release.yml) runs this same file with
+rem --build-version <version>. Without it the build carries upstream's manifest version, which
+rem is below every release, so an app installed from it offers the newest release at once.
 rem Needs: vp (Vite+), Python 3, Rust (rustup, the x86_64-pc-windows-msvc target) and the
 rem Visual Studio C++ build tools with a Windows SDK. Extra arguments are passed through,
 rem for example: build-t3-med-installer.cmd --keep-stage
@@ -9,7 +12,9 @@ cd /d "%~dp0"
 set "PATH=%LOCALAPPDATA%\vite-plus\bin;%USERPROFILE%\.cargo\bin;%PATH%"
 set "CI=true"
 
-rem An update feed is only ever written from these; T3 Med has none (FORK.md, Updates).
+rem Upstream's script reads an update feed and release links from these. T3 Med's feed is its
+rem own, set in scripts\med\desktop-package.ts whatever they say (FORK.md, Updates); cleared here
+rem so that nothing else is built from them either.
 set "GITHUB_REPOSITORY="
 set "T3CODE_DESKTOP_UPDATE_REPOSITORY="
 

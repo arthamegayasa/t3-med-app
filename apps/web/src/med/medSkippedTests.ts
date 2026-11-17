@@ -23,6 +23,12 @@ const NO_EDITOR_SHORTCUT = "T3 Med drops the open-in-editor shortcut.";
 
 const SKIPPED: ReadonlyArray<MedSkippedTest> = [
   {
+    file: "src/components/desktopUpdate.logic.test.ts",
+    name: /^desktop update UI helpers > falls back to upstream for an invalid configured repository: /,
+    reason:
+      "T3 Med's release links never fall back to upstream: they lead to the fork's repository and tag. Twin: medVersion.test.ts.",
+  },
+  {
     file: "src/components/ChatView.browser.test.tsx",
     name: "a machine chip stashed in one thread restores with its machine in another",
     reason: "T3 Med has one machine and no machine chip; the stash itself has a fork-owned test.",

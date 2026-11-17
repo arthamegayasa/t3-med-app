@@ -37,7 +37,7 @@ import {
   HOSTED_APP_CHANNEL,
   HOSTED_APP_CHANNEL_LABEL,
 } from "../../branding";
-import { AboutVersionTitle } from "./AboutVersionTitle";
+import { AboutVersionTitle } from "../../med/MedAboutVersionTitle";
 import { CliCommandSettingsRow } from "./CliCommandSettingsRow";
 import { MobileAppSettingsRow } from "./MobileAppSettingsRow";
 import {
@@ -2320,7 +2320,7 @@ export function AboutSettingsPanel() {
             }
           />
         ) : null}
-        {(isElectron || HOSTED_APP_CHANNEL) && !T3MED ? (
+        {isElectron || HOSTED_APP_CHANNEL ? (
           <AboutVersionSection />
         ) : (
           <>

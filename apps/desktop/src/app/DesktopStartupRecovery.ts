@@ -17,8 +17,9 @@ import type { BackendStartupFailure } from "../backend/DesktopBackendManager.ts"
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import * as DesktopObservability from "./DesktopObservability.ts";
 import * as DesktopState from "./DesktopState.ts";
+import { MED_RELEASES_URL, medReleaseUrl } from "@t3tools/shared/medRelease";
 
-const RELEASES_URL = "https://github.com/arthamegayasa/t3-med-app/releases";
+const RELEASES_URL = MED_RELEASES_URL;
 const LAST_STARTED_VERSION_FILE = "desktop-last-started-version";
 // Buttons are plain links to this host; will-navigate cancels them and runs the action.
 const ACTION_ORIGIN = "https://startup-recovery.invalid";
@@ -89,7 +90,7 @@ function describeOffer(offer: StartupRecoveryOffer): { text: string; action: str
       };
     case "Downloading":
       return {
-        text: `Downloading ${offer.version}${offer.percent === null ? "" : ` (${Math.floor(offer.percent / 10) * 10}%)`}. T3 Code restarts when the download is done.`,
+        text: `Downloading ${offer.version}${offer.percent === null ? "" : ` (${Math.floor(offer.percent / 10) * 10}%)`}. T3 Med restarts when the download is done.`,
         action: "",
       };
     case "Reinstall":
@@ -225,7 +226,7 @@ export const listen: Effect.Effect<
       }
       case "reinstall":
         if (current._tag === "Reinstall") {
-          yield* electronShell.openExternal(`${RELEASES_URL}/tag/v${current.version}`);
+          yield* electronShell.openExternal(medReleaseUrl(current.version));
         }
         return;
       case "releases":

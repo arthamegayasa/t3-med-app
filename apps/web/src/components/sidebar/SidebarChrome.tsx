@@ -287,7 +287,7 @@ const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
         </>
       )}
       <SidebarThreadUndoNotice />
-      {T3MED ? null : <SidebarUpdatePill />}
+      <SidebarUpdatePill />
     </SidebarMenu>
   );
 });

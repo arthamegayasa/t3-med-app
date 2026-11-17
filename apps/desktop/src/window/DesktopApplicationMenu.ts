@@ -13,6 +13,7 @@ import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as DesktopUpdates from "../updates/DesktopUpdates.ts";
 import * as DesktopWindow from "./DesktopWindow.ts";
 import { MED_HIDES_DEVELOPER_MENU, MED_HIDES_UPDATE_MENU } from "../med/identity.ts";
+import { medUpdateDialog } from "../med/updateWording.ts";
 
 export class DesktopApplicationMenuActionError extends Schema.TaggedError<DesktopApplicationMenuActionError>()(
   "DesktopApplicationMenuActionError",
@@ -70,7 +71,7 @@ const describeUpdate = (version: string | null) =>
 
 const checkForUpdatesFromMenu = Effect.gen(function* () {
   const updates = yield* DesktopUpdates.DesktopUpdates;
-  const electronDialog = yield* ElectronDialog.ElectronDialog;
+  const electronDialog = medUpdateDialog(yield* ElectronDialog.ElectronDialog);
   const result = yield* updates.check("menu");
   const updateState = result.state;
 
@@ -123,7 +124,7 @@ const checkForUpdatesFromMenu = Effect.gen(function* () {
 
 const handleCheckForUpdatesMenuClick = Effect.gen(function* () {
   const updates = yield* DesktopUpdates.DesktopUpdates;
-  const electronDialog = yield* ElectronDialog.ElectronDialog;
+  const electronDialog = medUpdateDialog(yield* ElectronDialog.ElectronDialog);
   const disabledReason = yield* updates.disabledReason;
   if (Option.isSome(disabledReason)) {
     yield* logUpdaterInfo("manual update check requested, but updates are disabled", {

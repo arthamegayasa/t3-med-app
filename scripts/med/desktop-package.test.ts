@@ -1,4 +1,4 @@
-// T3 Med: the package electron-builder is given must be the fork's, and must not be updatable.
+// T3 Med: the package electron-builder is given must be the fork's, updated from the fork only.
 import { assert, describe, it } from "vite-plus/test";
 
 import { medStagePackageJson } from "./desktop-package.ts";
@@ -30,15 +30,45 @@ describe("medStagePackageJson", () => {
     assert.equal(stage.build.artifactName, "T3-Med-${version}-${arch}.${ext}");
   });
 
-  it("removes every update feed, upstream's included", () => {
-    assert.isNull(stage.build.publish);
+  it("replaces every update feed with the fork's own releases", () => {
+    assert.deepEqual(stage.build.publish, [
+      { provider: "github", owner: "arthamegayasa", repo: "t3-med-app", releaseType: "release" },
+    ]);
     assert.notInclude(JSON.stringify(stage), "pingdotgg");
+  });
+
+  it("gives the fork's feed whatever feed upstream's script resolved", () => {
+    const feeds: ReadonlyArray<unknown> = [
+      null,
+      undefined,
+      [{ provider: "generic", url: "http://localhost:3000" }],
+      [{ provider: "github", owner: "pingdotgg", repo: "t3code", channel: "nightly" }],
+    ];
+    for (const publish of feeds) {
+      const built = medStagePackageJson({
+        ...upstreamStage,
+        build: { ...upstreamStage.build, publish },
+      });
+      assert.deepEqual(built.build.publish, stage.build.publish);
+    }
   });
 
   it("keeps the rest of upstream's build configuration", () => {
     assert.equal(stage.version, "0.1.9");
     assert.equal(stage.main, upstreamStage.main);
-    assert.deepEqual(stage.build.nsis, upstreamStage.build.nsis);
+    assert.deepEqual(stage.build.win, upstreamStage.build.win);
+    assert.deepInclude(stage.build.nsis as object, upstreamStage.build.nsis as object);
+  });
+
+  it("never lets an uninstall delete the app's data, whatever upstream configures", () => {
+    assert.propertyVal(stage.build.nsis, "deleteAppDataOnUninstall", false);
+    const built = medStagePackageJson({
+      ...upstreamStage,
+      build: { ...upstreamStage.build, nsis: { deleteAppDataOnUninstall: true } },
+    });
+    assert.propertyVal(built.build.nsis, "deleteAppDataOnUninstall", false);
+    // A per-user install: no administrator, so an update installs without a prompt.
+    assert.notProperty(stage.build.nsis, "perMachine");
     assert.deepEqual(stage.build.win, upstreamStage.build.win);
   });
 });

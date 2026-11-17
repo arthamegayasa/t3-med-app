@@ -28,8 +28,7 @@ const HIDDEN_SETTINGS_PATHS: ReadonlySet<string> = new Set([
 const HIDDEN_SETTINGS_SEARCH_ONLY: ReadonlySet<string> = new Set([
   "project-defaults",
   "speech-project-dictionary",
-  // Their rows are left out where `SettingsPanels.tsx` would render them.
-  "update-track",
+  // Its row is left out where `SettingsPanels.tsx` would render it.
   "cli-command",
   // Sharing & access: their rows are left out where `ConnectionsSettings.tsx` would render them.
   "network-access",
@@ -84,7 +83,9 @@ const HIDDEN_SETTINGS_TARGETS: ReadonlySet<string> = new Set([
   // Sharing & access
   "wsl-backend",
   "local-environment",
-  // About: upstream's phone app, setup page and privacy policy
+  // About: T3 Med has one release channel, so no Stable or Nightly picker; and upstream's phone
+  // app, setup page and privacy policy
+  "update-track",
   "mobile-app",
   "welcome-page",
   "privacy-policy",

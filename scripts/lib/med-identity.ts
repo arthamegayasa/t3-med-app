@@ -49,8 +49,11 @@ export const MED_OWN_USER_DATA: boolean = true;
  */
 export const MED_KEEPS_OFF_PATH: boolean = true;
 
-/** The fork has no update feed (docs/t3-med/FORK.md, Updates), so the menu offers no check. */
-export const MED_HIDES_UPDATE_MENU: boolean = true;
+/**
+ * Help > "Check for Updates..." is shown: the packaged app updates from the fork's own releases
+ * (docs/t3-med/FORK.md, Updates). `true` hides it again.
+ */
+export const MED_HIDES_UPDATE_MENU: boolean = false;
 
 /** A doctor's View menu has one plain Reload: no Force Reload, no Toggle Developer Tools. */
 export const MED_HIDES_DEVELOPER_MENU: boolean = true;

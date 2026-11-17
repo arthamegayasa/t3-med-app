@@ -4,6 +4,7 @@ import { PROVIDER_DISPLAY_NAMES } from "@t3tools/contracts";
 import { APP_VERSION } from "~/branding";
 import { isDesktopLocalConnectionTarget } from "~/connection/desktopLocal";
 import { isElectron } from "~/env";
+import { T3MED } from "~/med/t3med";
 import { useEnvironments } from "~/state/environments";
 import { environmentIdsKey } from "~/state/environmentAtomList";
 import { environmentUpdateStatesAtom, serverEnvironment } from "~/state/server";
@@ -75,7 +76,8 @@ export function useUpdateEverything(
   const restarts = collectRestartingMachines(machines, moving, localUpdateVersion !== null);
   const providerUpdates = useProviderUpdates();
   // A track switch moves app and servers only; provider updates stay a separate choice.
-  const providers = channelSwitch ? { machines: [], updateAll: async () => [] } : providerUpdates;
+  const providers =
+    channelSwitch || T3MED ? { machines: [], updateAll: async () => [] } : providerUpdates;
   const updateServer = useServerUpdate();
   const stageServerUpdate = useAtomCommand(serverEnvironment.stageServerUpdate, {
     reportFailure: false,
