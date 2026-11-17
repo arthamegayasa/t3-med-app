@@ -28,6 +28,7 @@ import * as DesktopShellEnvironment from "../shell/DesktopShellEnvironment.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopWslEnvironment from "../wsl/DesktopWslEnvironment.ts";
 import * as DesktopWslServerTree from "../wsl/DesktopWslServerTree.ts";
+import { medPrimaryStart } from "../med/workspace.ts";
 
 export class DesktopBackendObservabilitySettingsReadError extends Schema.TaggedError<DesktopBackendObservabilitySettingsReadError>()(
   "DesktopBackendObservabilitySettingsReadError",
@@ -842,6 +843,7 @@ export const make = Effect.gen(function* () {
       shellEnvironmentPrepared,
       desktopAppUpdate: yield* Ref.get(desktopState.canInstallUpdates),
     }).pipe(
+      Effect.flatMap(medPrimaryStart),
       Effect.provideService(DesktopEnvironment.DesktopEnvironment, environment),
       Effect.provideService(DesktopServerExposure.DesktopServerExposure, serverExposure),
     );
