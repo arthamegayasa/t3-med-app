@@ -26,6 +26,8 @@ import {
 import { getVirtualizedScrollFadeClassName } from "./ui/scroll-area";
 import { ProjectPinButton } from "./ProjectPinButton";
 import { SearchMatchHintLine, ThreadSearchMatchExcerpt } from "./ThreadSearchMatch";
+import { patientWording } from "../med/medHidden";
+import { T3MED } from "../med/t3med";
 
 interface CommandPaletteResultsProps {
   emptyStateMessage?: string;
@@ -42,7 +44,7 @@ function CommandPaletteEmptyState(props: { emptyStateMessage?: string; isActions
       {props.emptyStateMessage ??
         (props.isActionsOnly
           ? "No matching actions."
-          : "No matching commands, projects, or threads.")}
+          : patientWording("No matching commands, projects, or threads."))}
     </div>
   );
 }
@@ -190,7 +192,10 @@ function ThreadRowContext({
 }) {
   if (!item.threadSearch || !(item.threadContentMatch || item.matchHint)) return null;
   // A "Project: …" hint already names the project.
-  const context = [item.threadSearch.projectTitle, item.threadSearch.environmentLabel]
+  const context = [
+    T3MED ? null : item.threadSearch.projectTitle,
+    item.threadSearch.environmentLabel,
+  ]
     .filter((part) => part && part !== item.matchHint?.text)
     .join(" · ");
   return context ? (

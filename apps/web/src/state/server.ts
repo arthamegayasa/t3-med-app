@@ -28,6 +28,7 @@ import { environmentAtomList } from "./environmentAtomList";
 import { primaryEnvironmentIdAtom, themeEnvironmentIdAtom } from "./primaryEnvironment";
 import { environmentSession } from "./session";
 import { reuseProvidersIgnoringCheckedAt } from "./serverProviders.logic";
+import { patientKeybindings } from "../med/medHidden";
 
 // Subscribe to every environment's themes; primary can change without reconnecting or updating the subscription.
 export const serverEnvironment = createServerEnvironmentAtoms(connectionAtomRuntime, {
@@ -162,7 +163,7 @@ export const primaryServerKeybindingsAtom = createShortcutKeybindingsAtom({
   primaryEnvironmentIdAtom,
   primaryConfigAtom: primaryServerConfigAtom,
   environmentsAtom: environmentConnectionsAtom,
-}).pipe(Atom.withLabel("web-primary-server-keybindings"));
+}).pipe(Atom.map(patientKeybindings), Atom.withLabel("web-primary-server-keybindings"));
 
 const EMPTY_ENVIRONMENT_THEMES: ReadonlyArray<EnvironmentTheme> = [];
 

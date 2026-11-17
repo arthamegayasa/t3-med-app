@@ -76,6 +76,8 @@ import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsL
 import { keybindingSearchAnchorId, searchableSetting } from "./settingsSearch";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { patientKeybindingCommands, patientKeybindings } from "../../med/medHidden";
+import { APP_BASE_NAME } from "../../branding";
 
 function KeybindingPill({ value }: { value: string }) {
   // Keys dedupe repeated parts; a literal "+" in a shortcut splits into empty strings.
@@ -255,8 +257,8 @@ function UnknownWhenVariableWarning({
 
   return (
     <WarningTooltipIcon label={label} focusable={focusable} className="size-4.5">
-      T3 Code does not recognize this condition yet. It can still be saved, but it may not match
-      unless the runtime provides it.
+      {APP_BASE_NAME} does not recognize this condition yet. It can still be saved, but it may not
+      match unless the runtime provides it.
     </WarningTooltipIcon>
   );
 }
@@ -1307,9 +1309,9 @@ function keybindingAnchorIds(rows: ReturnType<typeof buildKeybindingRows>) {
 // Cache rows in a separate hook so the compiler does not rebuild them per search keystroke.
 function useKeybindingCatalog() {
   const serverKeybindings = useSettingsScope().environment?.serverConfig?.keybindings;
-  const merged = mergeWithDefaultKeybindings(serverKeybindings ?? []);
+  const merged = patientKeybindings(mergeWithDefaultKeybindings(serverKeybindings ?? []));
   return {
-    commandOptions: buildKeybindingCommandOptions(merged),
+    commandOptions: patientKeybindingCommands(buildKeybindingCommandOptions(merged)),
     allRows: buildKeybindingRows(merged),
   };
 }

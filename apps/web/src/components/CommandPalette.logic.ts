@@ -34,6 +34,7 @@ import { isShownUnderParent } from "@t3tools/client-runtime/state/threads";
 import { type ReactNode } from "react";
 import { formatRelativeTimeLabel } from "../timestampFormat";
 import { type Project, type SidebarThreadSummary, type Thread } from "../types";
+import { patientWording } from "../med/medHidden";
 
 export const RECENT_THREAD_LIMIT = 12;
 const NO_THREAD_KEYS: ReadonlySet<string> = new Set();
@@ -802,7 +803,7 @@ export function buildRootGroups(input: {
 export function getCommandPaletteInputPlaceholder(mode: CommandPaletteMode): string {
   switch (mode) {
     case "root":
-      return "Search commands, projects, and threads...";
+      return patientWording("Search commands, projects, and threads...");
     case "root-browse":
       return "Enter project path (e.g. ~/projects/my-app)";
     case "submenu":

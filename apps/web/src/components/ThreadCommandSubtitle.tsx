@@ -5,6 +5,7 @@ import { ProviderInstanceIcon } from "./chat/ProviderInstanceIcon";
 import { cn } from "~/lib/utils";
 
 import { MiddleTruncate } from "./ui/middle-truncate";
+import { T3MED } from "../med/t3med";
 
 export type ThreadCommandSubtitleVariant =
   | "favicon-workspace-harness"
@@ -48,8 +49,8 @@ export function ThreadCommandSubtitle(props: {
   const showHarness =
     variant !== "favicon-workspace" && props.driverKind != null && props.providerDisplayName;
 
-  const projectLabel = props.projectTitle?.trim() || null;
-  const branchLabel = props.branch?.trim() || null;
+  const projectLabel = T3MED ? null : props.projectTitle?.trim() || null;
+  const branchLabel = T3MED ? null : props.branch?.trim() || null;
 
   if (!projectLabel && !branchLabel && !props.isCurrent && !showHarness) {
     return null;

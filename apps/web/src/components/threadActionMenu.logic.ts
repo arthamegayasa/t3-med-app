@@ -1,6 +1,8 @@
 import type { ContextMenuItem } from "@t3tools/contracts";
 import type { SnoozePreset } from "@t3tools/client-runtime/state/thread-settled";
 
+import { patientMenuItems } from "../med/medHidden";
+
 export type ThreadActionMenuId =
   | "find"
   | "new-thread-on-branch"
@@ -41,7 +43,7 @@ export function buildDraftActionMenuItems(options: {
   readonly hasBranch: boolean;
   readonly hasProject: boolean;
 }): ReadonlyArray<ContextMenuItem<DraftActionMenuId>> {
-  return [
+  return patientMenuItems<ContextMenuItem<DraftActionMenuId>>([
     {
       id: "copy",
       label: "Copy",
@@ -64,7 +66,7 @@ export function buildDraftActionMenuItems(options: {
       destructive: true,
       separatorBefore: true,
     },
-  ];
+  ]);
 }
 
 export interface ThreadActionMenuState {
@@ -116,7 +118,7 @@ export function threadActionRequiresOperate(action: ThreadActionMenuId): boolean
 export function buildThreadActionMenuItems(
   state: ThreadActionMenuState,
 ): ReadonlyArray<ContextMenuItem<ThreadActionMenuId>> {
-  const items: ReadonlyArray<ContextMenuItem<ThreadActionMenuId>> = [
+  const allItems: ReadonlyArray<ContextMenuItem<ThreadActionMenuId>> = [
     ...(state.canFind
       ? [{ id: "find" as const, label: "Find in thread", icon: "text-search" }]
       : []),
@@ -253,6 +255,7 @@ export function buildThreadActionMenuItems(
       icon: "trash",
     },
   ];
+  const items = patientMenuItems(allItems);
   return state.canOperate
     ? items
     : items.map((item) =>
