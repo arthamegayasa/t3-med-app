@@ -78,6 +78,55 @@ export const MedPatientHome = Schema.Struct({
 });
 export type MedPatientHome = typeof MedPatientHome.Type;
 
+export const MedLab = Schema.Struct({
+  id: Schema.String,
+  /** The catalogue row: results that share it are results of one test. */
+  labTestId: Schema.String,
+  testId: Schema.NullOr(Schema.String),
+  /** English for a known Test ID, else the name as the catalogue first had it written. */
+  testName: Schema.String,
+  testAsWritten: Schema.String,
+  value: Schema.NullOr(Schema.Number),
+  valueText: Schema.String,
+  unit: Schema.String,
+  referenceRange: Schema.String,
+  flag: Schema.NullOr(Schema.Literals(["low", "normal", "high"])),
+  collected: Schema.String,
+  status: Schema.Literals(["draft", "verified"]),
+  isBaseline: Schema.Boolean,
+  /** The store's comparison with the baseline. The client shows these and computes none. */
+  valueInBaselineUnit: Schema.NullOr(Schema.Number),
+  changeFromBaseline: Schema.NullOr(Schema.Number),
+  changePercent: Schema.NullOr(Schema.Number),
+  changeUnit: Schema.NullOr(Schema.String),
+  notCompared: Schema.NullOr(
+    Schema.Literals([
+      "in_inbox",
+      "first_result",
+      "result_has_no_number",
+      "result_has_no_unit",
+      "baseline_has_no_unit",
+      "no_verified_conversion",
+    ]),
+  ),
+  noteId: Schema.String,
+});
+export type MedLab = typeof MedLab.Type;
+
+/** All that is filed for one patient: labs oldest first, plans soonest first, notes latest first. */
+export const MedPatientRecord = Schema.Struct({
+  patient: Schema.Struct({
+    ...MedPatientSummary.fields,
+    sex: Schema.NullOr(Schema.Literals(["female", "male"])),
+    dateOfBirth: Schema.NullOr(Schema.String),
+    diagnoses: Schema.String,
+  }),
+  labs: Schema.Array(MedLab),
+  plans: Schema.Array(MedPlan),
+  notes: Schema.Array(MedNote),
+});
+export type MedPatientRecord = typeof MedPatientRecord.Type;
+
 export const MedNeedsYou = Schema.Struct({
   inbox: Schema.Array(MedWaitingNote),
   patients: Schema.Array(
@@ -149,6 +198,14 @@ class MedPatientsHttpApi extends HttpApiGroup.make("patients")
       headers: BearerHeaders,
       params: PatientParams,
       success: MedPatientHome,
+      error: PatientErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.get("record", "/api/med/patients/:patientId/record", {
+      headers: BearerHeaders,
+      params: PatientParams,
+      success: MedPatientRecord,
       error: PatientErrors,
     }).middleware(EnvironmentAuthenticatedAuth),
   )

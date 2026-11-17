@@ -18,6 +18,7 @@ import {
   layerAuthenticatedAuth,
   requireEnvironmentScope,
 } from "../auth/http.ts";
+import { testDisplayName } from "./labs.ts";
 import * as PatientStore from "./PatientStore.ts";
 
 // Only the step is logged: the cause of a failed statement can carry what it was given.
@@ -57,6 +58,27 @@ const layerHandlers = HttpApiBuilder.group(
               PatientNotFoundError: failMissingPatient,
             }),
           );
+        }),
+      )
+      .handle(
+        "record",
+        Effect.fn("med.patients.record")(function* (args) {
+          yield* annotateEnvironmentRequest(args.endpoint.name);
+          yield* requireEnvironmentScope(AuthOrchestrationReadScope);
+          const record = yield* store.getPatientRecord({ patientId: args.params.patientId }).pipe(
+            Effect.catchTags({
+              PatientStoreError: failStore,
+              PatientNotFoundError: failMissingPatient,
+            }),
+          );
+          return {
+            ...record,
+            labs: record.labs.map((lab) => ({
+              ...lab,
+              testName: testDisplayName(lab.testId) ?? lab.testName,
+              noteId: lab.sourceNoteId,
+            })),
+          };
         }),
       )
       .handle(

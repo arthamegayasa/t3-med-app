@@ -171,6 +171,44 @@ const NAME_TO_TEST_ID = new Map(
   ]),
 );
 
+// One English name per Test ID, so a test reads the same whichever sheet first named it.
+const DISPLAY_NAMES: Readonly<Record<string, string>> = {
+  ldl: "LDL cholesterol",
+  hdl: "HDL cholesterol",
+  cholesterol_total: "Total cholesterol",
+  triglycerides: "Triglycerides",
+  glucose_fasting: "Fasting glucose",
+  glucose_random: "Random glucose",
+  glucose_2h_postprandial: "2-hour postprandial glucose",
+  creatinine: "Creatinine",
+  urea: "Urea",
+  bun: "Blood urea nitrogen",
+  uric_acid: "Uric acid",
+  bilirubin_total: "Total bilirubin",
+  bilirubin_direct: "Direct bilirubin",
+  bilirubin_indirect: "Indirect bilirubin",
+  calcium: "Calcium",
+  magnesium: "Magnesium",
+  phosphate: "Phosphate",
+  hemoglobin: "Hemoglobin",
+  albumin: "Albumin",
+  total_protein: "Total protein",
+  sodium: "Sodium",
+  potassium: "Potassium",
+  chloride: "Chloride",
+  leukocytes: "Leukocytes",
+  platelets: "Platelets",
+  erythrocytes: "Erythrocytes",
+  hematocrit: "Hematocrit",
+  sgot: "AST (SGOT)",
+  sgpt: "ALT (SGPT)",
+  hba1c: "HbA1c",
+};
+
+/** The English name of a known Test ID; null for a test that has none. */
+export const testDisplayName = (testId: string | null): string | null =>
+  testId !== null && Object.hasOwn(DISPLAY_NAMES, testId) ? DISPLAY_NAMES[testId]! : null;
+
 // Lower-cased spellings mapped to the unit as this module writes it.
 const UNIT_SPELLINGS = new Map([
   ["mg/dl", "mg/dL"],

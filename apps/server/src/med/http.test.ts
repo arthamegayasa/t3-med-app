@@ -129,6 +129,7 @@ const seed = Effect.fn("test.seedPatients")(function* (store: Store) {
 const READ_ROUTES = [
   "/api/med/patients",
   "/api/med/patients/some-patient",
+  "/api/med/patients/some-patient/record",
   "/api/med/needs-you",
   "/api/med/upcoming",
   "/api/med/counts",
@@ -165,7 +166,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("med HTTP routes"
         const response = yield* reader(path);
         assert.deepStrictEqual(
           [path, response.status, response.cacheControl],
-          [path, path.endsWith("some-patient") ? 404 : 200, "no-store"],
+          [path, path.includes("some-patient") ? 404 : 200, "no-store"],
         );
       }
       assert.deepStrictEqual((yield* reader("/api/med/threads/thread-9/patient")).body, {
@@ -188,6 +189,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("med HTTP routes"
         "GET /api/med/needs-you",
         "GET /api/med/patients",
         "GET /api/med/patients/:patientId",
+        "GET /api/med/patients/:patientId/record",
         "GET /api/med/threads/:threadId/patient",
         "GET /api/med/upcoming",
       ]);
@@ -349,5 +351,132 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("med HTTP routes"
           patient: { id: made.id, name: "Ni Made Ayu" },
         });
       }).pipe(Effect.provide(layerStore)),
+  );
+
+  it.effect("serves a patient's record with every lab as stored and an English test name", () =>
+    Effect.gen(function* () {
+      const store = yield* PatientStore.PatientStore;
+      const { wayan, note } = yield* seed(store);
+      yield* store.fileFromThread({
+        threadId: "thread-4",
+        patientId: null,
+        title: "Labs 16 Oct",
+        date: "2026-10-16",
+        labs: [
+          {
+            testAsWritten: "Anti-dsDNA",
+            value: null,
+            valueText: "negative",
+            collected: "2026-10-16",
+          },
+          {
+            testAsWritten: "Kolesterol LDL",
+            value: 2.6,
+            unit: "mmol/L",
+            referenceRange: "< 2.6",
+            flag: "high",
+            collected: "2026-10-16",
+          },
+        ],
+      });
+      const earlier = yield* store.moveThreadNoteToPatient({
+        threadId: "thread-4",
+        patientId: wayan.id,
+      });
+      yield* store.verifyNote(earlier.note.id);
+      const stored = yield* store.getPatientRecord({ patientId: wayan.id });
+      const get = yield* serve(store, [AuthOrchestrationReadScope]);
+
+      const record = (yield* get(`/api/med/patients/${wayan.id}/record`)).body;
+      assert.deepInclude(record.patient, {
+        id: wayan.id,
+        name: "I Wayan Sudarma",
+        sex: "male",
+        dateOfBirth: "1968-03-02",
+        diagnoses: "Ischemic stroke",
+      });
+      // Oldest first. The catalogue row was named by the sheet that filed it last here, in
+      // Indonesian or English; a known Test ID reads the same either way, an unknown test as written.
+      const ldlTest = stored.labs.find((lab) => lab.testId === "ldl")?.labTestId;
+      assert.deepStrictEqual(
+        record.labs.map((lab: Record<string, unknown>) => [
+          lab.collected,
+          lab.testName,
+          lab.testId,
+          lab.labTestId === ldlTest,
+          lab.valueText,
+          lab.unit,
+          lab.referenceRange,
+          lab.flag,
+          lab.status,
+          lab.isBaseline,
+          lab.noteId,
+        ]),
+        [
+          [
+            "2026-10-16",
+            "Anti-dsDNA",
+            null,
+            false,
+            "negative",
+            "",
+            "",
+            null,
+            "verified",
+            false,
+            earlier.note.id,
+          ],
+          [
+            "2026-10-16",
+            "LDL cholesterol",
+            "ldl",
+            true,
+            "2.6",
+            "mmol/L",
+            "< 2.6",
+            "high",
+            "verified",
+            true,
+            earlier.note.id,
+          ],
+          [
+            "2026-11-06",
+            "LDL cholesterol",
+            "ldl",
+            true,
+            "78",
+            "mg/dL",
+            "",
+            null,
+            "draft",
+            false,
+            note.id,
+          ],
+        ],
+      );
+      // The comparison is the store's: the route passes its numbers on and computes none.
+      const latest = stored.labs.at(-1);
+      assert.isTrue(latest?.valueInBaselineUnit != null && latest.changeFromBaseline != null);
+      assert.deepInclude(record.labs.at(-1), {
+        value: 78,
+        valueInBaselineUnit: latest?.valueInBaselineUnit,
+        changeFromBaseline: latest?.changeFromBaseline,
+        changePercent: latest?.changePercent,
+        changeUnit: "mmol/L",
+        notCompared: null,
+      });
+      assert.deepStrictEqual(
+        record.plans.map((plan: Record<string, unknown>) => [plan.title, plan.due, plan.status]),
+        [["Clinic visit", "2026-11-14", "draft"]],
+      );
+      assert.deepStrictEqual(
+        record.notes.map((entry: Record<string, unknown>) => [entry.date, entry.title]),
+        [
+          ["2026-11-06", "Labs 6 Nov"],
+          ["2026-10-16", "Labs 16 Oct"],
+        ],
+      );
+      assert.notProperty(record.notes[0], "files");
+    }).pipe(Effect.provide(layerStore)),
   );
 });

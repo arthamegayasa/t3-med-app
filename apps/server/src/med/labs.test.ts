@@ -1,7 +1,7 @@
 import * as Result from "effect/Result";
 import { describe, expect, it } from "vite-plus/test";
 
-import { compareToBaseline, convert, normaliseUnit, resolveTest } from "./labs.ts";
+import { compareToBaseline, convert, normaliseUnit, resolveTest, testDisplayName } from "./labs.ts";
 
 // Mirrors pytest.approx: an absolute tolerance alone ignores the relative one.
 const expectApprox = (
@@ -307,5 +307,63 @@ describe("compareToBaseline", () => {
     });
     expect(result.change).toBe(2);
     expectApprox(result.changePercent!, 50);
+  });
+});
+
+describe("testDisplayName", () => {
+  it.each([
+    ["Kolesterol LDL", "LDL cholesterol"],
+    ["GDP", "Fasting glucose"],
+    ["Kreatinin", "Creatinine"],
+    ["Trombosit", "Platelets"],
+    ["SGPT", "ALT (SGPT)"],
+    ["Hb A1c", "HbA1c"],
+  ])("names %s in English as %s", (written, expected) => {
+    expect(testDisplayName(resolveTest(written))).toBe(expected);
+  });
+
+  it("names every test a written name resolves to", () => {
+    const written = [
+      "LDL",
+      "HDL",
+      "Kolesterol total",
+      "Trigliserida",
+      "GDP",
+      "GDS",
+      "GD2PP",
+      "Kreatinin",
+      "Ureum",
+      "BUN",
+      "Asam urat",
+      "Bilirubin total",
+      "Bilirubin direk",
+      "Bilirubin indirek",
+      "Kalsium",
+      "Magnesium",
+      "Fosfat",
+      "Hb",
+      "Albumin",
+      "Protein total",
+      "Natrium",
+      "Kalium",
+      "Klorida",
+      "Leukosit",
+      "Trombosit",
+      "Eritrosit",
+      "Hematokrit",
+      "SGOT",
+      "SGPT",
+      "HbA1c",
+    ];
+    const unnamed = written.filter((name) => {
+      const testId = resolveTest(name);
+      return testId === null || testDisplayName(testId) === null;
+    });
+    expect(unnamed).toEqual([]);
+  });
+
+  it("has no name for a test without a Test ID", () => {
+    expect(testDisplayName(resolveTest("Anti-dsDNA"))).toBeNull();
+    expect(testDisplayName("not_a_test")).toBeNull();
   });
 });
