@@ -44,6 +44,11 @@ import { loadRepoEnv } from "./lib/public-config.ts";
 import { selectDesktopRuntimeExternalDependencies } from "./lib/desktop-external-packages.ts";
 import { resolveCatalogDependencies } from "./lib/resolve-catalog.ts";
 import { resolveTaggedSourceVersion } from "./lib/tagged-source-version.ts";
+import {
+  applyMedWebIcons,
+  MED_DESKTOP_ICON_ASSETS,
+  medStagePackageJson,
+} from "./med/desktop-package.ts";
 
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -3696,7 +3701,7 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
 
   const appVersion =
     options.version ?? resolveTaggedSourceVersion(repoRoot, serverPackageJson.version);
-  const iconAssets = resolveDesktopBuildIconAssets(appVersion);
+  const iconAssets = MED_DESKTOP_ICON_ASSETS;
   const commitHash = yield* resolveGitCommitHash(repoRoot);
   const mkdir = options.keepStage ? fs.makeTempDirectory : fs.makeTempDirectoryScoped;
   const stageRoot = yield* mkdir({
@@ -3785,6 +3790,7 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
 
   const webAssetBrand = resolveDesktopWebAssetBrand(appVersion);
   yield* applyWebBrandAssets(webAssetBrand, "apps/server/dist/client");
+  yield* applyMedWebIcons("apps/server/dist/client");
   yield* Effect.log(`[desktop-artifact] Applied ${webAssetBrand} web client branding.`);
   yield* validateBundledClientAssets(path.dirname(bundledClientEntry));
 
@@ -3950,7 +3956,7 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
     },
   };
 
-  const stagePackageJsonString = yield* encodeJsonString(stagePackageJson);
+  const stagePackageJsonString = yield* encodeJsonString(medStagePackageJson(stagePackageJson));
   yield* fs.writeFileString(path.join(stageAppDir, "package.json"), `${stagePackageJsonString}\n`);
   const stageWorkspaceConfig = createStageWorkspaceConfig({
     platform: options.platform,
