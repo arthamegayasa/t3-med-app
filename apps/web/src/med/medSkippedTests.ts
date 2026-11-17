@@ -29,6 +29,12 @@ const SKIPPED: ReadonlyArray<MedSkippedTest> = [
       "T3 Med's release links never fall back to upstream: they lead to the fork's repository and tag. Twin: medVersion.test.ts.",
   },
   {
+    file: "src/components/sidebar/SidebarUpdatePill.browser.test.tsx",
+    name: "SidebarUpdatePill update everything > exposes the machines as a table with each value in its column",
+    reason:
+      "T3 Med's update collects no other machine and no provider, so this dialog never opens; its column is named T3 Med, not the T3 Code this looks for.",
+  },
+  {
     file: "src/components/ChatView.browser.test.tsx",
     name: "a machine chip stashed in one thread restores with its machine in another",
     reason: "T3 Med has one machine and no machine chip; the stash itself has a fork-owned test.",
