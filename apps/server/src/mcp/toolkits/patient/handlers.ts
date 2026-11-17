@@ -61,6 +61,7 @@ const relinkedFrom = (previous: Option.Option<PatientStore.Patient>) =>
   Option.getOrNull(Option.map(previous, ({ id, name }) => ({ patientId: id, name })));
 
 const labResult = (lab: PatientStore.Lab) => ({
+  labId: lab.id,
   testName: lab.testName,
   testId: lab.testId,
   testAsWritten: lab.testAsWritten,
@@ -83,10 +84,12 @@ const labResult = (lab: PatientStore.Lab) => ({
 });
 
 const planResult = (plan: PatientStore.Plan) => ({
+  planId: plan.id,
   title: plan.title,
   due: plan.due,
   type: plan.type,
   status: plan.status,
+  doneOn: plan.doneOn,
   noteId: plan.sourceNoteId,
 });
 
@@ -229,6 +232,41 @@ const handlers = {
         labs: moved.labs.map(labResult),
         relinkedFrom: relinkedFrom(moved.relinkedFrom),
       };
+    }),
+  ),
+  patient_correct_lab: McpToolAccess.actsAsCaller((input) =>
+    Effect.gen(function* () {
+      const store = yield* PatientStore.PatientStore;
+      return yield* store
+        .correctLab({ ...input, threadId: yield* callingThread })
+        .pipe(Effect.map(labResult), Effect.mapError(refused));
+    }),
+  ),
+  patient_remove: McpToolAccess.actsAsCaller(({ row, id, restore }) =>
+    Effect.gen(function* () {
+      const store = yield* PatientStore.PatientStore;
+      const removed = restore !== true;
+      yield* store
+        .setRemoved({ row, id, removed, threadId: yield* callingThread })
+        .pipe(Effect.mapError(refused));
+      return { removed };
+    }),
+  ),
+  patient_update_plan: McpToolAccess.actsAsCaller((input) =>
+    Effect.gen(function* () {
+      const store = yield* PatientStore.PatientStore;
+      return yield* store
+        .updatePlan({ ...input, threadId: yield* callingThread })
+        .pipe(Effect.map(planResult), Effect.mapError(refused));
+    }),
+  ),
+  patient_return_note: McpToolAccess.actsAsCaller(() =>
+    Effect.gen(function* () {
+      const store = yield* PatientStore.PatientStore;
+      const returned = yield* store
+        .returnThreadNoteToInbox({ threadId: yield* callingThread })
+        .pipe(Effect.mapError(refused));
+      return { noteId: returned.note.id, labs: returned.labs.map(labResult) };
     }),
   ),
 } satisfies McpToolAccess.Handlers<typeof PatientToolkit.tools>;

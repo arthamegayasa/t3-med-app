@@ -541,6 +541,152 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("patient tools", 
     }).pipe(Effect.provide(layerPatientTools)),
   );
 
+  it.effect("corrects, removes and closes only what the thread's patient or own notes hold", () =>
+    Effect.gen(function* () {
+      const wayan = yield* call("patient_create", { name: "Wayan", urn: "00-12-34-56" });
+      const made = yield* call(
+        "patient_create",
+        { name: "Made", urn: "00-77-88-99" },
+        from("thread-2"),
+      );
+      const visit = { title: "Clinic visit", due: "2026-11-25", type: "follow_up" } as const;
+      const filed = yield* call("patient_file", {
+        patientId: wayan.patientId,
+        title: "Lipids",
+        labs: [
+          { ...ldl, value: 190, collected: "2026-01-10" },
+          { ...ldl, value: 10 },
+        ],
+        plans: [visit],
+      });
+      const other = yield* call(
+        "patient_file",
+        { patientId: made.patientId, title: "Another chat", labs: [ldl], plans: [visit] },
+        from("thread-2"),
+      );
+      yield* call("patient_verify", {});
+      const [first, typo] = filed.labs;
+      const plan = filed.plans[0];
+      if (first === undefined || typo === undefined || plan === undefined) {
+        return expect.unreachable("the filing returns its rows");
+      }
+
+      // The sheet says 100, not 10. A corrected result waits for the doctor again.
+      expect(
+        yield* call("patient_correct_lab", { labId: typo.labId, value: 100, valueText: "100" }),
+      ).toMatchObject({
+        labId: typo.labId,
+        value: 100,
+        valueText: "100",
+        status: "draft",
+        // Worked by hand: 100 - 190 = -90.
+        changeFromBaseline: -90,
+        baseline: { value: 190, unit: "mg/dL", collected: "2026-01-10" },
+      });
+      expect(
+        yield* call("patient_correct_lab", { labId: typo.labId, collected: "2026-02-30" }),
+      ).toMatchObject({
+        code: "invalid_request",
+        message: "collected must be a calendar date written as YYYY-MM-DD.",
+      });
+
+      expect(yield* call("patient_remove", { row: "lab", id: first.labId })).toEqual({
+        removed: true,
+      });
+      expect((yield* call("patient_record", { patientId: wayan.patientId })).labs).toMatchObject([
+        { labId: typo.labId, isBaseline: true, changeFromBaseline: null },
+      ]);
+      expect(yield* call("patient_remove", { row: "lab", id: first.labId, restore: true })).toEqual(
+        { removed: false },
+      );
+      yield* call("patient_remove", { row: "plan", id: plan.planId });
+      expect((yield* call("patient_record", { patientId: wayan.patientId })).plans).toEqual([]);
+      yield* call("patient_remove", { row: "plan", id: plan.planId, restore: true });
+
+      expect(
+        yield* call("patient_update_plan", {
+          planId: plan.planId,
+          status: "done",
+          doneOn: "2026-11-20",
+        }),
+      ).toMatchObject({ planId: plan.planId, status: "done", doneOn: "2026-11-20" });
+      expect(
+        yield* call("patient_update_plan", { planId: plan.planId, status: "open" }),
+      ).toMatchObject({ status: "planned", doneOn: null });
+      // An agent's change of a confirmed plan is a draft until the doctor confirms it.
+      expect(
+        yield* call("patient_update_plan", { planId: plan.planId, due: "2026-12-02" }),
+      ).toMatchObject({ due: "2026-12-02", status: "draft" });
+      expect(
+        yield* call("patient_update_plan", { planId: plan.planId, doneOn: "2026-11-20" }),
+      ).toMatchObject({
+        code: "invalid_request",
+        message: `doneOn is the day a plan was done; plan ${plan.planId} is not done, so send it with status done.`,
+      });
+      expect(
+        yield* invalidParams("patient_update_plan", { planId: plan.planId, status: "planned" }),
+      ).toContain("status");
+      expect(yield* invalidParams("patient_remove", { row: "note", id: filed.noteId })).toContain(
+        "row",
+      );
+
+      // Another patient's rows are out of this thread's reach, whatever it is asked to do.
+      const theirLab = other.labs[0]?.labId ?? "";
+      const theirPlan = other.plans[0]?.planId ?? "";
+      const outOfReach = (row: string, id: string) => ({
+        code: "invalid_request",
+        message: `This thread may change only what is filed for the patient it is linked to or from its own notes; ${row} ${id} is neither.`,
+      });
+      expect(yield* call("patient_correct_lab", { labId: theirLab, value: 1 })).toMatchObject(
+        outOfReach("lab", theirLab),
+      );
+      expect(yield* call("patient_remove", { row: "lab", id: theirLab })).toMatchObject(
+        outOfReach("lab", theirLab),
+      );
+      expect(yield* call("patient_remove", { row: "plan", id: theirPlan })).toMatchObject(
+        outOfReach("plan", theirPlan),
+      );
+      expect(
+        yield* call("patient_update_plan", { planId: theirPlan, status: "cancelled" }),
+      ).toMatchObject(outOfReach("plan", theirPlan));
+      expect(yield* call("patient_record", { patientId: made.patientId })).toMatchObject({
+        labs: [{ labId: theirLab, value: 100, status: "draft" }],
+        plans: [{ planId: theirPlan, status: "draft", due: "2026-11-25" }],
+      });
+    }).pipe(Effect.provide(layerPatientTools)),
+  );
+
+  it.effect("patient_return_note returns the thread's own note to the Inbox, link untouched", () =>
+    Effect.gen(function* () {
+      const { patientId } = yield* call("patient_create", { name: "Wayan", urn: "00-12-34-56" });
+      const filed = yield* call("patient_file", { patientId, title: "Lipids", labs: [ldl] });
+      yield* call("patient_verify", {});
+      yield* call("patient_find", { urn: "00-12-34-56" }, from("thread-2"));
+
+      expect(yield* invalidParams("patient_return_note", { noteId: filed.noteId })).toContain(
+        "noteId",
+      );
+      expect(yield* call("patient_return_note", {}, from("thread-9"))).toMatchObject({
+        code: "invalid_request",
+        message:
+          "This thread is not linked to a patient; find the patient by URN, or move this thread's Inbox note to a patient, before returning its note.",
+      });
+      // Linked to the same patient, another thread has no note of its own to return.
+      expect(yield* call("patient_return_note", {}, from("thread-2"))).toMatchObject({
+        code: "invalid_request",
+        message: `This thread has filed no note for patient ${patientId}.`,
+      });
+
+      expect(yield* call("patient_return_note", {})).toMatchObject({
+        noteId: filed.noteId,
+        labs: [{ status: "draft", isBaseline: false, notCompared: "in_inbox" }],
+      });
+      expect(yield* call("patient_record", { patientId })).toMatchObject({ labs: [], notes: [] });
+      expect((yield* call("patient_review", {})).inbox).toMatchObject([{ noteId: filed.noteId }]);
+      expect(yield* linkedPatient("thread-1")).toBe(patientId);
+    }).pipe(Effect.provide(layerPatientTools)),
+  );
+
   it.effect("patient_upcoming lists plans soonest first, without archived patients", () =>
     Effect.gen(function* () {
       const store = yield* PatientStore.PatientStore;
@@ -658,6 +804,10 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("patient tools", 
           ["patient_review", { patientId }],
           ["patient_upcoming", { since: "2026-11-01" }],
           ["patient_file", { patientId, title: "Visit", lab: [ldl] }],
+          ["patient_correct_lab", { labId: "lab-1", patientId }],
+          ["patient_remove", { row: "lab", id: "lab-1", noteId: "note-1" }],
+          ["patient_update_plan", { planId: "plan-1", threadId: "thread-2" }],
+          ["patient_return_note", { patientId }],
         ];
       for (const [name, params] of unknownField) {
         const extra = Object.keys(params).at(-1) ?? "";
@@ -672,6 +822,10 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("patient tools", 
         ["patient_review", {}],
         ["patient_create", { name: "Made", urn: "00-77-88-99" }],
         ["patient_file", { patientId: "inbox", title: "Visit" }],
+        ["patient_correct_lab", { labId: "lab-1", value: 1 }],
+        ["patient_remove", { row: "lab", id: "lab-1" }],
+        ["patient_update_plan", { planId: "plan-1", status: "done" }],
+        ["patient_return_note", {}],
       ];
       for (const [name, params] of hidden) {
         expect(yield* invalidParams(name, params, outside), name).toBe(`Tool '${name}' not found`);
@@ -694,12 +848,22 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("patient tools", 
       // The request span stands in for the HTTP server's, which is the current span of a real call.
       const result = yield* Effect.gen(function* () {
         const created = yield* call("patient_create", { name: secret, urn: "00-55-66-77" });
-        yield* call("patient_file", {
+        const filed = yield* call("patient_file", {
           patientId: created.patientId,
           title: `Visit of ${secret}`,
           summary: `${secret} reports headaches.`,
           labs: [{ ...ldl, valueText: `100 (${secret})` }],
+          plans: [{ title: "Clinic visit", due: "2026-11-25", type: "follow_up" }],
         });
+        // The ways back carry what the doctor said too, and a refusal of one names no value.
+        const labId = filed.labs[0]?.labId ?? "";
+        const planId = filed.plans[0]?.planId ?? "";
+        yield* call("patient_correct_lab", { labId, value: 101, valueText: `101 (${secret})` });
+        yield* call("patient_correct_lab", { labId, testAsWritten: ` (${secret}) ` });
+        yield* call("patient_update_plan", { planId, title: `Visit of ${secret}` });
+        yield* call("patient_update_plan", { planId, doneOn: `the day ${secret} came` });
+        yield* call("patient_remove", { row: "plan", id: planId });
+        yield* call("patient_return_note", {});
         // Arguments the protocol refuses never reach a handler, and are still not recorded.
         yield* invalidParams("patient_find", { name: secret, nama: secret });
         yield* invalidParams("patient_file", {
@@ -722,6 +886,10 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("patient tools", 
       const names = recorded.map((span) => span.name);
       expect(names).toContain("mcp.tool.patient_file");
       expect(names).toContain("PatientStore.fileFromThread");
+      expect(names).toContain("PatientStore.correctLab");
+      expect(names).toContain("PatientStore.updatePlan");
+      expect(names).toContain("PatientStore.setRemoved");
+      expect(names).toContain("PatientStore.returnThreadNoteToInbox");
       expect(JSON.stringify(recorded)).not.toContain("Sekarwangi");
       expect(JSON.stringify(recorded)).not.toContain("00-55-66-77");
       expect(recorded.filter((span) => "parameters" in span.attributes)).toEqual([]);
@@ -763,6 +931,8 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("patient tools", 
       patient_update: ["dateOfBirth"],
       patient_file: ["date", "collected", "due"],
       patient_upcoming: ["from", "to"],
+      patient_correct_lab: ["collected"],
+      patient_update_plan: ["due", "doneOn"],
     });
   });
 });

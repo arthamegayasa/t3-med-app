@@ -33,6 +33,7 @@ const relinkedFrom = Schema.NullOr(
 
 const flag = Schema.Literals(["low", "normal", "high"]);
 const Lab = Schema.Struct({
+  labId: Schema.String,
   testName: Schema.String,
   testId: Schema.NullOr(Schema.String),
   testAsWritten: Schema.String,
@@ -67,10 +68,12 @@ const Lab = Schema.Struct({
 
 const planType = Schema.Literals(["follow_up", "lab", "imaging", "procedure", "other"]);
 const plan = {
+  planId: Schema.String,
   title: Schema.String,
   due: Schema.String,
   type: planType,
   status: Schema.Literals(["draft", "planned", "done", "cancelled"]),
+  doneOn: Schema.NullOr(Schema.String),
   noteId: Schema.String,
 };
 const Plan = Schema.Struct(plan);
@@ -311,6 +314,75 @@ const PatientMoveNoteTool = Tool.make("patient_move_note", {
   .annotate(Tool.OpenWorld, false)
   .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
+const PatientCorrectLabTool = Tool.make("patient_correct_lab", {
+  ...writing,
+  description:
+    "Call this when the doctor says a filed result is wrong, with its `labId` from `patient_record` and only the fields that change. The result is a draft again and its change from baseline is worked out anew.",
+  parameters: Schema.Struct({
+    labId: Schema.String,
+    testAsWritten: Schema.optional(Schema.String),
+    value: Schema.optional(
+      Schema.Finite.annotate({ description: "Sent together with `valueText`, as when filing." }),
+    ),
+    valueText: Schema.optional(Schema.String),
+    unit: Schema.optional(Schema.String),
+    referenceRange: Schema.optional(Schema.String),
+    flag: Schema.optional(flag),
+    collected: Schema.optional(IsoDate),
+  }),
+  success: Lab,
+})
+  .annotate(Tool.Strict, true)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.OpenWorld, false)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
+
+const PatientRemoveTool = Tool.make("patient_remove", {
+  ...writing,
+  description:
+    "Call this when the doctor says a lab result or a plan was filed by mistake, to take it out of every list, baseline and chart. `restore: true` puts it back.",
+  parameters: Schema.Struct({
+    row: Schema.Literals(["lab", "plan"]),
+    id: Schema.String.annotate({ description: "Its `labId` or `planId`." }),
+    restore: Schema.optional(Schema.Boolean),
+  }),
+  success: Schema.Struct({ removed: Schema.Boolean }),
+})
+  .annotate(Tool.Strict, true)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.OpenWorld, false)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
+
+const PatientUpdatePlanTool = Tool.make("patient_update_plan", {
+  ...writing,
+  description:
+    "Call this when the doctor says a plan is done or cancelled, should be open again, or has another title or due date. Its `planId` is in `patient_record` and `patient_upcoming`.",
+  parameters: Schema.Struct({
+    planId: Schema.String,
+    status: Schema.optional(Schema.Literals(["done", "cancelled", "open"])),
+    title: Schema.optional(Schema.String),
+    due: Schema.optional(IsoDate),
+    doneOn: Schema.optional(
+      Schema.String.annotate({ description: "YYYY-MM-DD, with `done`; today when left out." }),
+    ),
+  }),
+  success: Plan,
+})
+  .annotate(Tool.Strict, true)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.OpenWorld, false)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
+
+const PatientReturnNoteTool = Tool.make("patient_return_note", {
+  ...writing,
+  description:
+    "Call this when the doctor says what this thread filed is not this patient's. It moves this thread's note for its linked patient back to the Inbox, with its labs and plans as drafts.",
+  success: Schema.Struct({ noteId: Schema.String, labs: Schema.Array(Lab) }),
+})
+  .annotate(Tool.Strict, true)
+  .annotate(Tool.OpenWorld, false)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
+
 export const PatientToolkit = Toolkit.make(
   PatientFindTool,
   PatientCreateTool,
@@ -321,4 +393,8 @@ export const PatientToolkit = Toolkit.make(
   PatientUpcomingTool,
   PatientVerifyTool,
   PatientMoveNoteTool,
+  PatientCorrectLabTool,
+  PatientRemoveTool,
+  PatientUpdatePlanTool,
+  PatientReturnNoteTool,
 );
