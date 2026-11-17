@@ -14,6 +14,7 @@ T3 Med is T3 Code organised around patients instead of code projects, for one do
 - Install `vp` (`irm https://vite.plus/ps1 | iex`), then from the repository root: `vp i`, `vp run --filter t3 build`.
 - Run the built server: `node apps/server/dist/bin.mjs serve --port 3899` with the Node that `vp` provides (Node 26). It serves the web UI on that port.
 - The background service does not exist on Windows; the server runs in the foreground.
+- The web client's browser tests (`*.browser.test.tsx`) need Playwright's Chromium shell once: `node apps/web/node_modules/playwright/cli.js install --only-shell chromium`. Then, in `apps/web`, `vp test run --project browser <files>`.
 - `start-t3-med.cmd` in the repository root starts the built server on port 3899 with the patient workspace (`D:\T3 Projects\T3 Med`) as its project and opens the browser. Closing its window stops T3 Med.
 
 ## Changes to upstream files
@@ -32,10 +33,10 @@ Keep this list complete. Each entry is a place an upstream merge can conflict.
 | `apps/server/src/server.ts`                           | Three imports, `MedHttp.layer` in the route merge, and `PatientStore.layer` over `MedDatabase.layerConfig` provided once to all routes | The patient tools and the patient pages share one store    |
 | `packages/contracts/package.json`                     | A `./med` entry in `exports`                                                                                                           | The patient pages' contract, without editing the barrel    |
 | `apps/web/src/components/Sidebar.tsx`                 | One import and `<MedSidebarNav />` above the thread list                                                                               | Inbox, Patients, Needs you and Upcoming in the sidebar     |
-| `apps/web/src/components/chat/ChatHeader.tsx`         | One import and `<MedThreadPatientCrumb />` before the thread title                                                                     | The linked patient in the chat header                      |
+| `apps/web/src/components/chat/ChatHeader.tsx`         | One import and `<MedThreadPatientCrumb />`, given the thread's environment and id, before the thread title                             | The linked patient in the chat header                      |
 | `apps/web/src/routeTree.gen.ts`                       | Generated: the five patient routes                                                                                                     | On a conflict take upstream's, then build the web app      |
 | `apps/server/src/provider/AgentContextBudget.test.ts` | One import and one `Layer.mock(PatientStore)` line                                                                                     | Registering the patient tools needs the service            |
-| `apps/server/src/provider/agentContextBudget.json`    | `mcpToolListJsonBytes` is upstream's value plus the patient tools (4,692 bytes)                                                        | The budget test measures every advertised tool             |
+| `apps/server/src/provider/agentContextBudget.json`    | `mcpToolListJsonBytes` is upstream's value plus the patient tools (4,774 bytes)                                                        | The budget test measures every advertised tool             |
 
 ## Patient data
 
@@ -52,7 +53,8 @@ Agents file and read patient data with the `patient_*` tools in `apps/server/src
 
 - Only an agent running in a T3 Med thread may call them, reads included (`readsAsCaller`, `actsAsCaller`). An outside MCP client that signed in over OAuth is refused, whatever access it was approved with.
 - The tools take no thread id and no note id. The calling thread comes from the MCP credential, so a call reaches only its own thread's notes.
-- The store links a thread to a patient in three places and nowhere else: `patient_find` when a URN matches exactly, `patient_create` (which needs a URN), and `patient_move_note`, the doctor's choice for the thread's Inbox note. Each says in `relinkedFrom` which patient the thread was linked to before. A name search returns `candidates` and links nothing.
+- A thread is linked to a patient in three places and nowhere else: `patient_find` when a URN matches exactly, `patient_create` (which needs a URN), and `patient_move_note`, the doctor's choice for the thread's Inbox note. Each says in `relinkedFrom` which patient the thread was linked to before. A name search returns `candidates` and links nothing. `PatientStore.linkThread` links on no evidence; no tool and no route calls it, and it must stay that way.
+- `patient_find` always returns `linked`, the patient the thread is linked to once the call is done, beside any `match` or `candidates`. Called with no URN and no name it reads only that, so an agent can ask whom its thread is about without searching.
 - `patient_file` with a patient id is refused unless the thread is linked to exactly that patient, and it never changes the link. Filing to `inbox` is always allowed. `patient_verify` verifies the thread's note for its linked patient only.
 - Reading (`patient_record`) and `patient_update` take any patient's id. Only filing, verifying and moving depend on the thread's link.
 - A retried `patient_file` adds nothing: a lab the note has (same test, date, value, text and unit) or a plan it has (same title and due date) is returned as it is. `needsYou` collects one line per question until `clearNeedsYou`.
@@ -62,15 +64,19 @@ Agents file and read patient data with the `patient_*` tools in `apps/server/src
 
 ## Patient pages
 
-The web client reads patient data over HTTP, under `/api/med`. Everything is fork-owned: the contract (`packages/contracts/src/med.ts`, imported as `@t3tools/contracts/med`), the handlers (`apps/server/src/med/http.ts`), and the client (`apps/web/src/med/`, with the routes `apps/web/src/routes/_chat.{inbox,patients.index,patients.$patientId,needs-you,upcoming}.tsx`).
+The web client reads patient data over HTTP, under `/api/med`, and only reads it. Everything is fork-owned: the contract (`packages/contracts/src/med.ts`, imported as `@t3tools/contracts/med`), the handlers (`apps/server/src/med/http.ts`), and the client (`apps/web/src/med/`, with the routes `apps/web/src/routes/_chat.{inbox,patients.index,patients.$patientId,needs-you,upcoming}.tsx`).
 
 - **Why HTTP and not RPC.** A new RPC method is an edit to `packages/contracts/src/rpc.ts`, `ws.ts` and the client-runtime RPC layer, three files upstream changes all the time. `MedHttpApi` is its own `HttpApi`, mounted with one line in `server.ts`.
-- **Signing in.** Every endpoint carries upstream's `EnvironmentAuthenticatedAuth` middleware, the one that guards `/api/projects` and `/api/orchestration`, so a cookie, a bearer token and a DPoP token are accepted and refused exactly as there, and an MCP client's session is refused. Reads need `orchestration:read`; linking a thread needs `orchestration:operate`.
+- **Signing in.** Every endpoint carries upstream's `EnvironmentAuthenticatedAuth` middleware, the one that guards `/api/projects` and `/api/orchestration`, so a cookie, a bearer token and a DPoP token are accepted and refused exactly as there, and an MCP client's session is refused. Every route is a read and needs `orchestration:read`.
+- **The client never links a thread.** `MedHttpApi` has `GET` routes only, and `http.test.ts` fails when a route of another method is added. A link written from the browser is a link made on no evidence: the draft it was written for can be reused for another patient's chat.
+- **No caching.** Every answer, a refusal included, carries `Cache-Control: no-store`. The header is set in a wrapper around the sign-in middleware (`layerAuth` in `http.ts`), which runs before every handler.
 - **No patient text in a URL.** The request span records the full URL, query string included. So the directory is sent whole and the search runs in the browser (`filterPatients`); do not add a `?q=`. Paths carry ids only.
 - **Response fields.** A handler returns what the store returns and the contract's schema drops the rest. A field the pages should not get, such as `diagnoses`, stays out by not being in `med.ts`.
-- **One environment.** The client asks the primary environment only, with the session the browser already holds. Threads of another connected environment show no patient.
-- **Freshness.** The server pushes nothing for patient data. The client reads again when a patient page is entered, when the window regains focus, when any thread starts or stops working, and after its own write. What an agent files in the middle of a turn shows when the turn ends.
-- **A chat started from a patient's page.** `New chat` runs upstream's own new-thread handler, which makes the draft and its thread id, and then posts the link for that id. The link is the doctor's channel (`PatientStore.linkThread`); agents still link by URN only.
+- **One environment.** Patient data belongs to the primary environment. `useMedEnvironmentId` (`medData.ts`) is that environment's id once the session may read there, and null until then; every patient query goes through `useMedQuery` or `useThreadPatient`, which ask nothing while it is null. So a thread of another connected environment shows no patient and is not asked about, rows that open a thread open it in the primary environment, and `New chat` uses the first project of the primary environment. Without a primary environment the pages keep their loading placeholder.
+- **Freshness.** The server pushes nothing for patient data. The client reads again when a patient page is entered, when the window regains focus, and when any thread starts or stops working. What an agent files in the middle of a turn shows when the turn ends.
+- **A chat started from a patient's page.** `New chat` runs upstream's own new-thread handler with its `prompt` option, the one prompt links and playbooks fill a draft's composer with. The text is one line, `URN 00-12-34-56 (Ni Made Suartini)` and a line break, which the doctor sees and can change. Nothing is linked then: the agent links the thread when the message arrives, by that URN. A patient with no URN cannot be started this way, and the button says so.
+- **Earlier chats.** A patient's page lists the patient's notes and, from `thread_patients`, every linked thread that filed no note for them; such a row takes its title from the client's own thread list. `Last chat` in the directory is the latest of a patient's note changes and thread links, and a dash when there is neither.
+- **Rows.** A row that opens something ends with a chevron; a row that opens nothing (a note without a thread, a plan on its own patient's page) has none. Links share `MedLink`.
 - After an upstream merge, build the web app before type-checking: `routeTree.gen.ts` is written by the build.
 
 ## Not done yet
@@ -78,7 +84,7 @@ The web client reads patient data over HTTP, under `/api/med`. Everything is for
 - The updater still points at upstream releases. A foreground server does not self-update, but the sidebar may offer upstream's update; do not accept it.
 - Icons are still upstream's.
 - Right-panel surfaces for a patient (Summary, Labs, Plan). The patient pages list notes and plans only; labs are not shown anywhere yet.
-- Nothing unlinks a thread from a patient. `New chat` on a patient's page reuses the project's empty draft when there is one, so a draft linked there and left empty is still linked when it is later reused from the sidebar's New thread; the chat header names the patient.
+- Nothing unlinks a thread from a patient. A thread linked to the wrong patient is corrected by giving the agent the right URN, which relinks it.
 - Patient data is not pushed to the client; see Freshness above.
 - The patient pages exist in the web client only. Mobile has none, and nothing was checked in the desktop shell.
 - Coding features (projects, pull requests, terminals) are still shown beside the patient rows.
