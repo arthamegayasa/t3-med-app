@@ -55,9 +55,9 @@ function Root({
 }
 
 /** What the rows of a list end with: the width the line above them leaves free. */
-type RowEnd = "chevron" | "menu" | "chevron-menu" | "chevron-button";
+type RowEnd = "chevron" | "menu" | "chevron-menu";
 
-const ACTIONS_SLOT = { menu: "w-6", button: "w-14" } as const;
+const ACTIONS_SLOT = { menu: "w-6" } as const;
 
 /**
  * A small muted line above a list: what it holds on the left, a column name on the right. It
@@ -75,7 +75,6 @@ function Lead({
       className={cn(
         "flex items-center gap-3 px-2.5 text-muted-foreground text-xs font-medium",
         ends === "chevron-menu" && "mr-7",
-        ends === "chevron-button" && "mr-15",
         className,
       )}
       {...props}

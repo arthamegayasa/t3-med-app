@@ -173,30 +173,32 @@ function CorrectLabDialog({
                 autoComplete="off"
               />
             </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor={`${id}-written`}>Result as written</Label>
-                <Input
-                  id={`${id}-written`}
-                  value={form.valueText}
-                  aria-describedby={`${id}-written-note`}
-                  onChange={(event) => setForm(followWritten(form, event.target.value))}
-                  autoComplete="off"
-                />
+            <div className="flex flex-col gap-1.5">
+              <div className="grid grid-cols-2 gap-3">
+                <div className="flex flex-col gap-1.5">
+                  <Label htmlFor={`${id}-written`}>Result as written</Label>
+                  <Input
+                    id={`${id}-written`}
+                    value={form.valueText}
+                    aria-describedby={`${id}-written-note`}
+                    onChange={(event) => setForm(followWritten(form, event.target.value))}
+                    autoComplete="off"
+                  />
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <Label htmlFor={`${id}-unit`}>Unit</Label>
+                  <Input
+                    id={`${id}-unit`}
+                    value={form.unit}
+                    onChange={(event) => set({ unit: event.target.value })}
+                    autoComplete="off"
+                  />
+                </div>
               </div>
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor={`${id}-unit`}>Unit</Label>
-                <Input
-                  id={`${id}-unit`}
-                  value={form.unit}
-                  onChange={(event) => set({ unit: event.target.value })}
-                  autoComplete="off"
-                />
-              </div>
+              <p id={`${id}-written-note`} className="m-0 text-muted-foreground text-xs">
+                The result as written is what tables show, exactly as the sheet has it.
+              </p>
             </div>
-            <p id={`${id}-written-note`} className="m-0 text-muted-foreground text-xs">
-              The result as written is what tables show, exactly as the sheet has it.
-            </p>
             <div className="flex flex-col gap-1.5">
               <Label htmlFor={`${id}-number`}>Number used for comparison</Label>
               <Input
