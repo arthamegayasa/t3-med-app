@@ -18,6 +18,14 @@ export const MED_APP_ID = "com.arthamegayasa.t3med";
 export const MED_PACKAGE_NAME = "t3med";
 
 /**
+ * The scheme the window loads its page from (`t3med://app/`), also in `apps/server/src/httpCors.ts`.
+ * Clerk's bridge registers it with Windows as this app's link handler at every start, so
+ * upstream's `t3code` here would take T3 Code's links away from T3 Code.
+ */
+export const MED_DESKTOP_SCHEME = "t3med";
+export const MED_DESKTOP_DEV_SCHEME = "t3med-dev";
+
+/**
  * Where the backend looks for a free port. Upstream starts at 3773, the port a running T3 Code
  * holds; `start-t3-med.cmd` uses 3899.
  */

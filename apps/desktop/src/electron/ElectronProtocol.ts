@@ -12,9 +12,11 @@ import * as Scope from "effect/Scope";
 
 import * as Electron from "electron";
 
+import { MED_DESKTOP_DEV_SCHEME, MED_DESKTOP_SCHEME } from "../med/identity.ts";
+
 export const DESKTOP_HOST = "app";
-const DESKTOP_PRODUCTION_SCHEME = "t3code";
-const DESKTOP_DEVELOPMENT_SCHEME = "t3code-dev";
+const DESKTOP_PRODUCTION_SCHEME = MED_DESKTOP_SCHEME;
+const DESKTOP_DEVELOPMENT_SCHEME = MED_DESKTOP_DEV_SCHEME;
 
 export function getDesktopScheme(isDevelopment: boolean): string {
   return isDevelopment ? DESKTOP_DEVELOPMENT_SCHEME : DESKTOP_PRODUCTION_SCHEME;
