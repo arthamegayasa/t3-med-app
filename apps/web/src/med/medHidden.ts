@@ -240,6 +240,7 @@ const HIDDEN_PALETTE_ACTIONS: ReadonlySet<string> = new Set([
   "action:new-project",
   "action:pull-requests",
   "action:use-in-another-app",
+  "action:share-thread-with-guest",
   "action:project-pin",
   "action:project-settings",
   "find-in-browser-page",
@@ -415,3 +416,25 @@ export function patientModelCapabilities<
     ? capabilities
     : { ...capabilities, optionDescriptors: kept };
 }
+
+/**
+ * Every name above that is upstream's own, for `medHidden.test.ts`: each is looked up in
+ * upstream's lists or source, so one a merge renames fails there instead of coming back unseen.
+ */
+export const MED_UPSTREAM_NAMES = {
+  settingsPaths: HIDDEN_SETTINGS_PATHS,
+  settingsSearchOnly: HIDDEN_SETTINGS_SEARCH_ONLY,
+  settingsTargets: HIDDEN_SETTINGS_TARGETS,
+  settingsSectionTitles: HIDDEN_SETTINGS_SECTION_TITLES,
+  pagePaths: HIDDEN_PAGE_PATHS,
+  keybindingPrefixes: HIDDEN_KEYBINDING_PREFIXES,
+  keybindingCommands: HIDDEN_KEYBINDING_COMMANDS,
+  menuItems: HIDDEN_MENU_ITEMS,
+  paletteActions: HIDDEN_PALETTE_ACTIONS,
+  palettePrefixes: HIDDEN_PALETTE_PREFIXES,
+  wording: PATIENT_WORDING,
+  rowText: PATIENT_ROW_TEXT,
+  neverTrueConditions: NEVER_TRUE_CONDITIONS,
+  keptProviderSlashCommands: KEPT_PROVIDER_SLASH_COMMANDS,
+  modelOptions: HIDDEN_MODEL_OPTIONS,
+} as const;

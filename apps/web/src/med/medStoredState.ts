@@ -28,8 +28,9 @@ const HIDDEN_CLIENT_SETTINGS = [
   "browserAutoShowFloatingPreview",
 ] as const satisfies ReadonlyArray<keyof ClientSettings>;
 
+// Filled on the first read: an upstream test that mocks the contracts loads this module too.
 let lastStored: ClientSettings | null = null;
-let lastShown: ClientSettings = DEFAULT_CLIENT_SETTINGS;
+let lastShown: ClientSettings | null = null;
 
 /**
  * Client settings as the app reads them. What is stored is left alone, so a save of another
@@ -38,9 +39,8 @@ let lastShown: ClientSettings = DEFAULT_CLIENT_SETTINGS;
  */
 export function patientClientSettings(stored: ClientSettings): ClientSettings {
   if (!T3MED) return stored;
-  if (stored === lastStored) return lastShown;
-  lastStored = stored;
-  lastShown = HIDDEN_CLIENT_SETTINGS.every((key) => stored[key] === DEFAULT_CLIENT_SETTINGS[key])
+  if (stored === lastStored && lastShown !== null) return lastShown;
+  const shown = HIDDEN_CLIENT_SETTINGS.every((key) => stored[key] === DEFAULT_CLIENT_SETTINGS[key])
     ? stored
     : {
         ...stored,
@@ -48,7 +48,9 @@ export function patientClientSettings(stored: ClientSettings): ClientSettings {
           HIDDEN_CLIENT_SETTINGS.map((key) => [key, DEFAULT_CLIENT_SETTINGS[key]]),
         ),
       };
-  return lastShown;
+  lastStored = stored;
+  lastShown = shown;
+  return shown;
 }
 
 const NO_PROJECTS: Array<string> = [];

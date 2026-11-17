@@ -58,6 +58,21 @@ const SKIPPED: ReadonlyArray<MedSkippedTest> = [
     reason: "T3 Med's palette lists no project to find. Fork-owned twin: medLiveBehaviour.",
   },
   {
+    file: "src/components/threadActionMenu.logic.test.ts",
+    name: "buildThreadActionMenuItems > disables archive and turning into a project while the thread is running",
+    reason: "T3 Med has no Turn into project row. Fork-owned twin: medHidden.test.ts.",
+  },
+  {
+    file: "src/rightPanelStore.test.ts",
+    name: "rightPanelStore > holds a clicked link until the panel settles it, and a later link replaces it",
+    reason: "T3 Med drops a saved pull request tab when the panel's state is loaded.",
+  },
+  {
+    file: "src/rightPanelStore.test.ts",
+    name: "rightPanelStore > restores each environment, thread and PR surface's detail tab after reload and URL reopen",
+    reason: "T3 Med drops a saved pull request tab when the panel's state is loaded.",
+  },
+  {
     file: "src/components/GitHubStarPrompt.test.ts",
     name: "recordPromptSent",
     reason: "T3 Med never asks a doctor to star upstream's repository.",
