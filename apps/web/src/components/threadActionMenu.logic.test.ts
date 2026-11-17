@@ -67,16 +67,14 @@ describe("buildThreadActionMenuItems", () => {
   );
 
   // T3 Med has no Turn into project row (docs/t3-med/FORK.md).
-  it.skipIf(T3MED)(
-    "disables archive and turning into a project while the thread is running",
-    () => {
-      const items = buildThreadActionMenuItems({
-        ...baseState,
-        isRunning: true,
-        canTurnIntoProject: true,
-      });
-      expect(items.find((item) => item.id === "archive")?.disabled).toBe(true);
-      expect(items.find((item) => item.id === "turn-into-project")?.disabled).toBe(true);
-    },
-  );
+  // oxfmt-ignore
+  it.skipIf(T3MED)("disables archive and turning into a project while the thread is running", () => {
+    const items = buildThreadActionMenuItems({
+      ...baseState,
+      isRunning: true,
+      canTurnIntoProject: true,
+    });
+    expect(items.find((item) => item.id === "archive")?.disabled).toBe(true);
+    expect(items.find((item) => item.id === "turn-into-project")?.disabled).toBe(true);
+  });
 });

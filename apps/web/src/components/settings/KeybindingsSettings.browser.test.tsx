@@ -126,28 +126,24 @@ it("Esc in the keybindings search clears the query without closing Settings", as
 });
 
 // T3 Med lists no Terminal: Toggle shortcut (docs/t3-med/FORK.md).
-it.skipIf(T3MED)(
-  "re-enables Save when a When editor closes on an expression it could not parse",
-  async () => {
-    await using screen = await render(
-      <RegistryProvider>
-        <KeybindingsSettingsPanel />
-      </RegistryProvider>,
-    );
-    const whenTrigger = screen.getByRole("button", {
-      name: "Edit when clause for Terminal: Toggle",
-    });
-    const expression = screen.getByRole("textbox", { name: "When expression" });
+// oxfmt-ignore
+it.skipIf(T3MED)("re-enables Save when a When editor closes on an expression it could not parse", async () => {
+  await using screen = await render(
+    <RegistryProvider>
+      <KeybindingsSettingsPanel />
+    </RegistryProvider>,
+  );
+  const whenTrigger = screen.getByRole("button", { name: "Edit when clause for Terminal: Toggle" });
+  const expression = screen.getByRole("textbox", { name: "When expression" });
 
-    await whenTrigger.click();
-    await userEvent.type(expression, "terminalFocus");
-    await userEvent.type(expression, " &&");
-    await expect.element(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+  await whenTrigger.click();
+  await userEvent.type(expression, "terminalFocus");
+  await userEvent.type(expression, " &&");
+  await expect.element(screen.getByRole("button", { name: "Save" })).toBeDisabled();
 
-    await userEvent.keyboard("{Escape}");
-    await whenTrigger.click();
+  await userEvent.keyboard("{Escape}");
+  await whenTrigger.click();
 
-    await expect.element(expression).toHaveValue("terminalFocus");
-    await expect.element(screen.getByRole("button", { name: "Save" })).toBeEnabled();
-  },
-);
+  await expect.element(expression).toHaveValue("terminalFocus");
+  await expect.element(screen.getByRole("button", { name: "Save" })).toBeEnabled();
+});

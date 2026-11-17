@@ -170,28 +170,26 @@ async function setup() {
 
 describe("host editor access", () => {
   // T3 Med drops the open-in-editor shortcut (docs/t3-med/FORK.md).
-  it.skipIf(T3MED)(
-    "uses the selected grant for both the button and a retained shortcut",
-    async () => {
-      await using fixture = await setup();
-      const { renderPicker, byLabel, primaryButton, click, pressOpenFavorite } = fixture;
-      state.allowed.add(selected);
-      await renderPicker();
-      // Revoke without rerendering to exercise execution-time grant checks.
-      state.allowed.delete(selected);
-      state.allowed.add(primary);
-      await click(primaryButton());
-      // The shortcut is consumed and opens nothing once the grant is gone.
-      expect((await pressOpenFavorite()).defaultPrevented).toBe(true);
-      expect(state.run).not.toHaveBeenCalled();
-      expect(state.setPreferred).not.toHaveBeenCalled();
+  // oxfmt-ignore
+  it.skipIf(T3MED)("uses the selected grant for both the button and a retained shortcut", async () => {
+    await using fixture = await setup();
+    const { renderPicker, byLabel, primaryButton, click, pressOpenFavorite } = fixture;
+    state.allowed.add(selected);
+    await renderPicker();
+    // Revoke without rerendering to exercise execution-time grant checks.
+    state.allowed.delete(selected);
+    state.allowed.add(primary);
+    await click(primaryButton());
+    // The shortcut is consumed and opens nothing once the grant is gone.
+    expect((await pressOpenFavorite()).defaultPrevented).toBe(true);
+    expect(state.run).not.toHaveBeenCalled();
+    expect(state.setPreferred).not.toHaveBeenCalled();
 
-      await renderPicker();
-      expect(primaryButton().disabled).toBe(true);
-      expect(byLabel("Choose editor").disabled).toBe(true);
-      expect((await pressOpenFavorite()).defaultPrevented).toBe(false);
-    },
-  );
+    await renderPicker();
+    expect(primaryButton().disabled).toBe(true);
+    expect(byLabel("Choose editor").disabled).toBe(true);
+    expect((await pressOpenFavorite()).defaultPrevented).toBe(false);
+  });
 });
 
 describe("remote editor links", () => {
@@ -230,37 +228,35 @@ describe("remote editor links", () => {
 
 describe("open in editor announcement", () => {
   // T3 Med drops the open-in-editor shortcut (docs/t3-med/FORK.md).
-  it.skipIf(T3MED)(
-    "speaks only after the shortcut opened the editor, from the picker or the fallback",
-    async () => {
-      await using fixture = await setup();
-      const { screen, renderPicker, pressOpenFavorite, FavoriteEditorFallback } = fixture;
-      state.allowed.add(selected);
-      await renderPicker();
-      using _timers = fakeTimers();
-      const regions = () => [...document.querySelectorAll('body > [aria-live="polite"]')];
-      const spoken = async () => {
-        await act(async () => vi.runAllTimers());
-        return regions()
-          .map((region) => region.textContent)
-          .join("");
-      };
-      const refuse = () =>
-        state.run.mockResolvedValueOnce(AsyncResult.failure(Cause.fail(new Error("No editor"))));
+  // oxfmt-ignore
+  it.skipIf(T3MED)("speaks only after the shortcut opened the editor, from the picker or the fallback", async () => {
+    await using fixture = await setup();
+    const { screen, renderPicker, pressOpenFavorite, FavoriteEditorFallback } = fixture;
+    state.allowed.add(selected);
+    await renderPicker();
+    using _timers = fakeTimers();
+    const regions = () => [...document.querySelectorAll('body > [aria-live="polite"]')];
+    const spoken = async () => {
+      await act(async () => vi.runAllTimers());
+      return regions()
+        .map((region) => region.textContent)
+        .join("");
+    };
+    const refuse = () =>
+      state.run.mockResolvedValueOnce(AsyncResult.failure(Cause.fail(new Error("No editor"))));
 
-      refuse();
-      await pressOpenFavorite();
-      expect(await spoken()).toBe("");
-      await pressOpenFavorite();
-      expect(await spoken()).toBe("Opened in VS Code");
+    refuse();
+    await pressOpenFavorite();
+    expect(await spoken()).toBe("");
+    await pressOpenFavorite();
+    expect(await spoken()).toBe("Opened in VS Code");
 
-      for (const region of regions()) region.textContent = "";
-      await act(async () => screen.rerender(<FavoriteEditorFallback />));
-      refuse();
-      await pressOpenFavorite();
-      expect(await spoken()).toBe("");
-      await pressOpenFavorite();
-      expect(await spoken()).toBe("Opened in VS Code");
-    },
-  );
+    for (const region of regions()) region.textContent = "";
+    await act(async () => screen.rerender(<FavoriteEditorFallback />));
+    refuse();
+    await pressOpenFavorite();
+    expect(await spoken()).toBe("");
+    await pressOpenFavorite();
+    expect(await spoken()).toBe("Opened in VS Code");
+  });
 });

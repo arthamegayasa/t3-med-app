@@ -180,51 +180,45 @@ function Panel({ fixture }: { fixture: ReturnType<typeof setup> }) {
 }
 
 // T3 Med's thread details have no workspace or pull request rows (docs/t3-med/FORK.md).
-it.skipIf(T3MED)(
-  "offers no git controls in a No project thread, but shows its linked pull request",
-  async () => {
-    using fixture = setup({
-      workspaceRoot: SCRATCH_ROOT,
-      folder: `${SCRATCH_ROOT}/thread`,
-      pullRequests: [linkedPullRequest],
-    });
-    await using _screen = await render(<Panel fixture={fixture} />);
-    await expect.element(page.getByText("#27513")).toBeVisible();
-    await expect
-      .element(page.getByRole("button", { name: "Initialize Git" }))
-      .not.toBeInTheDocument();
-  },
-);
+// oxfmt-ignore
+it.skipIf(T3MED)("offers no git controls in a No project thread, but shows its linked pull request", async () => {
+  using fixture = setup({
+    workspaceRoot: SCRATCH_ROOT,
+    folder: `${SCRATCH_ROOT}/thread`,
+    pullRequests: [linkedPullRequest],
+  });
+  await using _screen = await render(<Panel fixture={fixture} />);
+  await expect.element(page.getByText("#27513")).toBeVisible();
+  await expect
+    .element(page.getByRole("button", { name: "Initialize Git" }))
+    .not.toBeInTheDocument();
+});
 
 // T3 Med's thread details have no workspace or pull request rows (docs/t3-med/FORK.md).
-it.skipIf(T3MED)(
-  "shows a linked pull request in a folder that is not a git repository",
-  async () => {
-    using fixture = setup({
-      workspaceRoot: "/work/plain",
-      folder: "/work/plain",
-      pullRequests: [linkedPullRequest],
-    });
-    await using _screen = await render(<Panel fixture={fixture} />);
-    await expect.element(page.getByRole("region", { name: "Workspace" })).toBeVisible();
-    await expect.element(page.getByText("#27513")).toBeVisible();
-    await expect.element(page.getByRole("button", { name: "Initialize Git" })).toBeVisible();
-  },
-);
+// oxfmt-ignore
+it.skipIf(T3MED)("shows a linked pull request in a folder that is not a git repository", async () => {
+  using fixture = setup({
+    workspaceRoot: "/work/plain",
+    folder: "/work/plain",
+    pullRequests: [linkedPullRequest],
+  });
+  await using _screen = await render(<Panel fixture={fixture} />);
+  await expect.element(page.getByRole("region", { name: "Workspace" })).toBeVisible();
+  await expect.element(page.getByText("#27513")).toBeVisible();
+  await expect.element(page.getByRole("button", { name: "Initialize Git" })).toBeVisible();
+});
 
 // T3 Med's thread details have no workspace or pull request rows (docs/t3-med/FORK.md).
-it.skipIf(T3MED)(
-  "offers no Initialize Git before the server config says where No project lives",
-  async () => {
-    using fixture = setup({
-      workspaceRoot: SCRATCH_ROOT,
-      folder: `${SCRATCH_ROOT}/thread`,
-      configLoaded: false,
-    });
-    await using _screen = await render(<Panel fixture={fixture} />);
-    await expect.element(page.getByRole("region", { name: "Workspace" })).toBeVisible();
-    await expect
-      .element(page.getByRole("button", { name: "Initialize Git" }))
-      .not.toBeInTheDocument();
-  },
-);
+// oxfmt-ignore
+it.skipIf(T3MED)("offers no Initialize Git before the server config says where No project lives", async () => {
+  using fixture = setup({
+    workspaceRoot: SCRATCH_ROOT,
+    folder: `${SCRATCH_ROOT}/thread`,
+    configLoaded: false,
+  });
+  await using _screen = await render(<Panel fixture={fixture} />);
+  await expect.element(page.getByRole("region", { name: "Workspace" })).toBeVisible();
+  await expect
+    .element(page.getByRole("button", { name: "Initialize Git" }))
+    .not.toBeInTheDocument();
+});

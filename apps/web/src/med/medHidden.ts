@@ -249,6 +249,11 @@ const PATIENT_WORDING: Readonly<Record<string, string>> = {
   "Search commands, projects, and threads...": "Search commands and threads...",
   "No matching commands, projects, or threads.": "No matching commands or threads.",
   "Pull Request: Copy Link or Thread": "Thread: Copy",
+  "Default model for new threads, selected automatically. Projects can override it.":
+    "Default model for new threads, selected automatically.",
+  "Default model for new threads. Projects can override it.": "Default model for new threads.",
+  "Default permissions for new threads. Projects can override them.":
+    "Default permissions for new threads.",
 };
 
 /** Upstream's wording, or the patient workspace's for the few sentences that name a project. */

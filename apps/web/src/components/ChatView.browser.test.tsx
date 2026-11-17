@@ -111,65 +111,63 @@ vi.mock(import("~/rpc/requestLatencyState"), async (original) => ({
 }));
 
 // T3 Med's sidebar does not name the project this waits for (docs/t3-med/FORK.md).
-it.skipIf(T3MED)(
-  "a machine chip stashed in one thread restores with its machine in another",
-  async () => {
-    const other = threadWithHistory("thread-stash-restore", 1);
-    const asking = threadWithQuestion("thread-stash-question", "Which file should change?");
-    using _environment = installFakeEnvironment([other, asking]);
-    __setClientSettingsForTests({
-      ...DEFAULT_CLIENT_SETTINGS,
-      onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
-    });
-    const draftId = DraftId.make("draft-stash-machine");
-    const machine = environmentContextRecord(EnvironmentId.make("environment-build"), "Build box");
-    const drafts = useComposerDraftStore.getState();
-    drafts.setProjectDraftThreadId(scopeProjectRef(ENVIRONMENT_ID, PROJECT_ID), draftId, {
-      threadId: ThreadId.make("thread-stash-machine"),
-    });
-    drafts.setPrompt(draftId, "Deploy on ");
-    drafts.addEnvironmentContexts(draftId, [machine]);
-    const router = getRouter(createMemoryHistory({ initialEntries: [`/draft/${draftId}`] }));
-    await router.load();
-    await using _app = await render(<AppRoot router={router} />, {
-      // AppRoot brings its own router.
-      router: false,
-    });
-    const editor = page.getByTestId("composer-editor");
-    const pressStashShortcut = async () => {
-      await userEvent.click(editor);
-      await userEvent.keyboard("{ControlOrMeta>}s{/ControlOrMeta}");
-    };
-    await vi.waitFor(() => expect(editor.element().textContent).toContain("Deploy on"));
-    // A draft can't stash until the shell snapshot lists its project.
-    await expect.element(page.getByText("render", { exact: true }).first()).toBeVisible();
-    await pressStashShortcut();
-    await vi.waitFor(() => expect(usePromptStashStore.getState().entries).toHaveLength(1));
+// oxfmt-ignore
+it.skipIf(T3MED)("a machine chip stashed in one thread restores with its machine in another", async () => {
+  const other = threadWithHistory("thread-stash-restore", 1);
+  const asking = threadWithQuestion("thread-stash-question", "Which file should change?");
+  using _environment = installFakeEnvironment([other, asking]);
+  __setClientSettingsForTests({
+    ...DEFAULT_CLIENT_SETTINGS,
+    onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
+  });
+  const draftId = DraftId.make("draft-stash-machine");
+  const machine = environmentContextRecord(EnvironmentId.make("environment-build"), "Build box");
+  const drafts = useComposerDraftStore.getState();
+  drafts.setProjectDraftThreadId(scopeProjectRef(ENVIRONMENT_ID, PROJECT_ID), draftId, {
+    threadId: ThreadId.make("thread-stash-machine"),
+  });
+  drafts.setPrompt(draftId, "Deploy on ");
+  drafts.addEnvironmentContexts(draftId, [machine]);
+  const router = getRouter(createMemoryHistory({ initialEntries: [`/draft/${draftId}`] }));
+  await router.load();
+  await using _app = await render(<AppRoot router={router} />, {
+    // AppRoot brings its own router.
+    router: false,
+  });
+  const editor = page.getByTestId("composer-editor");
+  const pressStashShortcut = async () => {
+    await userEvent.click(editor);
+    await userEvent.keyboard("{ControlOrMeta>}s{/ControlOrMeta}");
+  };
+  await vi.waitFor(() => expect(editor.element().textContent).toContain("Deploy on"));
+  // A draft can't stash until the shell snapshot lists its project.
+  await expect.element(page.getByText("render", { exact: true }).first()).toBeVisible();
+  await pressStashShortcut();
+  await vi.waitFor(() => expect(usePromptStashStore.getState().entries).toHaveLength(1));
 
-    // An answer carries no machines, so an open question refuses the restore and keeps the entry.
-    await router.navigate({ to: `/${ENVIRONMENT_ID}/${asking.id}` });
-    await expect.element(page.getByText("Which file should change?")).toBeVisible();
-    await userEvent.click(page.getByRole("button", { name: /^Stashed prompts/ }));
-    await userEvent.click(page.getByRole("button", { name: /^Restore stashed prompt/ }));
-    await vi.waitFor(() =>
-      expect(document.body.textContent).toContain("Stashed machines can't go in an answer"),
-    );
-    expect(usePromptStashStore.getState().entries).toHaveLength(1);
+  // An answer carries no machines, so an open question refuses the restore and keeps the entry.
+  await router.navigate({ to: `/${ENVIRONMENT_ID}/${asking.id}` });
+  await expect.element(page.getByText("Which file should change?")).toBeVisible();
+  await userEvent.click(page.getByRole("button", { name: /^Stashed prompts/ }));
+  await userEvent.click(page.getByRole("button", { name: /^Restore stashed prompt/ }));
+  await vi.waitFor(() =>
+    expect(document.body.textContent).toContain("Stashed machines can't go in an answer"),
+  );
+  expect(usePromptStashStore.getState().entries).toHaveLength(1);
 
-    await router.navigate({ to: `/${ENVIRONMENT_ID}/${other.id}` });
-    await expect.element(page.getByText("Answer 0 for thread-stash-restore.")).toBeVisible();
-    await pressStashShortcut();
+  await router.navigate({ to: `/${ENVIRONMENT_ID}/${other.id}` });
+  await expect.element(page.getByText("Answer 0 for thread-stash-restore.")).toBeVisible();
+  await pressStashShortcut();
 
-    await vi.waitFor(() => expect(editor.element().textContent).toContain("Deploy on"));
-    expect(
-      useComposerDraftStore.getState().getComposerDraft(scopeThreadRef(ENVIRONMENT_ID, other.id))
-        ?.environmentContexts,
-    ).toEqual([machine]);
-    expect(
-      useComposerDraftStore.getState().getComposerDraft(draftId)?.environmentContexts ?? [],
-    ).toEqual([]);
-  },
-);
+  await vi.waitFor(() => expect(editor.element().textContent).toContain("Deploy on"));
+  expect(
+    useComposerDraftStore.getState().getComposerDraft(scopeThreadRef(ENVIRONMENT_ID, other.id))
+      ?.environmentContexts,
+  ).toEqual([machine]);
+  expect(
+    useComposerDraftStore.getState().getComposerDraft(draftId)?.environmentContexts ?? [],
+  ).toEqual([]);
+});
 
 it("a question that opens while a stashed file is checked keeps a machine stash", async () => {
   const thread = threadWithHistory("thread-stash-late-question", 1);
@@ -227,89 +225,83 @@ it("a question that opens while a stashed file is checked keeps a machine stash"
 });
 
 // T3 Med's sidebar does not name the project this waits for (docs/t3-med/FORK.md).
-it.skipIf(T3MED)(
-  "a new draft does not load its reserved thread before the server lists it",
-  async () => {
-    using _environment = installFakeEnvironment([]);
-    using fetchSpy = vi.spyOn(globalThis, "fetch");
-    __setClientSettingsForTests({
-      ...DEFAULT_CLIENT_SETTINGS,
-      onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
-    });
-    const draftId = DraftId.make("draft-27443");
-    const threadId = ThreadId.make("thread-27443");
-    useComposerDraftStore
-      .getState()
-      .setProjectDraftThreadId(scopeProjectRef(ENVIRONMENT_ID, PROJECT_ID), draftId, { threadId });
+// oxfmt-ignore
+it.skipIf(T3MED)("a new draft does not load its reserved thread before the server lists it", async () => {
+  using _environment = installFakeEnvironment([]);
+  using fetchSpy = vi.spyOn(globalThis, "fetch");
+  __setClientSettingsForTests({
+    ...DEFAULT_CLIENT_SETTINGS,
+    onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
+  });
+  const draftId = DraftId.make("draft-27443");
+  const threadId = ThreadId.make("thread-27443");
+  useComposerDraftStore
+    .getState()
+    .setProjectDraftThreadId(scopeProjectRef(ENVIRONMENT_ID, PROJECT_ID), draftId, { threadId });
 
-    const router = getRouter(createMemoryHistory({ initialEntries: [`/draft/${draftId}`] }));
-    await router.load();
-    await using _app = await render(<AppRoot router={router} />, {
-      // AppRoot brings its own router.
-      router: false,
-    });
-    await expect.element(page.getByTestId("composer-editor")).toBeVisible();
-    // The shell snapshot has arrived once the sidebar lists the project, so the connection is up.
-    await expect.element(page.getByText("render", { exact: true }).first()).toBeVisible();
+  const router = getRouter(createMemoryHistory({ initialEntries: [`/draft/${draftId}`] }));
+  await router.load();
+  await using _app = await render(<AppRoot router={router} />, {
+    // AppRoot brings its own router.
+    router: false,
+  });
+  await expect.element(page.getByTestId("composer-editor")).toBeVisible();
+  // The shell snapshot has arrived once the sidebar lists the project, so the connection is up.
+  await expect.element(page.getByText("render", { exact: true }).first()).toBeVisible();
 
-    const threadRequests = fetchSpy.mock.calls
-      .map(([input]) => String(input instanceof Request ? input.url : input))
-      .filter((url) => url.includes(`/api/orchestration/threads/${threadId}/`));
-    // A 404 here marks the thread deleted, and the view never loads it once the send creates it.
-    expect(threadRequests).toEqual([]);
-  },
-);
+  const threadRequests = fetchSpy.mock.calls
+    .map(([input]) => String(input instanceof Request ? input.url : input))
+    .filter((url) => url.includes(`/api/orchestration/threads/${threadId}/`));
+  // A 404 here marks the thread deleted, and the view never loads it once the send creates it.
+  expect(threadRequests).toEqual([]);
+});
 
 // T3 Med's sidebar does not name the project this waits for (docs/t3-med/FORK.md).
-it.skipIf(T3MED)(
-  "an interrupted image-only first send of a new thread says it may not have been sent",
-  async () => {
-    using _environment = installFakeEnvironment([]);
-    __setClientSettingsForTests({
-      ...DEFAULT_CLIENT_SETTINGS,
-      onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
+// oxfmt-ignore
+it.skipIf(T3MED)("an interrupted image-only first send of a new thread says it may not have been sent", async () => {
+  using _environment = installFakeEnvironment([]);
+  __setClientSettingsForTests({
+    ...DEFAULT_CLIENT_SETTINGS,
+    onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
+  });
+  const draftId = DraftId.make("draft-image-only-interrupted");
+  useComposerDraftStore
+    .getState()
+    .setProjectDraftThreadId(scopeProjectRef(ENVIRONMENT_ID, PROJECT_ID), draftId, {
+      threadId: ThreadId.make("thread-image-only-interrupted"),
     });
-    const draftId = DraftId.make("draft-image-only-interrupted");
-    useComposerDraftStore
-      .getState()
-      .setProjectDraftThreadId(scopeProjectRef(ENVIRONMENT_ID, PROJECT_ID), draftId, {
-        threadId: ThreadId.make("thread-image-only-interrupted"),
-      });
-    // A dropped connection interrupts a new thread's launch, which is not resent.
-    using launch = holdRpc(ORCHESTRATION_V2_WS_METHODS.launchThread, Effect.interrupt);
-    const router = getRouter(createMemoryHistory({ initialEntries: [`/draft/${draftId}`] }));
-    await router.load();
-    await using _app = await render(<AppRoot router={router} />, {
-      // AppRoot brings its own router.
-      router: false,
-    });
-    using _uploads = acceptAttachmentUploads();
-    const editor = page.getByTestId("composer-editor");
-    await expect.element(editor).toBeVisible();
-    // The send needs the project, which arrives with the shell snapshot.
-    await expect.element(page.getByText("render", { exact: true }).first()).toBeVisible();
+  // A dropped connection interrupts a new thread's launch, which is not resent.
+  using launch = holdRpc(ORCHESTRATION_V2_WS_METHODS.launchThread, Effect.interrupt);
+  const router = getRouter(createMemoryHistory({ initialEntries: [`/draft/${draftId}`] }));
+  await router.load();
+  await using _app = await render(<AppRoot router={router} />, {
+    // AppRoot brings its own router.
+    router: false,
+  });
+  using _uploads = acceptAttachmentUploads();
+  const editor = page.getByTestId("composer-editor");
+  await expect.element(editor).toBeVisible();
+  // The send needs the project, which arrives with the shell snapshot.
+  await expect.element(page.getByText("render", { exact: true }).first()).toBeVisible();
 
-    await userEvent.click(editor);
-    const clipboardData = new DataTransfer();
-    clipboardData.items.add(new File([PNG], "shot.png", { type: "image/png" }));
-    editor
-      .element()
-      .dispatchEvent(
-        new ClipboardEvent("paste", { clipboardData, bubbles: true, cancelable: true }),
-      );
-    await expect.element(page.getByRole("img", { name: "shot.png" })).toBeVisible();
-    await userEvent.keyboard("{Enter}");
-    await vi.waitFor(() => expect(launch.calls).toHaveLength(1));
-    await userEvent.keyboard("next draft");
-    await expect.element(editor).toHaveTextContent("next draft");
-    launch.release();
+  await userEvent.click(editor);
+  const clipboardData = new DataTransfer();
+  clipboardData.items.add(new File([PNG], "shot.png", { type: "image/png" }));
+  editor
+    .element()
+    .dispatchEvent(new ClipboardEvent("paste", { clipboardData, bubbles: true, cancelable: true }));
+  await expect.element(page.getByRole("img", { name: "shot.png" })).toBeVisible();
+  await userEvent.keyboard("{Enter}");
+  await vi.waitFor(() => expect(launch.calls).toHaveLength(1));
+  await userEvent.keyboard("next draft");
+  await expect.element(editor).toHaveTextContent("next draft");
+  launch.release();
 
-    await expect.element(page.getByText("Message may not have been sent")).toBeVisible();
-    await expect.element(editor).toHaveTextContent("next draft");
-    // With no text there is nothing to copy.
-    expect(page.getByText("Copy message", { exact: true }).query()).toBeNull();
-  },
-);
+  await expect.element(page.getByText("Message may not have been sent")).toBeVisible();
+  await expect.element(editor).toHaveTextContent("next draft");
+  // With no text there is nothing to copy.
+  expect(page.getByText("Copy message", { exact: true }).query()).toBeNull();
+});
 
 it("opens the thread actions menu for an older settled thread the shell leaves out", async () => {
   const thread = { ...threadWithHistory("older-settled", 1), olderSettled: true as const };
@@ -598,42 +590,40 @@ it("a mounted thread view lets go of the thread structures it has replaced", asy
 });
 
 // T3 Med's launcher has no Files row to open (docs/t3-med/FORK.md).
-it.skipIf(T3MED)(
-  "a shortcut conditioned on rightPanelOpen sees the thread's open right panel",
-  async () => {
-    await page.viewport(1280, 800);
-    const thread = threadWithHistory("thread-panel-shortcut", 1);
-    using _environment = installFakeEnvironment([thread], {
-      keybindings: mergeWithDefaultKeybindings(
-        compileResolvedKeybindingsConfig([
-          { key: "ctrl+t", command: "rightPanel.new", when: "rightPanelOpen && !terminalFocus" },
-          { key: "ctrl+t", command: "rightPanel.toggle", when: "!rightPanelOpen" },
-        ]),
-      ),
-    });
-    __setClientSettingsForTests({
-      ...DEFAULT_CLIENT_SETTINGS,
-      onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
-    });
-    const router = getRouter(
-      createMemoryHistory({ initialEntries: [`/${ENVIRONMENT_ID}/${thread.id}`] }),
-    );
-    await router.load();
-    await using _app = await render(<AppRoot router={router} />, {
-      // AppRoot brings its own router.
-      router: false,
-    });
-    const composer = page.getByTestId("composer-editor");
-    const toggle = page.getByRole("button", { name: "Toggle right panel", exact: true });
-    await expect.element(toggle).toHaveAttribute("aria-pressed", "false");
-    await toggle.click();
-    await page.getByRole("button", { name: /^Files/ }).click();
-    await composer.click();
-    await userEvent.keyboard("{Control>}t{/Control}");
-    await expect.element(page.getByRole("menuitem", { name: /Files/ })).toBeVisible();
-    await expect.element(toggle).toHaveAttribute("aria-pressed", "true");
-  },
-);
+// oxfmt-ignore
+it.skipIf(T3MED)("a shortcut conditioned on rightPanelOpen sees the thread's open right panel", async () => {
+  await page.viewport(1280, 800);
+  const thread = threadWithHistory("thread-panel-shortcut", 1);
+  using _environment = installFakeEnvironment([thread], {
+    keybindings: mergeWithDefaultKeybindings(
+      compileResolvedKeybindingsConfig([
+        { key: "ctrl+t", command: "rightPanel.new", when: "rightPanelOpen && !terminalFocus" },
+        { key: "ctrl+t", command: "rightPanel.toggle", when: "!rightPanelOpen" },
+      ]),
+    ),
+  });
+  __setClientSettingsForTests({
+    ...DEFAULT_CLIENT_SETTINGS,
+    onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
+  });
+  const router = getRouter(
+    createMemoryHistory({ initialEntries: [`/${ENVIRONMENT_ID}/${thread.id}`] }),
+  );
+  await router.load();
+  await using _app = await render(<AppRoot router={router} />, {
+    // AppRoot brings its own router.
+    router: false,
+  });
+  const composer = page.getByTestId("composer-editor");
+  const toggle = page.getByRole("button", { name: "Toggle right panel", exact: true });
+  await expect.element(toggle).toHaveAttribute("aria-pressed", "false");
+  await toggle.click();
+  await page.getByRole("button", { name: /^Files/ }).click();
+  await composer.click();
+  await userEvent.keyboard("{Control>}t{/Control}");
+  await expect.element(page.getByRole("menuitem", { name: /Files/ })).toBeVisible();
+  await expect.element(toggle).toHaveAttribute("aria-pressed", "true");
+});
 
 it("selecting a side-chat tab focuses that side chat's composer", async () => {
   const parent = threadWithHistory("focus-parent", 1);

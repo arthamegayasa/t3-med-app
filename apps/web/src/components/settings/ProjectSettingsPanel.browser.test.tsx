@@ -700,38 +700,36 @@ describe("project settings scope", () => {
   });
 
   // T3 Med hides the sentence that chooses a project and a machine (docs/t3-med/FORK.md).
-  it.skipIf(T3MED)(
-    "reaches each checkout on one environment and returns to all of them",
-    async () => {
-      setup();
-      const [first] = state.projects;
-      state.projects = [
-        { ...first!, id: ProjectId.make("clone-a"), workspaceRoot: "/work/clone-a" },
-        { ...first!, id: ProjectId.make("clone-b"), workspaceRoot: "/work/clone-b" },
-      ];
-      const key = projectKey();
-      await using screen = await mountSettings({ project: key, machine: primaryId });
+  // oxfmt-ignore
+  it.skipIf(T3MED)("reaches each checkout on one environment and returns to all of them", async () => {
+    setup();
+    const [first] = state.projects;
+    state.projects = [
+      { ...first!, id: ProjectId.make("clone-a"), workspaceRoot: "/work/clone-a" },
+      { ...first!, id: ProjectId.make("clone-b"), workspaceRoot: "/work/clone-b" },
+    ];
+    const key = projectKey();
+    await using screen = await mountSettings({ project: key, machine: primaryId });
 
-      await userEvent.click(page.getByRole("button", { name: "Checkout scope: All checkouts" }));
-      await userEvent.click(page.getByRole("menuitemradio", { name: /clone-b/ }));
+    await userEvent.click(page.getByRole("button", { name: "Checkout scope: All checkouts" }));
+    await userEvent.click(page.getByRole("menuitemradio", { name: /clone-b/ }));
 
-      await expect
-        .element(page.getByRole("button", { name: "Checkout scope: clone-b" }))
-        .toBeVisible();
-      expect(screen.router.state.location.search).toMatchObject({
-        project: key,
-        machine: primaryId,
-        checkout: expect.stringContaining("clone-b"),
-      });
+    await expect
+      .element(page.getByRole("button", { name: "Checkout scope: clone-b" }))
+      .toBeVisible();
+    expect(screen.router.state.location.search).toMatchObject({
+      project: key,
+      machine: primaryId,
+      checkout: expect.stringContaining("clone-b"),
+    });
 
-      await userEvent.click(page.getByRole("button", { name: "Checkout scope: clone-b" }));
-      await userEvent.click(page.getByRole("menuitemradio", { name: "All checkouts" }));
+    await userEvent.click(page.getByRole("button", { name: "Checkout scope: clone-b" }));
+    await userEvent.click(page.getByRole("menuitemradio", { name: "All checkouts" }));
 
-      await vi.waitFor(() =>
-        expect(screen.router.state.location.search).toEqual({ project: key, machine: primaryId }),
-      );
-    },
-  );
+    await vi.waitFor(() =>
+      expect(screen.router.state.location.search).toEqual({ project: key, machine: primaryId }),
+    );
+  });
 
   // T3 Med hides the sentence that chooses a project and a machine (docs/t3-med/FORK.md).
   it.skipIf(T3MED)("keeps an unknown project recoverable from any environment", async () => {

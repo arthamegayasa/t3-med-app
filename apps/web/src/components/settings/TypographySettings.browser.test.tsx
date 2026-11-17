@@ -35,14 +35,12 @@ function setup(searchTargetId: string | null) {
 
 describe("TypographySection", () => {
   // T3 Med has no Terminal font row (docs/t3-med/FORK.md).
-  it.skipIf(T3MED)(
-    "persists the advanced flag the terminal reads when a deep link targets an advanced row",
-    async () => {
-      using _storage = setup("terminal-font");
-      await using screen = await render(<TypographySection />);
+  // oxfmt-ignore
+  it.skipIf(T3MED)("persists the advanced flag the terminal reads when a deep link targets an advanced row", async () => {
+    using _storage = setup("terminal-font");
+    await using screen = await render(<TypographySection />);
 
-      await expect.element(screen.getByRole("heading", { name: "Terminal font" })).toBeVisible();
-      expect(getLocalStorageItem(TYPOGRAPHY_ADVANCED_STORAGE_KEY, Schema.Boolean)).toBe(true);
-    },
-  );
+    await expect.element(screen.getByRole("heading", { name: "Terminal font" })).toBeVisible();
+    expect(getLocalStorageItem(TYPOGRAPHY_ADVANCED_STORAGE_KEY, Schema.Boolean)).toBe(true);
+  });
 });

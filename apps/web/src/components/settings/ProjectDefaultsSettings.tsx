@@ -36,6 +36,7 @@ import {
   SettingsSection,
 } from "./settingsLayout";
 import { useScopedModelDisabledReason } from "./useScopedModelAvailability";
+import { patientWording } from "../../med/medHidden";
 import {
   useScopedSettings,
   useScopedSettingsMixed,
@@ -136,8 +137,10 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
         isProjectScope
           ? "Model for new threads in this project."
           : !unavailable && modelSource !== "project" && automaticModel
-            ? "Default model for new threads, selected automatically. Projects can override it."
-            : "Default model for new threads. Projects can override it."
+            ? patientWording(
+                "Default model for new threads, selected automatically. Projects can override it.",
+              )
+            : patientWording("Default model for new threads. Projects can override it.")
       }
       status={
         mixedModel
@@ -347,7 +350,7 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
             description={
               isProjectScope
                 ? "Permissions for new threads in this project."
-                : "Default permissions for new threads. Projects can override them."
+                : patientWording("Default permissions for new threads. Projects can override them.")
             }
             resetAction={
               settings.defaultRuntimeMode !== DEFAULT_SERVER_SETTINGS.defaultRuntimeMode ? (
