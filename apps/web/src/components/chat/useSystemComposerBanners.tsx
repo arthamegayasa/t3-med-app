@@ -260,7 +260,7 @@ export function useSystemComposerBanners(input: SystemComposerBannersInput) {
           : {}),
       });
     }
-    if (autoBalanceUpdateBanner) items.push(autoBalanceUpdateBanner);
+    if (autoBalanceUpdateBanner && !T3MED) items.push(autoBalanceUpdateBanner);
     return items;
   })() as ComposerBannerStackItem[];
 }

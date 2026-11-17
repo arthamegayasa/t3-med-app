@@ -27,6 +27,7 @@ import {
 import * as Cause from "effect/Cause";
 
 import { isLocalEnvironmentDisabled } from "../../localEnvironment";
+import { T3MED } from "../../med/t3med";
 import {
   applyWslEnableSelection,
   isWslSettingsRowVisible,
@@ -1196,6 +1197,7 @@ function ConnectionsSettingsContent({
                 }
                 control={
                   primaryVersionMismatch &&
+                  !T3MED &&
                   primaryEnvironmentId !== null &&
                   primaryServerUpdateState.status !== "running" ? (
                     <ServerUpdateAction

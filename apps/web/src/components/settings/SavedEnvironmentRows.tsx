@@ -25,6 +25,7 @@ import * as Option from "effect/Option";
 
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { cn } from "../../lib/utils";
+import { T3MED } from "../../med/t3med";
 import { SettingsRow } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
 import { EnvironmentIconMenu } from "./EnvironmentIconPicker";
@@ -357,6 +358,7 @@ export function SavedBackendListRow({
       }
     >
       {unsupported &&
+      !T3MED &&
       environment.entry.serverUpdateRequired === true &&
       serverUpdateState.status !== "running" ? (
         <OutdatedServerUpdateAction
@@ -367,7 +369,7 @@ export function SavedBackendListRow({
           label={serverUpdateState.status === "failed" ? "Retry update" : "Update"}
         />
       ) : null}
-      {showUpdateAction ? (
+      {showUpdateAction && !T3MED ? (
         <ServerUpdateAction
           environmentId={environmentId}
           serverLabel={`${environment.label} server`}

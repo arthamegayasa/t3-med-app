@@ -81,6 +81,7 @@ import * as McpHttpServer from "./mcp/McpHttpServer.ts";
 import * as MedDatabase from "./med/MedDatabase.ts";
 import * as MedHttp from "./med/http.ts";
 import * as PatientStore from "./med/PatientStore.ts";
+import { medSelfUpdate } from "./med/updates.ts";
 import * as PeerForwarding from "./peer/PeerForwarding.ts";
 import * as RemoteDelegation from "./peer/RemoteDelegation.ts";
 import * as PeerLinkRequests from "./peer/PeerLinkRequests.ts";
@@ -850,7 +851,7 @@ const layerMakeRoutes = Layer.mergeAll(
   Layer.provide(CloudSpeech.layer.pipe(Layer.provide(SecretResolver.layer))),
   Layer.provide(layerServerSettings),
   Layer.provide(PreviewAutomationBroker.layer),
-  Layer.provide(ServerSelfUpdate.layer.pipe(Layer.provide(layerDesktopAppUpdate))),
+  Layer.provide(medSelfUpdate(ServerSelfUpdate.layer.pipe(Layer.provide(layerDesktopAppUpdate)))),
   Layer.provide(layerCommandReadiness),
   Layer.provide(ServerHttp.layerBrowserApiCors),
   Layer.provide(ServerHttp.layerHttpCompression),
