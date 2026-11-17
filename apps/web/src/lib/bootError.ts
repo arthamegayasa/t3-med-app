@@ -274,7 +274,7 @@ export function showBootError(error: unknown) {
   };
 
   const message = element("div", {}, [
-    element("h1", { textContent: "T3 Code failed to start" }),
+    element("h1", { textContent: "T3 Med failed to start" }),
     element("p", {
       textContent: offline
         ? "This browser appears to be offline. Check the connection, then reload."
