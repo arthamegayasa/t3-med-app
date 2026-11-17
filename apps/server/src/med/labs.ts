@@ -138,6 +138,7 @@ const SYNONYMS: Readonly<Record<string, ReadonlyArray<string>>> = {
     "glukosa darah 2 jam pp",
     "2 jam pp",
     "2h pp",
+    "2 hour postprandial glucose",
   ],
   creatinine: ["kreatinin", "creatinine", "kreatinin serum", "serum creatinine"],
   urea: ["ureum", "urea"],
@@ -163,6 +164,9 @@ const SYNONYMS: Readonly<Record<string, ReadonlyArray<string>>> = {
   sgpt: ["sgpt", "alt", "sgpt alt", "alt sgpt"],
   hba1c: ["hba1c", "a1c", "hb a1c", "glycated hemoglobin"],
 };
+
+/** Every Test ID of the catalogue. */
+export const TEST_IDS: ReadonlyArray<string> = Object.keys(SYNONYMS);
 
 const NAME_TO_TEST_ID = new Map(
   Object.entries(SYNONYMS).flatMap(([testId, names]) => [

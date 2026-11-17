@@ -1,7 +1,14 @@
 import * as Result from "effect/Result";
 import { describe, expect, it } from "vite-plus/test";
 
-import { compareToBaseline, convert, normaliseUnit, resolveTest, testDisplayName } from "./labs.ts";
+import {
+  compareToBaseline,
+  convert,
+  normaliseUnit,
+  resolveTest,
+  TEST_IDS,
+  testDisplayName,
+} from "./labs.ts";
 
 // Mirrors pytest.approx: an absolute tolerance alone ignores the relative one.
 const expectApprox = (
@@ -322,44 +329,12 @@ describe("testDisplayName", () => {
     expect(testDisplayName(resolveTest(written))).toBe(expected);
   });
 
-  it("names every test a written name resolves to", () => {
-    const written = [
-      "LDL",
-      "HDL",
-      "Kolesterol total",
-      "Trigliserida",
-      "GDP",
-      "GDS",
-      "GD2PP",
-      "Kreatinin",
-      "Ureum",
-      "BUN",
-      "Asam urat",
-      "Bilirubin total",
-      "Bilirubin direk",
-      "Bilirubin indirek",
-      "Kalsium",
-      "Magnesium",
-      "Fosfat",
-      "Hb",
-      "Albumin",
-      "Protein total",
-      "Natrium",
-      "Kalium",
-      "Klorida",
-      "Leukosit",
-      "Trombosit",
-      "Eritrosit",
-      "Hematokrit",
-      "SGOT",
-      "SGPT",
-      "HbA1c",
-    ];
-    const unnamed = written.filter((name) => {
-      const testId = resolveTest(name);
-      return testId === null || testDisplayName(testId) === null;
-    });
-    expect(unnamed).toEqual([]);
+  // Cases come from the catalogue, so a new Test ID fails here until its display name exists
+  // and resolves back: a result written with the app's own name must not open a second row.
+  it.each(TEST_IDS)("names %s, and that name resolves back to it", (testId) => {
+    const name = testDisplayName(testId);
+    expect(name).not.toBeNull();
+    expect(resolveTest(name ?? "")).toBe(testId);
   });
 
   it("has no name for a test without a Test ID", () => {
