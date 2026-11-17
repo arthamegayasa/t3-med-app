@@ -144,3 +144,35 @@ export function useThreadPatient(
     selectThreadPatient,
   );
 }
+
+export type ThreadPatientState =
+  /** Not known yet: the session, or the read itself, is still on its way. */
+  | { readonly kind: "loading" }
+  | { readonly kind: "failed"; readonly error: string; readonly retry: () => void }
+  /** Known to have none: an unlinked chat, a draft, or a chat of another environment. */
+  | { readonly kind: "none" }
+  | { readonly kind: "linked"; readonly patient: NonNullable<MedThreadPatient["patient"]> };
+
+/**
+ * Whether a thread has a patient, told apart from not knowing yet and from failing to read:
+ * a chat must never be said to have no patient because the answer is late or lost.
+ */
+export function useThreadPatientState(
+  environmentId: EnvironmentId | null,
+  threadId: string | null,
+): ThreadPatientState {
+  const medEnvironmentId = useMedEnvironmentId();
+  const asked =
+    threadId !== null && medEnvironmentId !== null && medEnvironmentId === environmentId;
+  const query = useEnvironmentQuery(asked ? threadPatientAtom(threadId) : null);
+  if (medEnvironmentId === null) return { kind: "loading" };
+  if (!asked) return { kind: "none" };
+  if (query.data === null) {
+    return query.error === null
+      ? { kind: "loading" }
+      : { kind: "failed", error: query.error, retry: query.refresh };
+  }
+  return query.data.patient === null
+    ? { kind: "none" }
+    : { kind: "linked", patient: query.data.patient };
+}

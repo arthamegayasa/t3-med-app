@@ -105,7 +105,12 @@ import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
 import { observeResize } from "~/lib/observeResize";
 import { surfaceShortcutKey } from "~/lib/surfaceShortcutKey";
 import { MED_SURFACE_TITLE } from "~/med/medSurfaces";
-import { MedSurfaceIcon, useMedSurfaceActions } from "~/med/MedSurfaceLauncher";
+import {
+  MedLauncherNote,
+  MedSurfaceIcon,
+  useMedLauncherActions,
+  useMedSurfaceActions,
+} from "~/med/MedSurfaceLauncher";
 
 export interface RightPanelTabsProps {
   mode: PreviewPanelMode;
@@ -283,11 +288,12 @@ export function surfaceShortcutTargetsTypingContext(
   );
 }
 
-function DisabledReasonTooltip(props: { reason: string; trigger: ReactElement }) {
+function DisabledReasonTooltip(props: { reason: string; trigger: ReactElement; note?: string }) {
   return (
     <Tooltip>
       <TooltipTrigger render={props.trigger} />
       <TooltipPopup side="top">{props.reason}</TooltipPopup>
+      <MedLauncherNote>{props.note}</MedLauncherNote>
     </Tooltip>
   );
 }
@@ -338,7 +344,7 @@ function RightPanelEmptyState(props: {
 }) {
   const [highlight, setHighlight] = useState(-1);
 
-  const actions = useMedSurfaceActions([
+  const actions = useMedLauncherActions([
     {
       label: "Browser",
       icon: Globe2,
@@ -356,6 +362,7 @@ function RightPanelEmptyState(props: {
       onClick: props.onAddTerminal,
     },
     {
+      id: "files",
       label: "Files",
       icon: Files,
       shortcut: "F",
@@ -399,6 +406,7 @@ function RightPanelEmptyState(props: {
     ...(props.onAddSideChat
       ? [
           {
+            id: "side-chat",
             label: "Side chat",
             description: "Ask a side question while this thread keeps working.",
             icon: MessagesSquare,
@@ -549,6 +557,7 @@ function RightPanelEmptyState(props: {
               <DisabledReasonTooltip
                 key={action.label}
                 reason={action.disabledReason}
+                {...(action.note === undefined ? {} : { note: action.note })}
                 trigger={
                   <div
                     tabIndex={0}
@@ -1114,6 +1123,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       onClick: props.onAddTerminal,
     },
     {
+      id: "files",
       label: "Files",
       icon: Files,
       shortcut: "F",
@@ -1156,6 +1166,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
     ...(props.onAddSideChat
       ? [
           {
+            id: "side-chat",
             label: "Side chat",
             icon: MessagesSquare,
             shortcut: "S",

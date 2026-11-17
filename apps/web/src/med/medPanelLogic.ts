@@ -5,6 +5,8 @@
 import type { MedLab, MedNote, MedPatientRecord, MedPlan } from "@t3tools/contracts/med";
 import type { ComponentType } from "react";
 
+import { formatDay } from "./medLogic";
+
 export interface LabTestGroup {
   readonly labTestId: string;
   readonly name: string;
@@ -32,7 +34,13 @@ export function groupLabTests(labs: ReadonlyArray<MedLab>): ReadonlyArray<LabTes
 export interface LabPoint {
   readonly id: string;
   readonly collected: string;
+  /** Where the point is drawn, in the series' unit. */
   readonly value: number;
+  /** The number beside the point: as written, unless the store converted it to the series' unit. */
+  readonly label: string;
+  /** The result as the table shows it. */
+  readonly written: string;
+  readonly converted: boolean;
   readonly draft: boolean;
   readonly baseline: boolean;
 }
@@ -41,8 +49,10 @@ export interface LabSeries {
   /** The baseline's unit: the one every point is in. */
   readonly unit: string;
   readonly points: ReadonlyArray<LabPoint>;
-  /** Results left off the chart because the store could not express them in that unit. */
-  readonly notPlotted: number;
+  /** Results left off the chart because they are words, such as "negative". */
+  readonly notNumeric: number;
+  /** Numbers left off the chart because the store could not express them in that unit. */
+  readonly notConverted: number;
 }
 
 /**
@@ -54,28 +64,70 @@ export function labSeries(results: ReadonlyArray<MedLab>): LabSeries | null {
   if (baseline === undefined || baseline.value === null) return null;
   const points = results.flatMap((result): ReadonlyArray<LabPoint> => {
     const value = result.id === baseline.id ? baseline.value : result.valueInBaselineUnit;
-    return value === null
-      ? []
-      : [
-          {
-            id: result.id,
-            collected: result.collected,
-            value,
-            draft: result.status === "draft",
-            baseline: result.id === baseline.id,
-          },
-        ];
+    if (value === null) return [];
+    // The store hands a result in the baseline's own unit back untouched.
+    const converted = value !== result.value;
+    return [
+      {
+        id: result.id,
+        collected: result.collected,
+        value,
+        label: converted ? formatLabNumber(value) : result.valueText,
+        written: valueLabel(result),
+        converted,
+        draft: result.status === "draft",
+        baseline: result.id === baseline.id,
+      },
+    ];
   });
+  const notNumeric = results.filter((result) => result.value === null).length;
   return {
     unit: results.find((result) => result.changeUnit !== null)?.changeUnit ?? baseline.unit,
     points,
-    notPlotted: results.length - points.length,
+    notNumeric,
+    notConverted: results.length - points.length - notNumeric,
   };
+}
+
+/** What the chart leaves out and why, or null when every result is on it. */
+export function notOnChartLabel(
+  series: Pick<LabSeries, "unit" | "notNumeric" | "notConverted">,
+): string | null {
+  const { notNumeric, notConverted } = series;
+  const reasons = [
+    notNumeric === 0
+      ? null
+      : notNumeric === 1
+        ? "1 result is not a number"
+        : `${notNumeric} results are not numbers`,
+    notConverted === 0
+      ? null
+      : `${notConverted}${notNumeric === 0 ? (notConverted === 1 ? " result" : " results") : ""} could not be converted to ${series.unit}`,
+  ].filter((reason) => reason !== null);
+  return reasons.length === 0 ? null : `Not on the chart: ${reasons.join(", ")}.`;
+}
+
+/** The chart in words, for a reader who cannot see it. */
+export function describeSeries(name: string, series: LabSeries): string {
+  const results = series.points.map((point) => {
+    const status = point.draft ? "draft" : "verified";
+    return `${point.label} on ${formatDay(point.collected, "")} (${
+      point.baseline ? `baseline, ${status}` : status
+    })`;
+  });
+  return `${name} in ${series.unit}: ${results.join(", ")}.`;
 }
 
 export interface ChartGeometry {
   /** Each point with where it sits: `x` from the first day (0) to the last (100), `y` from the top. */
-  readonly points: ReadonlyArray<LabPoint & { readonly x: number; readonly y: number }>;
+  readonly points: ReadonlyArray<
+    LabPoint & {
+      readonly x: number;
+      readonly y: number;
+      /** Every second result of one day: its label goes under the dot, clear of its neighbour's. */
+      readonly labelBelow: boolean;
+    }
+  >;
   readonly baselineY: number;
 }
 
@@ -83,18 +135,34 @@ export interface ChartGeometry {
 // then looks small instead of filling the chart.
 const MIN_VALUE_SPAN = 0.25;
 
+// How far apart two results of one day sit, in percent of the plot's width.
+const SAME_DAY_STEP = 8;
+// The most of the width that results sharing a day may take from the days themselves.
+const SAME_DAY_ROOM = 50;
+
 const dayNumber = (isoDate: string) => Date.parse(`${isoDate}T00:00:00.000Z`) / 86_400_000;
 
 /**
  * Where a series is drawn, in percent of the plot: days apart on the calendar are apart on the
- * chart, and the values fill the height unless they differ by little. A date that cannot be
- * read spaces the points evenly.
+ * chart, and the values fill the height unless they differ by little. Results of one day sit
+ * side by side in the order they were filed, each a step after the one before, so none hides
+ * another. A date that cannot be read spaces the points evenly.
  */
 export function chartGeometry(series: LabSeries): ChartGeometry {
   const days = series.points.map((point) => dayNumber(point.collected));
   const evenly = days.some((day) => Number.isNaN(day));
   const firstDay = days[0] ?? 0;
   const span = (days.at(-1) ?? 0) - firstDay;
+  // How many results before each one, itself included, came second or later on their day.
+  let sameDay = 0;
+  let nthOfDay = 0;
+  const places = days.map((day, index) => {
+    nthOfDay = index > 0 && day === days[index - 1] ? nthOfDay + 1 : 0;
+    if (nthOfDay > 0) sameDay += 1;
+    return { stepsBefore: sameDay, nthOfDay };
+  });
+  const step = sameDay === 0 ? 0 : Math.min(SAME_DAY_STEP, SAME_DAY_ROOM / sameDay);
+  const room = 100 - sameDay * step;
   const values = series.points.map((point) => point.value);
   const highest = Math.max(...values);
   const lowest = Math.min(...values);
@@ -107,53 +175,74 @@ export function chartGeometry(series: LabSeries): ChartGeometry {
   const last = series.points.length - 1;
   const points = series.points.map((point, index) => ({
     ...point,
-    x:
-      last === 0
+    x: evenly
+      ? last === 0
         ? 50
-        : evenly || span === 0
-          ? (index / last) * 100
-          : (((days[index] ?? firstDay) - firstDay) / span) * 100,
+        : (index / last) * 100
+      : (span === 0 ? room / 2 : (((days[index] ?? firstDay) - firstDay) / span) * room) +
+        (places[index]?.stepsBefore ?? 0) * step,
     y: yOf(point.value),
+    labelBelow: (places[index]?.nthOfDay ?? 0) % 2 === 1,
   }));
   return { points, baselineY: points.find((point) => point.baseline)?.y ?? 50 };
 }
 
 const MINUS = "−";
 
-/** A stored number at the precision a lab sheet prints: fewer decimals the larger it is. */
-export function formatLabNumber(value: number): string {
-  const size = Math.abs(value);
-  const text = new Intl.NumberFormat("en-US", {
-    maximumFractionDigits: size >= 100 ? 0 : size >= 10 ? 1 : 2,
-    useGrouping: false,
-  }).format(size);
-  return value < 0 && Number(text) !== 0 ? `${MINUS}${text}` : text;
+// Past these digits a double holds what a subtraction left behind, not the result.
+const EXACT_DIGITS = 12;
+
+/**
+ * A number the store worked out (a converted value, a change), for display. It keeps
+ * `significant` digits and every digit before the decimal point, so a small value never reads
+ * as zero and two different values rarely read alike. A result as written is never passed
+ * through here: it is shown as written.
+ */
+export function formatLabNumber(value: number, significant = 4): string {
+  const size = Math.abs(Number(value.toPrecision(EXACT_DIGITS)));
+  if (size === 0 || !Number.isFinite(size)) return size === 0 ? "0" : String(value);
+  const wholeDigits = size >= 1 ? Math.floor(Math.log10(size)) + 1 : 0;
+  const text =
+    wholeDigits >= significant
+      ? size.toFixed(0)
+      : new Intl.NumberFormat("en-US", {
+          maximumSignificantDigits: significant,
+          maximumFractionDigits: 20,
+          roundingPriority: "lessPrecision",
+          useGrouping: false,
+        }).format(size);
+  return value < 0 ? `${MINUS}${text}` : text;
 }
 
-const signed = (value: number) =>
-  value > 0 ? `+${formatLabNumber(value)}` : formatLabNumber(value);
+const signed = (value: number, significant?: number) => {
+  const text = formatLabNumber(value, significant);
+  return value > 0 && text !== "0" ? `+${text}` : text;
+};
 
 const NOT_COMPARED = {
-  in_inbox: "no patient yet",
-  first_result: "first result",
-  result_has_no_number: "not a number",
-  result_has_no_unit: "no unit",
-  baseline_has_no_unit: "baseline has no unit",
-  no_verified_conversion: "no verified conversion",
+  in_inbox: "Not compared: no patient yet",
+  first_result: "Not compared: first result",
+  result_has_no_number: "No number to compare",
+  result_has_no_unit: "Not compared: no unit",
+  baseline_has_no_unit: "Not compared: baseline has no unit",
+  no_verified_conversion: "Not compared: no verified conversion",
 } as const satisfies Record<NonNullable<MedLab["notCompared"]>, string>;
+
+// A difference this small beside the value itself is what a unit conversion left behind.
+const NO_CHANGE = 1e-12;
 
 /** How a result stands to the baseline, in the store's own numbers. */
 export function changeLabel(lab: MedLab): string {
   if (lab.isBaseline) return "Baseline";
   if (lab.changeFromBaseline !== null) {
     const unit = lab.changeUnit === null || lab.changeUnit === "" ? "" : ` ${lab.changeUnit}`;
-    const percent =
-      lab.changePercent === null ? "" : ` (${signed(Math.round(lab.changePercent))}%)`;
+    if (Math.abs(lab.changeFromBaseline) <= Math.abs(lab.valueInBaselineUnit ?? 0) * NO_CHANGE) {
+      return `0${unit}${lab.changePercent === null ? "" : " (0%)"}`;
+    }
+    const percent = lab.changePercent === null ? "" : ` (${signed(lab.changePercent, 2)}%)`;
     return `${signed(lab.changeFromBaseline)}${unit}${percent}`;
   }
-  return lab.notCompared === null
-    ? "Not compared"
-    : `Not compared: ${NOT_COMPARED[lab.notCompared]}`;
+  return lab.notCompared === null ? "Not compared" : NOT_COMPARED[lab.notCompared];
 }
 
 /** The result as it was written, with its unit when it has one. */
@@ -198,31 +287,46 @@ export type TimelineEntry =
 
 const TIMELINE_ORDER = { note: 0, labs: 1, plan: 2 } as const;
 
-/**
- * One list of what is filed, newest day first: notes by their date, results as one batch per
- * collected day, plans by their due date. Within a day: the note, its results, then plans.
- */
-export function timelineEntries(
+export interface PatientTimeline {
+  /** Plans still open, overdue ones too, soonest first: none of them has happened yet. */
+  readonly comingUp: ReadonlyArray<MedPlan>;
+  /**
+   * What has happened, newest day first: notes by their date, results as one batch per
+   * collected day, plans done or cancelled by their due date. Within a day: the note, its
+   * results, then plans.
+   */
+  readonly history: ReadonlyArray<TimelineEntry>;
+}
+
+export function patientTimeline(
   record: Pick<MedPatientRecord, "labs" | "plans" | "notes">,
-): ReadonlyArray<TimelineEntry> {
+): PatientTimeline {
   const batches = new Map<string, Array<MedLab>>();
   for (const lab of record.labs) {
     const batch = batches.get(lab.collected);
     if (batch === undefined) batches.set(lab.collected, [lab]);
     else batch.push(lab);
   }
+  const { open, closed } = plansForPanel(record.plans);
   const entries: ReadonlyArray<TimelineEntry> = [
     ...record.notes.map((note) => ({ kind: "note" as const, day: note.date, note })),
     ...[...batches.entries()].map(([day, labs]) => ({ kind: "labs" as const, day, labs })),
-    ...record.plans.map((plan) => ({ kind: "plan" as const, day: plan.due, plan })),
+    ...closed.map((plan) => ({ kind: "plan" as const, day: plan.due, plan })),
   ];
-  return entries.toSorted((a, b) =>
-    a.day === b.day ? TIMELINE_ORDER[a.kind] - TIMELINE_ORDER[b.kind] : a.day < b.day ? 1 : -1,
-  );
+  return {
+    comingUp: open,
+    history: entries.toSorted((a, b) =>
+      a.day === b.day ? TIMELINE_ORDER[a.kind] - TIMELINE_ORDER[b.kind] : a.day < b.day ? 1 : -1,
+    ),
+  };
 }
 
 /** One row of the right panel's launcher, as upstream's `RightPanelTabs` builds them. */
 export interface SurfaceAction {
+  /** Set by the fork on the upstream rows it keeps: a label is upstream's to reword. */
+  readonly id?: string;
+  /** A line the launcher shows under this row while it cannot be opened. */
+  readonly note?: string | undefined;
   readonly label: string;
   readonly description?: string;
   readonly icon: ComponentType<{ className?: string }>;
@@ -232,10 +336,11 @@ export interface SurfaceAction {
   readonly onClick: () => void;
 }
 
-// Summary takes S, so the side chat moves to C.
+// The upstream surfaces a doctor still uses, by the id `RightPanelTabs` gives them, with the
+// key each takes here. Summary takes S, so the side chat moves to C.
 const KEPT_UPSTREAM_SURFACES: Readonly<Record<string, string | null>> = {
-  Files: null,
-  "Side chat": "C",
+  files: null,
+  "side-chat": "C",
 };
 
 /**
@@ -251,8 +356,8 @@ export function patientLauncherActions(
   return [
     ...patient,
     ...upstream.flatMap((action) => {
-      if (!Object.hasOwn(KEPT_UPSTREAM_SURFACES, action.label)) return [];
-      const shortcut = KEPT_UPSTREAM_SURFACES[action.label];
+      if (action.id === undefined || !Object.hasOwn(KEPT_UPSTREAM_SURFACES, action.id)) return [];
+      const shortcut = KEPT_UPSTREAM_SURFACES[action.id];
       return [shortcut == null ? action : { ...action, shortcut }];
     }),
   ];

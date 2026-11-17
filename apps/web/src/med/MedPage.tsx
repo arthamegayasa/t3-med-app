@@ -183,9 +183,32 @@ function Note({ className, ...props }: ComponentProps<"p">) {
   return <p className={cn("m-0 px-2.5 text-muted-foreground text-sm", className)} {...props} />;
 }
 
+/** Placeholder rows that do not move, for what has not arrived yet. */
+function Loading() {
+  return (
+    <div aria-busy="true" className="flex flex-col gap-2 px-2.5 pt-1">
+      <div className={cn(PLACEHOLDER_CLASS, "w-2/3")} />
+      <div className={cn(PLACEHOLDER_CLASS, "w-1/2")} />
+      <div className={cn(PLACEHOLDER_CLASS, "w-3/5")} />
+    </div>
+  );
+}
+
+/** A read that failed with nothing to show in its place: what went wrong and a retry. */
+function Failed({ error, onRetry }: { readonly error: string; readonly onRetry: () => void }) {
+  return (
+    <div role="alert" className="flex flex-col items-start gap-2 px-2.5">
+      <Note className="px-0">Could not load this from T3 Med. {error}</Note>
+      <Button variant="outline" size="sm" onClick={onRetry}>
+        Try again
+      </Button>
+    </div>
+  );
+}
+
 /**
- * The states of one query. Nothing loaded yet shows placeholder rows that do not move; a failed
- * first load says so and offers a retry; a failed refresh keeps what was loaded and says it is old.
+ * The states of one query. Nothing loaded yet shows placeholder rows; a failed first load says
+ * so and offers a retry; a failed refresh keeps what was loaded and says it is old.
  */
 function Query<A>({
   query,
@@ -196,18 +219,9 @@ function Query<A>({
 }) {
   if (query.data === null) {
     return query.error === null ? (
-      <div aria-busy="true" className="flex flex-col gap-2 px-2.5 pt-1">
-        <div className={cn(PLACEHOLDER_CLASS, "w-2/3")} />
-        <div className={cn(PLACEHOLDER_CLASS, "w-1/2")} />
-        <div className={cn(PLACEHOLDER_CLASS, "w-3/5")} />
-      </div>
+      <Loading />
     ) : (
-      <div role="alert" className="flex flex-col items-start gap-2 px-2.5">
-        <Note className="px-0">Could not load this from T3 Med. {query.error}</Note>
-        <Button variant="outline" size="sm" onClick={query.refresh}>
-          Try again
-        </Button>
-      </div>
+      <Failed error={query.error} onRetry={query.refresh} />
     );
   }
   return (
@@ -238,5 +252,7 @@ export const MedPage = {
   Urn,
   Aside,
   Note,
+  Loading,
+  Failed,
   Query,
 };

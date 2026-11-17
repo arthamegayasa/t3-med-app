@@ -3,10 +3,11 @@
  * patient the open thread is linked to. They only read. Every lab number is shown as the
  * store has it: no unit is converted and no change is worked out here.
  */
-import { useAtom } from "@effect/atom-react";
+import { useAtom, useAtomSet } from "@effect/atom-react";
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import type { MedLab, MedPatientRecord } from "@t3tools/contracts/med";
-import type { ReactNode } from "react";
+import { ChevronRightIcon } from "lucide-react";
+import { type ReactNode, useRef } from "react";
 
 import { Badge } from "../components/ui/badge";
 import {
@@ -24,11 +25,12 @@ import {
   TableHeader,
   TableRow,
 } from "../components/ui/table";
+import { useRightPanelStore } from "../rightPanelStore";
 import {
   patientRecordAtom,
   selectedLabTestAtom,
   useMedQuery,
-  useThreadPatient,
+  useThreadPatientState,
   useToday,
 } from "./medData";
 import { draftsLabel, formatDay } from "./medLogic";
@@ -42,8 +44,9 @@ import {
   labSeries,
   type LabTestGroup,
   nextPlans,
+  patientTimeline,
   plansForPanel,
-  timelineEntries,
+  type TimelineEntry,
   valueLabel,
 } from "./medPanelLogic";
 import { MedPlanRow } from "./MedPlanRow";
@@ -63,20 +66,50 @@ function Shell({ children }: { readonly children: ReactNode }) {
 function Section({
   title,
   aside,
+  nested = false,
   children,
 }: {
   readonly title: string;
   readonly aside?: ReactNode;
+  /** Under a group's own heading, so one level further down. */
+  readonly nested?: boolean;
   readonly children: ReactNode;
 }) {
+  const Heading = nested ? "h4" : "h3";
   return (
     <section className="flex flex-col gap-1.5">
       <MedPage.Lead>
-        <h3 className="m-0 font-medium text-xs">{title}</h3>
+        <Heading className="m-0 font-medium text-xs">{title}</Heading>
         {aside === undefined ? null : <span className="tabular-nums">{aside}</span>}
       </MedPage.Lead>
       {children}
     </section>
+  );
+}
+
+/**
+ * Whose record this is, at the top of every patient surface: a tab can stay open while the
+ * doctor reads another chat, so the name and URN are never left to memory.
+ */
+function PatientHeading({
+  patient,
+  today,
+  children,
+}: {
+  readonly patient: MedPatientRecord["patient"];
+  readonly today: string;
+  readonly children?: ReactNode;
+}) {
+  return (
+    <div className="flex flex-col gap-1.5 px-2.5">
+      <h2 className="m-0 font-semibold text-lg tracking-tight">
+        <MedLink to="/patients/$patientId" params={{ patientId: patient.id }}>
+          {patient.name}
+        </MedLink>
+      </h2>
+      <PatientFacts patient={patient} today={today} />
+      {children}
+    </div>
   );
 }
 
@@ -113,9 +146,14 @@ function StatusCell({ status }: { readonly status: MedLab["status"] }) {
 function LatestResults({
   tests,
   today,
+  opens,
+  onOpenTest,
 }: {
   readonly tests: ReadonlyArray<LabTestGroup>;
   readonly today: string;
+  /** What choosing a test does, for a reader who cannot see where it leads. */
+  readonly opens: string;
+  readonly onOpenTest: (labTestId: string) => void;
 }) {
   return (
     <div className="px-0.5">
@@ -140,7 +178,18 @@ function LatestResults({
           {tests.map(({ labTestId, name, latest }) => (
             <TableRow key={labTestId}>
               <TableCell className="whitespace-normal">
-                <span className="font-medium">{name}</span>
+                <button
+                  type="button"
+                  aria-label={`${name}: ${opens}`}
+                  onClick={() => onOpenTest(labTestId)}
+                  className="inline-flex cursor-pointer items-center gap-0.5 rounded-sm text-left font-medium outline-hidden ring-ring hover:underline focus-visible:ring-2 focus-visible:ring-inset"
+                >
+                  {name}
+                  <ChevronRightIcon
+                    aria-hidden
+                    className="size-3.5 shrink-0 text-muted-foreground"
+                  />
+                </button>
               </TableCell>
               <TableCell>
                 <span className="inline-flex items-center gap-1.5 tabular-nums">
@@ -166,26 +215,29 @@ function LatestResults({
   );
 }
 
-function Summary({ record, today }: { readonly record: MedPatientRecord; readonly today: string }) {
+function Summary({
+  record,
+  today,
+  threadRef,
+}: {
+  readonly record: MedPatientRecord;
+  readonly today: string;
+  readonly threadRef: ScopedThreadRef;
+}) {
   const { patient } = record;
   const counts = draftCounts(record);
   const drafts = draftsLabel(counts.labs, counts.plans);
   const open = plansForPanel(record.plans).open;
   const plans = nextPlans(record.plans, SUMMARY_PLAN_LIMIT);
   const tests = groupLabTests(record.labs);
+  const selectTest = useAtomSet(selectedLabTestAtom(patient.id));
   return (
     <>
-      <div className="flex flex-col gap-1.5 px-2.5">
-        <h2 className="m-0 font-semibold text-lg tracking-tight">
-          <MedLink to="/patients/$patientId" params={{ patientId: patient.id }}>
-            {patient.name}
-          </MedLink>
-        </h2>
-        <PatientFacts patient={patient} today={today} />
+      <PatientHeading patient={patient} today={today}>
         {drafts === null ? null : (
           <p className="m-0 text-muted-foreground text-sm">{drafts} to check.</p>
         )}
-      </div>
+      </PatientHeading>
       <Section title="Diagnoses">
         {patient.diagnoses.trim() === "" ? (
           <MedPage.Note>None recorded.</MedPage.Note>
@@ -215,7 +267,15 @@ function Summary({ record, today }: { readonly record: MedPatientRecord; readonl
         {tests.length === 0 ? (
           <MedPage.Note>No lab results filed yet.</MedPage.Note>
         ) : (
-          <LatestResults tests={tests} today={today} />
+          <LatestResults
+            tests={tests}
+            today={today}
+            opens="open in Labs"
+            onOpenTest={(labTestId) => {
+              selectTest(labTestId);
+              useRightPanelStore.getState().open(threadRef, "med-labs");
+            }}
+          />
         )}
       </Section>
     </>
@@ -262,7 +322,7 @@ function TestResults({ test, today }: { readonly test: LabTestGroup; readonly to
                     {result.referenceRange === "" ? null : (
                       <Quiet>Ref. {result.referenceRange}</Quiet>
                     )}
-                    {result.status === "draft" ? <StatusCell status="draft" /> : null}
+                    <StatusCell status={result.status} />
                   </span>
                 </span>
               </TableCell>
@@ -289,6 +349,7 @@ function TestResults({ test, today }: { readonly test: LabTestGroup; readonly to
 function Labs({ record, today }: { readonly record: MedPatientRecord; readonly today: string }) {
   const tests = groupLabTests(record.labs);
   const [selected, setSelected] = useAtom(selectedLabTestAtom(record.patient.id));
+  const chartRef = useRef<HTMLDivElement>(null);
   // Until the doctor picks, the first test that has a trend to draw.
   const test =
     tests.find((entry) => entry.labTestId === selected) ??
@@ -296,16 +357,20 @@ function Labs({ record, today }: { readonly record: MedPatientRecord; readonly t
     tests[0];
   if (test === undefined) {
     return (
-      <MedPage.Note>
-        No lab results are filed for {record.patient.name} yet. Paste a lab sheet into the chat to
-        file them.
-      </MedPage.Note>
+      <>
+        <PatientHeading patient={record.patient} today={today} />
+        <MedPage.Note>
+          No lab results are filed for {record.patient.name} yet. Paste a lab sheet into the chat to
+          file them.
+        </MedPage.Note>
+      </>
     );
   }
   const series = labSeries(test.results);
   return (
     <>
-      <div className="flex flex-col gap-3">
+      <PatientHeading patient={record.patient} today={today} />
+      <div ref={chartRef} className="flex flex-col gap-3">
         <div className="flex items-center gap-2 px-2.5">
           <Select value={test.labTestId} onValueChange={(value) => setSelected(String(value))}>
             <SelectTrigger size="sm" aria-label="Test">
@@ -334,7 +399,16 @@ function Labs({ record, today }: { readonly record: MedPatientRecord; readonly t
         <TestResults test={test} today={today} />
       </Section>
       <Section title="Latest result of every test">
-        <LatestResults tests={tests} today={today} />
+        <LatestResults
+          tests={tests}
+          today={today}
+          opens="show its results"
+          onOpenTest={(labTestId) => {
+            setSelected(labTestId);
+            // The chart is above this table: bring what the choice changed into view.
+            chartRef.current?.scrollIntoView({ block: "nearest" });
+          }}
+        />
       </Section>
     </>
   );
@@ -344,13 +418,17 @@ function Plans({ record, today }: { readonly record: MedPatientRecord; readonly 
   const { open, closed } = plansForPanel(record.plans);
   if (record.plans.length === 0) {
     return (
-      <MedPage.Note>
-        No plans are filed for {record.patient.name} yet. Tell the chat what to do and by when.
-      </MedPage.Note>
+      <>
+        <PatientHeading patient={record.patient} today={today} />
+        <MedPage.Note>
+          No plans are filed for {record.patient.name} yet. Tell the chat what to do and by when.
+        </MedPage.Note>
+      </>
     );
   }
   return (
     <>
+      <PatientHeading patient={record.patient} today={today} />
       <Section title="Open" aside="Due">
         {open.length === 0 ? (
           <MedPage.Note>Nothing is open.</MedPage.Note>
@@ -377,6 +455,70 @@ function Plans({ record, today }: { readonly record: MedPatientRecord; readonly 
 
 const counted = (count: number, noun: string) => `${count} ${noun}${count === 1 ? "" : "s"}`;
 
+/** One collected day's results, each on its own line with what marks it out. */
+function LabBatchRow({ labs }: { readonly labs: ReadonlyArray<MedLab> }) {
+  const drafts = labs.filter((result) => result.status === "draft").length;
+  return (
+    <MedPage.Row className="items-start">
+      <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+        <MedPage.Primary>
+          {counted(labs.length, "lab result")}
+          {drafts === 0
+            ? ""
+            : drafts === labs.length
+              ? labs.length === 1
+                ? ", a draft"
+                : ", all drafts"
+              : `, ${counted(drafts, "draft")}`}
+        </MedPage.Primary>
+        <ul className="m-0 flex list-none flex-col gap-0.5 p-0">
+          {labs.map((result) => (
+            <li
+              key={result.id}
+              className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-muted-foreground text-xs"
+            >
+              <span className="min-w-0 break-words tabular-nums">
+                {result.testName} {valueLabel(result)}
+              </span>
+              {result.flag === "normal" ? null : <FlagBadge flag={result.flag} />}
+              {result.status === "draft" ? <StatusCell status="draft" /> : null}
+            </li>
+          ))}
+        </ul>
+      </span>
+    </MedPage.Row>
+  );
+}
+
+function HistoryRow({ entry, today }: { readonly entry: TimelineEntry; readonly today: string }) {
+  if (entry.kind === "labs") return <LabBatchRow labs={entry.labs} />;
+  if (entry.kind === "plan") {
+    return <MedPlanRow plan={entry.plan} today={today} showStatus showDue={false} />;
+  }
+  return (
+    <MedPage.ThreadRow threadId={entry.note.threadId}>
+      <span className="flex min-w-0 flex-1 flex-col">
+        <MedPage.Primary>{entry.note.title}</MedPage.Primary>
+        {entry.note.summary.trim() === "" ? null : (
+          <MedPage.Detail>{entry.note.summary}</MedPage.Detail>
+        )}
+      </span>
+      {entry.note.needsYou.trim() === "" ? null : (
+        <Badge variant="info" size="sm">
+          Needs you
+        </Badge>
+      )}
+    </MedPage.ThreadRow>
+  );
+}
+
+const historyKey = (entry: TimelineEntry) =>
+  entry.kind === "labs" ? "labs" : entry.kind === "plan" ? entry.plan.id : entry.note.id;
+
+function GroupHeading({ children }: { readonly children: string }) {
+  return <h3 className="m-0 px-2.5 font-semibold text-sm">{children}</h3>;
+}
+
 function Timeline({
   record,
   today,
@@ -384,69 +526,55 @@ function Timeline({
   readonly record: MedPatientRecord;
   readonly today: string;
 }) {
-  const entries = timelineEntries(record);
-  if (entries.length === 0) {
-    return <MedPage.Note>Nothing is filed for {record.patient.name} yet.</MedPage.Note>;
+  const { comingUp, history } = patientTimeline(record);
+  if (comingUp.length === 0 && history.length === 0) {
+    return (
+      <>
+        <PatientHeading patient={record.patient} today={today} />
+        <MedPage.Note>Nothing is filed for {record.patient.name} yet.</MedPage.Note>
+      </>
+    );
   }
-  const days = [...new Set(entries.map((entry) => entry.day))];
+  const days = [...new Set(history.map((entry) => entry.day))];
   return (
     <>
-      {days.map((day) => (
-        <Section key={day} title={formatDay(day, today)}>
-          <MedPage.List aria-label={formatDay(day, today)}>
-            {entries
-              .filter((entry) => entry.day === day)
-              .map((entry) => {
-                if (entry.kind === "note") {
-                  return (
-                    <MedPage.ThreadRow key={entry.note.id} threadId={entry.note.threadId}>
-                      <span className="flex min-w-0 flex-1 flex-col">
-                        <MedPage.Primary>{entry.note.title}</MedPage.Primary>
-                        {entry.note.summary.trim() === "" ? null : (
-                          <MedPage.Detail>{entry.note.summary}</MedPage.Detail>
-                        )}
-                      </span>
-                      {entry.note.needsYou.trim() === "" ? null : (
-                        <Badge variant="info" size="sm">
-                          Needs you
-                        </Badge>
-                      )}
-                    </MedPage.ThreadRow>
-                  );
-                }
-                if (entry.kind === "plan") {
-                  return (
-                    <MedPlanRow
-                      key={entry.plan.id}
-                      plan={entry.plan}
-                      today={today}
-                      showStatus
-                      showDue={false}
-                    />
-                  );
-                }
-                const drafts = entry.labs.filter((result) => result.status === "draft").length;
-                return (
-                  <MedPage.Row key={`labs:${day}`} className="items-start">
-                    <span className="flex min-w-0 flex-1 flex-col">
-                      <MedPage.Primary>{counted(entry.labs.length, "lab result")}</MedPage.Primary>
-                      <MedPage.Detail>
-                        {entry.labs
-                          .map((result) => `${result.testName} ${valueLabel(result)}`)
-                          .join("\n")}
-                      </MedPage.Detail>
-                    </span>
-                    {drafts === 0 ? null : (
-                      <Badge variant="outline" size="sm">
-                        {drafts === entry.labs.length ? "Draft" : counted(drafts, "draft")}
-                      </Badge>
-                    )}
-                  </MedPage.Row>
-                );
-              })}
-          </MedPage.List>
-        </Section>
-      ))}
+      <PatientHeading patient={record.patient} today={today} />
+      <section className="flex flex-col gap-2">
+        <GroupHeading>Coming up</GroupHeading>
+        {comingUp.length === 0 ? (
+          <MedPage.Note>No open plans.</MedPage.Note>
+        ) : (
+          <>
+            <MedPage.Lead>
+              <span>Open plans, soonest first</span>
+              <span>Due</span>
+            </MedPage.Lead>
+            <MedPage.List aria-label="Coming up">
+              {comingUp.map((plan) => (
+                <MedPlanRow key={plan.id} plan={plan} today={today} />
+              ))}
+            </MedPage.List>
+          </>
+        )}
+      </section>
+      <section className="flex flex-col gap-3">
+        <GroupHeading>History</GroupHeading>
+        {days.length === 0 ? (
+          <MedPage.Note>Nothing has been filed yet.</MedPage.Note>
+        ) : (
+          days.map((day) => (
+            <Section key={day} nested title={formatDay(day, today)}>
+              <MedPage.List aria-label={formatDay(day, today)}>
+                {history
+                  .filter((entry) => entry.day === day)
+                  .map((entry) => (
+                    <HistoryRow key={historyKey(entry)} entry={entry} today={today} />
+                  ))}
+              </MedPage.List>
+            </Section>
+          ))
+        )}
+      </section>
     </>
   );
 }
@@ -454,9 +582,11 @@ function Timeline({
 function PatientSurface({
   kind,
   patientId,
+  threadRef,
 }: {
   readonly kind: MedSurface["kind"];
   readonly patientId: string;
+  readonly threadRef: ScopedThreadRef;
 }) {
   const query = useMedQuery(patientRecordAtom(patientId));
   const today = useToday();
@@ -466,7 +596,7 @@ function PatientSurface({
         {(record) => {
           switch (kind) {
             case "med-summary":
-              return <Summary record={record} today={today} />;
+              return <Summary record={record} today={today} threadRef={threadRef} />;
             case "med-labs":
               return <Labs record={record} today={today} />;
             case "med-plan":
@@ -488,15 +618,32 @@ export function MedSurfaceContent({
   readonly surface: MedSurface;
   readonly threadRef: ScopedThreadRef;
 }) {
-  const patient = useThreadPatient(threadRef.environmentId, threadRef.threadId);
-  if (patient === null) {
-    return (
-      <Shell>
-        <MedPage.Note>
-          No patient is linked to this chat yet. Give the chat the patient's URN and it links them.
-        </MedPage.Note>
-      </Shell>
-    );
+  const state = useThreadPatientState(threadRef.environmentId, threadRef.threadId);
+  switch (state.kind) {
+    case "loading":
+      return (
+        <Shell>
+          <MedPage.Loading />
+        </Shell>
+      );
+    case "failed":
+      return (
+        <Shell>
+          <MedPage.Failed error={state.error} onRetry={state.retry} />
+        </Shell>
+      );
+    case "none":
+      return (
+        <Shell>
+          <MedPage.Note>
+            No patient is linked to this chat yet. Give the chat the patient's URN and it links
+            them.
+          </MedPage.Note>
+        </Shell>
+      );
+    case "linked":
+      return (
+        <PatientSurface kind={surface.kind} patientId={state.patient.id} threadRef={threadRef} />
+      );
   }
-  return <PatientSurface kind={surface.kind} patientId={patient.id} />;
 }

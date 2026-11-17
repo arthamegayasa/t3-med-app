@@ -6,21 +6,25 @@
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../components/ui/tooltip";
 import { cn } from "../lib/utils";
 import { formatDay } from "./medLogic";
-import { chartGeometry, formatLabNumber, type LabSeries } from "./medPanelLogic";
+import {
+  chartGeometry,
+  describeSeries,
+  type LabPoint,
+  type LabSeries,
+  notOnChartLabel,
+} from "./medPanelLogic";
 
 // Past this many points the value labels would run into each other; the table has every value.
 const MAX_LABELLED_POINTS = 6;
 
 const dayWithYear = (isoDate: string) => formatDay(isoDate, "");
 
-function describeSeries(name: string, series: LabSeries): string {
-  const results = series.points.map(
-    (point) =>
-      `${formatLabNumber(point.value)} on ${dayWithYear(point.collected)}${
-        point.baseline ? " (baseline)" : point.draft ? " (draft)" : ""
-      }`,
-  );
-  return `${name} in ${series.unit}: ${results.join(", ")}.`;
+/** A point in full: the day, the result as written, the converted number when there is one. */
+function pointTitle(point: LabPoint, unit: string): string {
+  const value = point.converted
+    ? `${point.label} ${unit} (written ${point.written})`
+    : point.written;
+  return `${dayWithYear(point.collected)}: ${value}, ${point.draft ? "draft" : "verified"}`;
 }
 
 function LegendItem({ swatch, children }: { readonly swatch: string; readonly children: string }) {
@@ -44,7 +48,9 @@ export function MedLabChart({
   const last = points.at(-1);
   const labelled = points.length <= MAX_LABELLED_POINTS;
   const hasDraft = points.some((point) => point.draft);
+  const hasVerified = points.some((point) => !point.draft);
   const baseline = points.find((point) => point.baseline);
+  const notOnChart = notOnChartLabel(series);
   return (
     <figure className="m-0 flex flex-col gap-2">
       <div role="img" aria-label={describeSeries(name, series)} className="px-7 pt-6 pb-5">
@@ -100,24 +106,25 @@ export function MedLabChart({
                 {labelled || index === 0 || index === points.length - 1 ? (
                   <span
                     aria-hidden
-                    className="absolute bottom-full left-1/2 mb-1 -translate-x-1/2 font-medium text-foreground text-xs tabular-nums"
+                    className={cn(
+                      "absolute left-1/2 -translate-x-1/2 font-medium text-foreground text-xs tabular-nums",
+                      // Results of one day sit close: every second label goes under its dot.
+                      point.labelBelow ? "top-full mt-1" : "bottom-full mb-1",
+                    )}
                   >
-                    {formatLabNumber(point.value)}
+                    {point.label}
                   </span>
                 ) : null}
               </TooltipTrigger>
-              <TooltipPopup side="top">
-                {`${dayWithYear(point.collected)}: ${formatLabNumber(point.value)} ${series.unit}${
-                  point.draft ? " (draft)" : ""
-                }`}
-              </TooltipPopup>
+              <TooltipPopup side="top">{pointTitle(point, series.unit)}</TooltipPopup>
             </Tooltip>
           ))}
           <div
             aria-hidden
             className="absolute inset-x-0 top-full mt-2 flex justify-between text-muted-foreground text-xs tabular-nums"
           >
-            {first === undefined || last === undefined ? null : first.id === last.id ? (
+            {first === undefined || last === undefined ? null : first.collected ===
+              last.collected ? (
               <span className="mx-auto">{dayWithYear(first.collected)}</span>
             ) : (
               <>
@@ -129,22 +136,20 @@ export function MedLabChart({
         </div>
       </div>
       <figcaption className="flex flex-wrap items-center gap-x-4 gap-y-1 px-2.5 text-muted-foreground text-xs">
-        <LegendItem swatch="size-2 rounded-full bg-info">Verified</LegendItem>
+        {hasVerified ? (
+          <LegendItem swatch="size-2 rounded-full bg-info">Verified</LegendItem>
+        ) : null}
         {hasDraft ? (
           <LegendItem swatch="size-2 rounded-full border-2 border-info">Draft</LegendItem>
         ) : null}
         {baseline === undefined ? null : (
           <LegendItem swatch="w-4 border-muted-foreground/50 border-t border-dashed">
-            {`Baseline ${formatLabNumber(baseline.value)} ${series.unit}`}
+            {`Baseline ${baseline.label} ${series.unit}`}
           </LegendItem>
         )}
       </figcaption>
-      {series.notPlotted === 0 ? null : (
-        <p className="m-0 px-2.5 text-muted-foreground text-xs">
-          {series.notPlotted === 1
-            ? "1 result is not on the chart: it could not be compared with the baseline."
-            : `${series.notPlotted} results are not on the chart: they could not be compared with the baseline.`}
-        </p>
+      {notOnChart === null ? null : (
+        <p className="m-0 px-2.5 text-muted-foreground text-xs">{notOnChart}</p>
       )}
     </figure>
   );

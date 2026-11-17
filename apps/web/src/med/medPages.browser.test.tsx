@@ -58,13 +58,16 @@ vi.mock(import("../environments/primary/httpLayer"), async (importOriginal) => {
       const request = new Request(input, init);
       const path = new URL(request.url).pathname;
       state.requests.push(`${request.method} ${path}`);
-      return path in state.responses
-        ? Response.json(state.responses[path])
-        : Response.json({ _tag: "MedPatientNotFoundError", patientId: path }, { status: 404 });
+      if (!(path in state.responses)) {
+        return Response.json({ _tag: "MedPatientNotFoundError", patientId: path }, { status: 404 });
+      }
+      // A promise stands for an answer that is still on its way.
+      return Response.json(await state.responses[path]);
     }) as never,
   };
 });
 
+import { RightPanelTabs } from "../components/RightPanelTabs";
 import { selectThreadRightPanelState, useRightPanelStore } from "../rightPanelStore";
 import { refreshMedData } from "./medData";
 import { MedSidebarNav } from "./MedSidebarNav";
@@ -370,7 +373,229 @@ it("offers the patient surfaces for a thread with a linked patient, and opens on
   const results = screen.getByRole("table", { name: "Results of LDL cholesterol" });
   await expect.element(results.getByText("3.31 mmol/L")).toBeVisible();
   await expect.element(results.getByText("−34 mg/dL (−21%)")).toBeVisible();
+  // Whose record it is stands at the top of the surface, with the URN.
+  await expect.element(screen.getByRole("heading", { name: "Ni Made Suartini" })).toBeVisible();
+  await expect.element(screen.getByText("URN 00-12-34-56")).toBeVisible();
   expect(state.requests.filter((request) => !request.startsWith("GET "))).toEqual([]);
+});
+
+it("opens Labs on the test chosen in Summary", async () => {
+  const linked = scopeThreadRef(PRIMARY, ThreadId.make("thread-summary"));
+  const hba1c = (id: string, collected: string, value: number) =>
+    lab({
+      id,
+      collected,
+      labTestId: "test-hba1c",
+      testId: "hba1c",
+      testName: "HbA1c",
+      value,
+      valueText: String(value),
+      unit: "%",
+      isBaseline: id === "h1",
+      valueInBaselineUnit: value,
+    });
+  setup({
+    primaryEnvironmentId: PRIMARY,
+    mayRead: true,
+    routeThreadRef: linked,
+    responses: {
+      "/api/med/threads/thread-summary/patient": {
+        patient: { id: "p-two", name: "Ni Made Suartini" },
+      },
+      "/api/med/patients/p-two/record": {
+        ...RECORD,
+        patient: { ...RECORD.patient, id: "p-two" },
+        labs: [...RECORD.labs, hba1c("h1", "2026-08-21", 8.1), hba1c("h2", "2026-09-18", 7.4)],
+      },
+    },
+  });
+  await using screen = await render(
+    inApp(
+      <>
+        <MedSurfaceContent surface={medSurface("med-summary")} threadRef={linked} />
+        <MedSurfaceContent surface={medSurface("med-labs")} threadRef={linked} />
+      </>,
+    ),
+  );
+
+  // Until a test is chosen, Labs shows the first one, A to Z, that has a trend.
+  await expect.element(screen.getByRole("table", { name: "Results of HbA1c" })).toBeVisible();
+  await screen.getByRole("button", { name: "LDL cholesterol: open in Labs" }).click();
+
+  await expect
+    .element(screen.getByRole("table", { name: "Results of LDL cholesterol" }))
+    .toBeVisible();
+  expect(
+    selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, linked),
+  ).toMatchObject({ isOpen: true, activeSurfaceId: "med-labs" });
+});
+
+it("keeps what is coming up apart from the history, and marks each lab line", async () => {
+  const linked = scopeThreadRef(PRIMARY, ThreadId.make("thread-timeline"));
+  setup({
+    primaryEnvironmentId: PRIMARY,
+    mayRead: true,
+    responses: {
+      "/api/med/threads/thread-timeline/patient": {
+        patient: { id: "p-time", name: "Ni Made Suartini" },
+      },
+      "/api/med/patients/p-time/record": {
+        ...RECORD,
+        patient: { ...RECORD.patient, id: "p-time" },
+        labs: [
+          { ...RECORD.labs[0], flag: "high" },
+          { ...RECORD.labs[1], collected: "2026-08-21" },
+        ],
+        plans: [
+          {
+            id: "plan-open",
+            patientId: "p-time",
+            title: "Repeat lipid panel",
+            due: "2027-01-10",
+            type: "lab",
+            status: "planned",
+          },
+          {
+            id: "plan-done",
+            patientId: "p-time",
+            title: "Head CT",
+            due: "2026-08-20",
+            type: "imaging",
+            status: "done",
+          },
+        ],
+      },
+    },
+  });
+  await using screen = await render(
+    inApp(<MedSurfaceContent surface={medSurface("med-timeline")} threadRef={linked} />),
+  );
+
+  await expect
+    .element(screen.getByRole("list", { name: "Coming up" }).getByText("Repeat lipid panel"))
+    .toBeVisible();
+  const history = screen.getByRole("heading", { name: "History" });
+  await expect.element(history).toBeVisible();
+  // An open plan is not history, however far ahead it is due; a finished one is.
+  expect(
+    screen
+      .getByRole("listitem")
+      .elements()
+      .map((item) => item.textContent)
+      .filter((text) => /lipid panel|Head CT|lab results/.test(text ?? "")),
+  ).toEqual([
+    expect.stringContaining("Repeat lipid panel"),
+    expect.stringMatching(
+      /^2 lab results, 1 draftLDL cholesterol 162 mg\/dLHighLDL cholesterol 3\.31 mmol\/LDraft$/,
+    ),
+    expect.stringContaining("Head CT"),
+  ]);
+  await expect.element(screen.getByText("URN 00-12-34-56")).toBeVisible();
+});
+
+it("tells a chat whose patient is not known yet, or could not be read, from one with none", async () => {
+  const thread = scopeThreadRef(PRIMARY, ThreadId.make("thread-late"));
+  let answer = (_value: unknown) => {};
+  setup({
+    primaryEnvironmentId: PRIMARY,
+    mayRead: true,
+    routeThreadRef: thread,
+    responses: {
+      "/api/med/threads/thread-late/patient": new Promise((resolve) => {
+        answer = resolve;
+      }),
+    },
+  });
+  await using screen = await render(
+    inApp(<MedSurfaceContent surface={medSurface("med-summary")} threadRef={thread} />),
+  );
+  const unlinked = screen.getByText(/Give the chat the patient's URN and it links them\.$/);
+
+  // Still on its way: nothing is claimed about the chat.
+  await vi.waitFor(() =>
+    expect(state.requests).toContain("GET /api/med/threads/thread-late/patient"),
+  );
+  await expect.element(unlinked).not.toBeInTheDocument();
+
+  // Lost: the surface says so and offers to read again, and still claims nothing.
+  answer({ unexpected: true });
+  const retry = screen.getByRole("button", { name: "Try again" });
+  await expect.element(retry).toBeVisible();
+  await expect.element(screen.getByText(/^Could not load this from T3 Med/)).toBeVisible();
+  await expect.element(unlinked).not.toBeInTheDocument();
+
+  // Read: only now is the chat said to have no patient.
+  state.responses["/api/med/threads/thread-late/patient"] = { patient: null };
+  await retry.click();
+  await expect.element(unlinked).toBeVisible();
+});
+
+const noop = () => {};
+
+// Upstream's own launcher, with every surface on offer, as a chat with nothing open shows it.
+function RealLauncher() {
+  return (
+    <RightPanelTabs
+      mode="inline"
+      keybindings={[]}
+      getShortcutContext={() => ({}) as never}
+      surfaces={[]}
+      environmentId={PRIMARY}
+      activeSurfaceId={null}
+      pendingSurfaceIds={new Set()}
+      previewSessions={{}}
+      desktopByTabId={{}}
+      terminalLabelsById={new Map()}
+      onActivate={noop}
+      onCloseSurface={noop}
+      onCloseOtherSurfaces={noop}
+      onCloseSurfacesToRight={noop}
+      onCloseAllSurfaces={noop}
+      onCopyFilePath={noop}
+      onAddBrowser={noop}
+      onAddBrowserInProfile={noop}
+      onAddTerminal={noop}
+      onAddDiff={noop}
+      onAddFiles={noop}
+      onAddPullRequest={noop}
+      onAddPullRequests={noop}
+      onAddDevice={noop}
+      onAddSideChat={noop}
+      browserAvailable
+      terminalAvailable
+      diffAvailable
+      filesAvailable
+      pullRequestAvailable
+      pullRequestsAvailable
+      deviceAvailable
+      sideChatAvailable
+    >
+      {null}
+    </RightPanelTabs>
+  );
+}
+
+it("keeps Files and Side chat of upstream's own launcher, and says why a patient surface is off", async () => {
+  const unlinked = scopeThreadRef(PRIMARY, ThreadId.make("thread-launcher"));
+  setup({
+    primaryEnvironmentId: PRIMARY,
+    mayRead: true,
+    routeThreadRef: unlinked,
+    responses: { "/api/med/threads/thread-launcher/patient": { patient: null } },
+  });
+  await using screen = await render(inApp(<RealLauncher />));
+
+  const launcher = screen.getByLabelText("Open a surface");
+  // The reason is on the page, under the patient surfaces, not only in a tooltip.
+  await expect
+    .element(launcher.getByRole("note"))
+    .toHaveTextContent("No patient is linked to this chat yet. Give the chat the patient's URN.");
+  // Files and Side chat are kept by the ids the fork gives upstream's rows: if a merge drops
+  // an id, or upstream stops offering the row, this list is what changes.
+  expect(launcher.element().textContent).toMatch(
+    /^Open a surfaceSummaryS\s*LabsL\s*PlanP\s*TimelineT\s*No patient is linked[^F]*FilesF\s*Side chatC$/,
+  );
+  expect(launcher.element().getAttribute("data-surface-launcher-keys")).toBe("FC");
 });
 
 it("offers no patient surface, and draws no record, for a chat with no linked patient", async () => {
@@ -391,7 +616,7 @@ it("offers no patient surface, and draws no record, for a chat with no linked pa
   );
 
   await expect
-    .element(screen.getByText(/^No patient is linked to this chat yet\. Give the chat/))
+    .element(screen.getByText(/Give the chat the patient's URN and it links them\.$/))
     .toBeVisible();
   for (const name of ["Summary", "Labs", "Plan", "Timeline"]) {
     await expect.element(screen.getByRole("button", { name })).toBeDisabled();
