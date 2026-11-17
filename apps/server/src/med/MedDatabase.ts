@@ -1,5 +1,5 @@
 /**
- * The patient database: a second SQLite file beside the server's own. Fork migrations in the
+ * T3 Med: the patient database: a second SQLite file beside the server's own. Fork migrations in the
  * server's database would collide with upstream's numbered migrations, so patient tables live in
  * `t3med.sqlite` with their own migration list and their own tag, apart from `SqlClient`.
  */
@@ -17,6 +17,7 @@ import * as ServerConfig from "../config.ts";
 import Migration0001 from "./Migrations/001_PatientStore.ts";
 import Migration0002 from "./Migrations/002_ThreadPatientsByPatient.ts";
 import Migration0003 from "./Migrations/003_Corrections.ts";
+import Migration0004 from "./Migrations/004_WaysBack.ts";
 
 export class MedDatabaseOpenError extends Schema.TaggedError<MedDatabaseOpenError>()(
   "MedDatabaseOpenError",
@@ -36,6 +37,7 @@ const runMigrations = Migrator.make({})({
     "1_PatientStore": Migration0001,
     "2_ThreadPatientsByPatient": Migration0002,
     "3_Corrections": Migration0003,
+    "4_WaysBack": Migration0004,
   }),
   table: "t3med_migrations",
 });

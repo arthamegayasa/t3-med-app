@@ -1,8 +1,8 @@
+// T3 Med: the ways back. A removed row stays for undo, a corrected result keeps what it said
+// before, and a closed plan remembers the day it was done and what reopening returns it to.
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
 
-// The ways back: a removed row stays for undo, a corrected result keeps what it said before,
-// and a closed plan remembers the day it was done and what reopening returns it to.
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
 

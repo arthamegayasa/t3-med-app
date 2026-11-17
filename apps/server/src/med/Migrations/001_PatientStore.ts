@@ -1,3 +1,4 @@
+// T3 Med: the patient tables: patients, the lab catalogue, notes, labs, plans and note files.
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
 
