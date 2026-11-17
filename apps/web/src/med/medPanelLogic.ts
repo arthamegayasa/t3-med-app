@@ -120,14 +120,7 @@ export function describeSeries(name: string, series: LabSeries): string {
 
 export interface ChartGeometry {
   /** Each point with where it sits: `x` from the first day (0) to the last (100), `y` from the top. */
-  readonly points: ReadonlyArray<
-    LabPoint & {
-      readonly x: number;
-      readonly y: number;
-      /** Every second result of one day: its label goes under the dot, clear of its neighbour's. */
-      readonly labelBelow: boolean;
-    }
-  >;
+  readonly points: ReadonlyArray<LabPoint & { readonly x: number; readonly y: number }>;
   readonly baselineY: number;
 }
 
@@ -135,8 +128,9 @@ export interface ChartGeometry {
 // then looks small instead of filling the chart.
 const MIN_VALUE_SPAN = 0.25;
 
-// How far apart two results of one day sit, in percent of the plot's width.
-const SAME_DAY_STEP = 8;
+// How far apart two results of one day sit, in percent of the plot's width: room for the
+// number above each dot at the panel's narrowest.
+const SAME_DAY_STEP = 12;
 // The most of the width that results sharing a day may take from the days themselves.
 const SAME_DAY_ROOM = 50;
 
@@ -155,11 +149,9 @@ export function chartGeometry(series: LabSeries): ChartGeometry {
   const span = (days.at(-1) ?? 0) - firstDay;
   // How many results before each one, itself included, came second or later on their day.
   let sameDay = 0;
-  let nthOfDay = 0;
-  const places = days.map((day, index) => {
-    nthOfDay = index > 0 && day === days[index - 1] ? nthOfDay + 1 : 0;
-    if (nthOfDay > 0) sameDay += 1;
-    return { stepsBefore: sameDay, nthOfDay };
+  const stepsBefore = days.map((day, index) => {
+    if (index > 0 && day === days[index - 1]) sameDay += 1;
+    return sameDay;
   });
   const step = sameDay === 0 ? 0 : Math.min(SAME_DAY_STEP, SAME_DAY_ROOM / sameDay);
   const room = 100 - sameDay * step;
@@ -180,9 +172,8 @@ export function chartGeometry(series: LabSeries): ChartGeometry {
         ? 50
         : (index / last) * 100
       : (span === 0 ? room / 2 : (((days[index] ?? firstDay) - firstDay) / span) * room) +
-        (places[index]?.stepsBefore ?? 0) * step,
+        (stepsBefore[index] ?? 0) * step,
     y: yOf(point.value),
-    labelBelow: (places[index]?.nthOfDay ?? 0) % 2 === 1,
   }));
   return { points, baselineY: points.find((point) => point.baseline)?.y ?? 50 };
 }

@@ -106,11 +106,7 @@ export function MedLabChart({
                 {labelled || index === 0 || index === points.length - 1 ? (
                   <span
                     aria-hidden
-                    className={cn(
-                      "absolute left-1/2 -translate-x-1/2 font-medium text-foreground text-xs tabular-nums",
-                      // Results of one day sit close: every second label goes under its dot.
-                      point.labelBelow ? "top-full mt-1" : "bottom-full mb-1",
-                    )}
+                    className="absolute bottom-full left-1/2 mb-1 -translate-x-1/2 font-medium text-foreground text-xs tabular-nums"
                   >
                     {point.label}
                   </span>

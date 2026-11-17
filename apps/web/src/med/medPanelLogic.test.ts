@@ -276,7 +276,7 @@ describe("chartGeometry", () => {
 
   it("lays results of one day side by side in filing order, never on one spot", () => {
     // Two results on the last day: the day keeps its place at the right edge and the earlier
-    // filing sits a step before it.
+    // filing sits a step before it, wide enough for both numbers to be read above their dots.
     const geometry = chartGeometry(
       series([
         point("l1", "2026-08-21", 162, true),
@@ -284,8 +284,7 @@ describe("chartGeometry", () => {
         point("l3", "2026-11-06", 78),
       ]),
     );
-    expect(geometry.points.map(({ x }) => x)).toEqual([0, 92, 100]);
-    expect(geometry.points.map(({ labelBelow }) => labelBelow)).toEqual([false, false, true]);
+    expect(geometry.points.map(({ x }) => x)).toEqual([0, 88, 100]);
     // A day in the middle keeps its share of the days on either side of its results.
     const middle = chartGeometry(
       series([
@@ -295,7 +294,7 @@ describe("chartGeometry", () => {
         point("m4", "2026-11-11", 8),
       ]),
     );
-    expect(middle.points.map(({ x }) => x)).toEqual([0, 46, 54, 100]);
+    expect(middle.points.map(({ x }) => x)).toEqual([0, 44, 56, 100]);
     // Every result on one day: a row around the middle, since no time passed between them.
     const oneDay = chartGeometry(
       series([
@@ -304,7 +303,7 @@ describe("chartGeometry", () => {
         point("d3", "2026-11-06", 7),
       ]),
     );
-    expect(oneDay.points.map(({ x }) => x)).toEqual([42, 50, 58]);
+    expect(oneDay.points.map(({ x }) => x)).toEqual([38, 50, 62]);
   });
 });
 
