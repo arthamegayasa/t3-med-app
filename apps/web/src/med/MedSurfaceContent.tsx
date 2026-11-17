@@ -1,7 +1,7 @@
 /**
  * T3 Med: the patient surfaces of the right panel: Summary, Labs, Plan and Timeline of the
- * patient the open thread is linked to. They only read. Every lab number is shown as the
- * store has it: no unit is converted and no change is worked out here.
+ * patient the open thread is linked to. Every lab number is shown as the store has it: no unit
+ * is converted and no change is worked out here. Labs and Plan carry the doctor's row actions.
  */
 import { useAtom, useAtomSet } from "@effect/atom-react";
 import type { ScopedThreadRef } from "@t3tools/contracts";
@@ -33,9 +33,10 @@ import {
   useThreadPatientState,
   useToday,
 } from "./medData";
-import { draftsLabel, formatDay } from "./medLogic";
+import { LabRevisions, LabRowActions } from "./MedLabActions";
 import { MedLabChart } from "./MedLabChart";
 import { MedLink } from "./MedLink";
+import { draftsLabel, formatDay } from "./medLogic";
 import { MedPage } from "./MedPage";
 import {
   changeLabel,
@@ -49,6 +50,7 @@ import {
   type TimelineEntry,
   valueLabel,
 } from "./medPanelLogic";
+import { PlanRowActions } from "./MedPlanActions";
 import { MedPlanRow } from "./MedPlanRow";
 import type { MedSurface } from "./medSurfaces";
 import { PatientFacts } from "./PatientHomePage";
@@ -307,6 +309,9 @@ function TestResults({ test, today }: { readonly test: LabTestGroup; readonly to
             <TableHead className="hidden h-8 @md:table-cell">
               <Quiet>Status</Quiet>
             </TableHead>
+            <TableHead className="h-8 w-8">
+              <span className="sr-only">Actions</span>
+            </TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -324,6 +329,7 @@ function TestResults({ test, today }: { readonly test: LabTestGroup; readonly to
                     )}
                     <StatusCell status={result.status} />
                   </span>
+                  <LabRevisions lab={result} today={today} />
                 </span>
               </TableCell>
               <TableCell className="hidden @md:table-cell">
@@ -337,6 +343,9 @@ function TestResults({ test, today }: { readonly test: LabTestGroup; readonly to
               </TableCell>
               <TableCell className="hidden @md:table-cell">
                 <StatusCell status={result.status} />
+              </TableCell>
+              <TableCell className="w-8">
+                <LabRowActions lab={result} today={today} />
               </TableCell>
             </TableRow>
           ))}
@@ -435,7 +444,13 @@ function Plans({ record, today }: { readonly record: MedPatientRecord; readonly 
         ) : (
           <MedPage.List aria-label="Open plans">
             {open.map((plan) => (
-              <MedPlanRow key={plan.id} plan={plan} today={today} showStatus />
+              <MedPlanRow
+                key={plan.id}
+                plan={plan}
+                today={today}
+                showStatus
+                actions={<PlanRowActions plan={plan} />}
+              />
             ))}
           </MedPage.List>
         )}
@@ -444,7 +459,13 @@ function Plans({ record, today }: { readonly record: MedPatientRecord; readonly 
         <Section title="Done or cancelled" aside="Due">
           <MedPage.List aria-label="Done or cancelled plans">
             {closed.map((plan) => (
-              <MedPlanRow key={plan.id} plan={plan} today={today} showStatus />
+              <MedPlanRow
+                key={plan.id}
+                plan={plan}
+                today={today}
+                showStatus
+                actions={<PlanRowActions plan={plan} />}
+              />
             ))}
           </MedPage.List>
         </Section>

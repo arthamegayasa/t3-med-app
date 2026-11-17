@@ -1,10 +1,20 @@
 /**
  * T3 Med: patient data for the web client. It belongs to the primary environment and is read
  * over `/api/med` there, with the session this browser already holds, so these queries take no
- * environment id. The client only reads: a thread is linked to a patient by the agent tools.
+ * environment id. The doctor's changes go the same way. Nothing here links a thread to a
+ * patient: the agent tools do, on evidence.
  */
+import {
+  createRuntimeCommand,
+  runAtomCommand,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
 import { isThreadWorking } from "@t3tools/client-runtime/state/thread-inbox";
-import { AuthOrchestrationReadScope, type EnvironmentId } from "@t3tools/contracts";
+import {
+  AuthOrchestrationOperateScope,
+  AuthOrchestrationReadScope,
+  type EnvironmentId,
+} from "@t3tools/contracts";
 import { MedHttpApi, type MedThreadPatient } from "@t3tools/contracts/med";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -109,6 +119,48 @@ const threadPatientAtom = Atom.family((threadId: string) =>
 export function useMedEnvironmentId(): EnvironmentId | null {
   const environmentId = usePrimaryEnvironmentId();
   return useEnvironmentScope(environmentId, AuthOrchestrationReadScope) ? environmentId : null;
+}
+
+/** Whether this session may change patient data: the controls are not offered without it. */
+export function useMedMayChange(): boolean {
+  return useEnvironmentScope(useMedEnvironmentId(), AuthOrchestrationOperateScope);
+}
+
+/** Every way a call on the `/api/med` client fails: a refusal of the server's, or the request's own. */
+type MedFailure = Effect.Error<ReturnType<MedClient["patients"][keyof MedClient["patients"]]>>;
+
+/** One change, as a call on the `/api/med` client. */
+export type MedSend<A> = (client: MedClient) => Effect.Effect<A, MedFailure>;
+
+const changeCommand = createRuntimeCommand(medRuntime, {
+  label: "med:change",
+  execute: (send: MedSend<unknown>) => medClient.pipe(Effect.flatMap(send)),
+});
+
+export type MedChangeResult<A> =
+  | { readonly ok: true; readonly value: A }
+  /** `message` is the server's own sentence when it refused, else a general one. */
+  | { readonly ok: false; readonly message: string; readonly failure: unknown };
+
+/**
+ * Sends one change and reads every patient query again, whatever the answer: baselines,
+ * counts and lists that follow from a change are the store's to work out.
+ */
+export async function changeMed<A>(send: MedSend<A>): Promise<MedChangeResult<A>> {
+  const result = await runAtomCommand(appAtomRegistry, changeCommand, send, {
+    reportFailure: false,
+  });
+  refreshMedData();
+  if (result._tag === "Success") return { ok: true, value: result.value as A };
+  const failure = squashAtomCommandFailure(result);
+  return {
+    ok: false,
+    failure,
+    message:
+      failure instanceof Error && failure.message.trim() !== ""
+        ? failure.message
+        : "T3 Med could not save this.",
+  };
 }
 
 /** One patient query, read only while `useMedEnvironmentId` names an environment. */

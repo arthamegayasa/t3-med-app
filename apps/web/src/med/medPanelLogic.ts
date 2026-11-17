@@ -302,7 +302,8 @@ export function patientTimeline(
   const entries: ReadonlyArray<TimelineEntry> = [
     ...record.notes.map((note) => ({ kind: "note" as const, day: note.date, note })),
     ...[...batches.entries()].map(([day, labs]) => ({ kind: "labs" as const, day, labs })),
-    ...closed.map((plan) => ({ kind: "plan" as const, day: plan.due, plan })),
+    // A plan that was done belongs to the day it was done, not the day it was due.
+    ...closed.map((plan) => ({ kind: "plan" as const, day: plan.doneOn ?? plan.due, plan })),
   ];
   return {
     comingUp: open,

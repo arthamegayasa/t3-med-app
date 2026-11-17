@@ -25,6 +25,7 @@ export function MedPlanRow({
   patient,
   showStatus = false,
   showDue = true,
+  actions,
 }: {
   readonly plan: MedPlan;
   readonly today: string;
@@ -37,6 +38,8 @@ export function MedPlanRow({
   readonly showStatus?: boolean;
   /** False under a heading that already says the day. */
   readonly showDue?: boolean;
+  /** What the doctor can do to the plan, on a row that opens nothing. */
+  readonly actions?: ReactNode;
 }) {
   const closed = plan.status === "done" || plan.status === "cancelled";
   // A plan that is done or cancelled is no longer late.
@@ -48,6 +51,9 @@ export function MedPlanRow({
         <MedPage.Secondary className="text-xs">
           {patient === undefined ? null : <>{patient} · </>}
           {PLAN_TYPE_LABEL[plan.type]}
+          {plan.status === "done" && plan.doneOn !== null
+            ? `, done ${formatDay(plan.doneOn, today)}`
+            : null}
         </MedPage.Secondary>
       </span>
       {plan.status === "draft" ? (
@@ -76,7 +82,7 @@ export function MedPlanRow({
     </>
   );
   return patient === undefined ? (
-    <MedPage.Row>{cells}</MedPage.Row>
+    <MedPage.Row actions={actions}>{cells}</MedPage.Row>
   ) : (
     <MedPage.PatientRow patientId={plan.patientId}>{cells}</MedPage.PatientRow>
   );

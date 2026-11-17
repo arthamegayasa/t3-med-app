@@ -2,6 +2,7 @@
 import { needsYouAtom, useMedQuery, useToday } from "./medData";
 import { draftsLabel, formatDay } from "./medLogic";
 import { MedLink } from "./MedLink";
+import { VerifyNoteButton } from "./MedNoteActions";
 import { MedPage } from "./MedPage";
 
 export function NeedsYouPage() {
@@ -14,7 +15,7 @@ export function NeedsYouPage() {
           patients.length === 0 ? (
             <MedPage.Note>
               Nothing needs you. Questions an agent could not answer and drafts it filed show up
-              here; open the chat to answer or to confirm them.
+              here; open the chat to answer, and verify the drafts here or in the chat.
             </MedPage.Note>
           ) : (
             patients.map(({ patient, draftLabs, draftPlans, notes }) => (
@@ -36,7 +37,11 @@ export function NeedsYouPage() {
                   {notes.map((note) => {
                     const drafts = draftsLabel(note.draftLabs, note.draftPlans);
                     return (
-                      <MedPage.ThreadRow key={note.id} threadId={note.threadId}>
+                      <MedPage.ThreadRow
+                        key={note.id}
+                        threadId={note.threadId}
+                        actions={<VerifyNoteButton note={note} />}
+                      >
                         <span className="flex min-w-0 flex-1 flex-col">
                           <MedPage.Primary>{note.title}</MedPage.Primary>
                           {note.needsYou.trim() === "" ? null : (

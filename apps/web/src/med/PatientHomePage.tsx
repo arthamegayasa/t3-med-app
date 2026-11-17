@@ -3,17 +3,28 @@ import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { type ScopedProjectRef, ThreadId } from "@t3tools/contracts";
 import type { MedPatientHome } from "@t3tools/contracts/med";
 import { SquarePenIcon } from "lucide-react";
-import { useId } from "react";
+import { useId, useState } from "react";
 
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { resolveDefaultProjectRef, useNewThreadHandler } from "../hooks/useHandleNewThread";
 import { useProjects, useQuietThreadShell } from "../state/entities";
 import { useUiStateStore } from "../uiStateStore";
-import { patientHomeAtom, useMedEnvironmentId, useMedQuery, useToday } from "./medData";
+import { actOnMed } from "./medActions";
+import {
+  type MedSend,
+  patientHomeAtom,
+  useMedEnvironmentId,
+  useMedMayChange,
+  useMedQuery,
+  useToday,
+} from "./medData";
 import { ageOn, draftsLabel, earlierChats, formatDay, newChatPrompt } from "./medLogic";
+import { NoteRowActions } from "./MedNoteActions";
 import { MedPage } from "./MedPage";
+import { PlanRowActions } from "./MedPlanActions";
 import { MedPlanRow } from "./MedPlanRow";
+import { PatientEditDialog } from "./PatientEditDialog";
 
 const STATUS_LABEL = { new: "New", active: "Active", archived: "Archived" } as const;
 
@@ -86,6 +97,51 @@ function NewChatButton({ patient }: { readonly patient: MedPatientHome["patient"
   );
 }
 
+const setStatus =
+  (patientId: string, status: MedPatientHome["patient"]["status"]): MedSend<unknown> =>
+  (client) =>
+    client.patients.updatePatient({ headers: {}, params: { patientId }, payload: { status } });
+
+/**
+ * Edit, and archive or bring back. Archiving takes the patient off Needs you and Upcoming and
+ * loses nothing, so it is done at once and undone from its toast.
+ */
+function PatientControls({ patient }: { readonly patient: MedPatientHome["patient"] }) {
+  const mayChange = useMedMayChange();
+  const [editing, setEditing] = useState(false);
+  if (!mayChange) return null;
+  const archived = patient.status === "archived";
+  return (
+    <>
+      <Button variant="outline" onClick={() => setEditing(true)}>
+        Edit details
+      </Button>
+      <Button
+        variant="outline"
+        onClick={() =>
+          void actOnMed({
+            send: setStatus(patient.id, archived ? "active" : "archived"),
+            done: archived ? `Brought back ${patient.name}` : `Archived ${patient.name}`,
+            failed: archived ? "Could not bring this patient back" : "Could not archive",
+            undo: {
+              send: setStatus(patient.id, patient.status),
+              done: archived
+                ? `${patient.name} is archived again`
+                : `${patient.name} is no longer archived`,
+              failed: "Could not undo",
+            },
+          })
+        }
+      >
+        {archived ? "Bring back" : "Archive"}
+      </Button>
+      {editing ? (
+        <PatientEditDialog patientId={patient.id} onClose={() => setEditing(false)} />
+      ) : null}
+    </>
+  );
+}
+
 /** A chat about the patient in which nothing was filed for them: named as the thread list names it. */
 function LinkedThreadRow({
   threadId,
@@ -136,8 +192,9 @@ export function PatientHomePage({ patientId }: { readonly patientId: string }) {
                   <p className="m-0 text-muted-foreground text-sm">{drafts} to check.</p>
                 )}
               </div>
-              <div className="px-2.5">
+              <div className="flex flex-wrap items-center gap-2 px-2.5">
                 <NewChatButton patient={patient} />
+                <PatientControls patient={patient} />
               </div>
               <section className="flex flex-col gap-1 pt-2">
                 <MedPage.Lead>
@@ -159,7 +216,11 @@ export function PatientHomePage({ patientId }: { readonly patientId: string }) {
                           today={today}
                         />
                       ) : (
-                        <MedPage.ThreadRow key={chat.note.id} threadId={chat.note.threadId}>
+                        <MedPage.ThreadRow
+                          key={chat.note.id}
+                          threadId={chat.note.threadId}
+                          actions={<NoteRowActions note={chat.note} patientName={patient.name} />}
+                        >
                           <MedPage.Primary className="max-w-[45%] shrink-0">
                             {chat.note.title}
                           </MedPage.Primary>
@@ -188,7 +249,12 @@ export function PatientHomePage({ patientId }: { readonly patientId: string }) {
                   </MedPage.Lead>
                   <MedPage.List aria-label="Plans">
                     {upcomingPlans.map((plan) => (
-                      <MedPlanRow key={plan.id} plan={plan} today={today} />
+                      <MedPlanRow
+                        key={plan.id}
+                        plan={plan}
+                        today={today}
+                        actions={<PlanRowActions plan={plan} />}
+                      />
                     ))}
                   </MedPage.List>
                 </section>

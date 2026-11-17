@@ -35,6 +35,7 @@ const lab = (fields: Partial<MedLab> & Pick<MedLab, "id" | "collected">): MedLab
   changeUnit: null,
   notCompared: null,
   noteId: "note-1",
+  revisions: [],
   ...fields,
 });
 
@@ -371,13 +372,19 @@ describe("valueLabel and formatLabNumber", () => {
   });
 });
 
-const plan = (id: string, due: string, status: MedPlan["status"]): MedPlan => ({
+const plan = (
+  id: string,
+  due: string,
+  status: MedPlan["status"],
+  doneOn: string | null = null,
+): MedPlan => ({
   id,
   patientId: "p1",
   title: id,
   due,
   type: "follow_up",
   status,
+  doneOn,
 });
 
 const plans = [
@@ -429,6 +436,8 @@ describe("patientTimeline", () => {
         plan("overdue", "2026-11-02", "planned"),
         plan("eeg", "2026-09-18", "done"),
         plan("dropped", "2026-11-20", "cancelled"),
+        // Done ten days late: it happened on the day it was done, not the day it was due.
+        plan("late-ct", "2026-10-01", "done", "2026-10-11"),
       ],
       notes: [note("n-nov", "2026-11-06"), note("n-sep", "2026-09-18")],
     });
@@ -445,6 +454,7 @@ describe("patientTimeline", () => {
       ["2026-11-20", "plan", "dropped"],
       ["2026-11-06", "note", "n-nov"],
       ["2026-11-06", "labs", ["l3"]],
+      ["2026-10-11", "plan", "late-ct"],
       ["2026-09-18", "note", "n-sep"],
       ["2026-09-18", "labs", ["h1", "l2", "a1"]],
       ["2026-09-18", "plan", "eeg"],

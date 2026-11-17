@@ -79,13 +79,19 @@ function List({ className, ...props }: ComponentProps<"ul">) {
 
 /**
  * A row that opens nothing. It keeps the width of the chevron a row that opens something ends
- * with, so the two cannot be mistaken for each other and their columns still line up.
+ * with, so the two cannot be mistaken for each other and their columns still line up. `actions`
+ * takes that place: the menu of what the doctor can do to the row.
  */
-function Row({ className, children, ...props }: ComponentProps<"li">) {
+function Row({
+  className,
+  children,
+  actions,
+  ...props
+}: ComponentProps<"li"> & { readonly actions?: ReactNode }) {
   return (
     <li className={cn(ROW_CLASS, className)} {...props}>
       {children}
-      <span aria-hidden className="size-4 shrink-0" />
+      {actions ?? <span aria-hidden className="size-4 shrink-0" />}
     </li>
   );
 }
@@ -94,27 +100,33 @@ function Opens() {
   return <ChevronRightIcon aria-hidden className="size-4 shrink-0 text-muted-foreground" />;
 }
 
-/** A row that opens its thread in the primary environment, or a plain row without a thread. */
+/**
+ * A row that opens its thread in the primary environment, or a plain row without a thread.
+ * `actions` sit after the link, never inside it: a control in a link is no control.
+ */
 function ThreadRow({
   threadId,
+  actions,
   children,
 }: {
   readonly threadId: string | null;
+  readonly actions?: ReactNode;
   readonly children: ReactNode;
 }) {
   const environmentId = useMedEnvironmentId();
-  if (threadId === null || environmentId === null) return <Row>{children}</Row>;
+  if (threadId === null || environmentId === null) return <Row actions={actions}>{children}</Row>;
   return (
-    <li>
+    <li className="flex items-center gap-1">
       <MedLink
         variant="row"
         to="/$environmentId/$threadId"
         params={{ environmentId, threadId }}
-        className={ROW_CLASS}
+        className={cn(ROW_CLASS, "min-w-0 flex-1")}
       >
         {children}
         <Opens />
       </MedLink>
+      {actions}
     </li>
   );
 }

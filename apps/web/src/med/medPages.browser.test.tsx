@@ -1,11 +1,16 @@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { EnvironmentId, ProjectId, type ScopedThreadRef, ThreadId } from "@t3tools/contracts";
 import type { MedLab, MedPatientHome, MedPatientRecord } from "@t3tools/contracts/med";
+// Dialogs are laid out by the stylesheet: without it a modal's own backdrop covers its buttons.
+import "~/index.css";
+
 import type { ReactNode } from "react";
 import { expect, it, vi } from "vite-plus/test";
+import { page, userEvent } from "vite-plus/test/browser";
 
 import { render } from "../../test/render";
 import { SidebarProvider } from "../components/ui/sidebar";
+import { ToastProvider } from "../components/ui/toast";
 import { AppAtomRegistryProvider } from "../rpc/atomRegistry";
 import type { Project } from "../types";
 
@@ -16,11 +21,15 @@ const OTHER = EnvironmentId.make("other-machine");
 const state = vi.hoisted(() => ({
   primaryEnvironmentId: null as string | null,
   mayRead: false,
+  mayChange: false,
   projects: [] as ReadonlyArray<unknown>,
   threadTitles: {} as Record<string, string>,
   routeThreadRef: null as unknown,
   responses: {} as Record<string, unknown>,
   requests: [] as Array<string>,
+  // What a change is answered with, by method and path; a list is used up one answer a call.
+  writes: {} as Record<string, unknown>,
+  sent: [] as Array<readonly [string, unknown]>,
   openDraft: (..._args: ReadonlyArray<unknown>): Promise<null> => Promise.resolve(null),
 }));
 
@@ -28,10 +37,15 @@ vi.mock(import("../state/environments"), async (importOriginal) => ({
   ...(await importOriginal()),
   usePrimaryEnvironmentId: () => state.primaryEnvironmentId as never,
 }));
-vi.mock(import("../state/session"), async (importOriginal) => ({
-  ...(await importOriginal()),
-  useEnvironmentScope: (environmentId) => environmentId !== null && state.mayRead,
-}));
+vi.mock(import("../state/session"), async (importOriginal) => {
+  const { AuthOrchestrationOperateScope } = await import("@t3tools/contracts");
+  return {
+    ...(await importOriginal()),
+    useEnvironmentScope: (environmentId, scope) =>
+      environmentId !== null &&
+      (scope === AuthOrchestrationOperateScope ? state.mayChange : state.mayRead),
+  };
+});
 vi.mock(import("../state/entities"), async (importOriginal) => ({
   ...(await importOriginal()),
   useProjects: () => state.projects as never,
@@ -58,6 +72,18 @@ vi.mock(import("../environments/primary/httpLayer"), async (importOriginal) => {
       const request = new Request(input, init);
       const path = new URL(request.url).pathname;
       state.requests.push(`${request.method} ${path}`);
+      if (request.method !== "GET") {
+        const key = `${request.method} ${path}`;
+        const body = await request.text();
+        state.sent.push([key, body === "" ? null : JSON.parse(body)]);
+        const planned = state.writes[key];
+        const answer = (Array.isArray(planned) ? planned.shift() : planned) as
+          | { readonly status?: number; readonly body: unknown }
+          | undefined;
+        return answer === undefined
+          ? Response.json({ _tag: "MedRowNotFoundError", row: "lab", id: path }, { status: 404 })
+          : Response.json(answer.body, { status: answer.status ?? 200 });
+      }
       if (!(path in state.responses)) {
         return Response.json({ _tag: "MedPatientNotFoundError", patientId: path }, { status: 404 });
       }
@@ -72,6 +98,7 @@ import { selectThreadRightPanelState, useRightPanelStore } from "../rightPanelSt
 import { refreshMedData } from "./medData";
 import { MedSidebarNav } from "./MedSidebarNav";
 import { MedSurfaceContent } from "./MedSurfaceContent";
+import { NeedsYouPage } from "./NeedsYouPage";
 import { useMedSurfaceActions } from "./MedSurfaceLauncher";
 import { medSurface } from "./medSurfaces";
 import { MedThreadPatientCrumb } from "./MedThreadPatientCrumb";
@@ -80,7 +107,10 @@ import { PatientHomePage } from "./PatientHomePage";
 function setup(input: {
   readonly primaryEnvironmentId: string | null;
   readonly mayRead: boolean;
+  /** Whether the session may change patient data too; as `mayRead` when left out. */
+  readonly mayChange?: boolean;
   readonly responses?: Record<string, unknown>;
+  readonly writes?: Record<string, unknown>;
   readonly projects?: ReadonlyArray<Project>;
   readonly threadTitles?: Record<string, string>;
   readonly routeThreadRef?: ScopedThreadRef | null;
@@ -89,11 +119,14 @@ function setup(input: {
   Object.assign(state, {
     primaryEnvironmentId: input.primaryEnvironmentId,
     mayRead: input.mayRead,
+    mayChange: input.mayChange ?? input.mayRead,
     projects: input.projects ?? [],
     threadTitles: input.threadTitles ?? {},
     routeThreadRef: input.routeThreadRef ?? null,
     responses: input.responses ?? {},
     requests: [],
+    writes: input.writes ?? {},
+    sent: [],
     openDraft,
   });
   // The queries outlive a test, so what an earlier one loaded must not answer for this one.
@@ -140,7 +173,9 @@ function home(id: string, urn: string | null, more: Partial<MedPatientHome> = {}
 function inApp(children: ReactNode) {
   return (
     <AppAtomRegistryProvider>
-      <SidebarProvider>{children}</SidebarProvider>
+      <ToastProvider timeout={0}>
+        <SidebarProvider>{children}</SidebarProvider>
+      </ToastProvider>
     </AppAtomRegistryProvider>
   );
 }
@@ -206,6 +241,8 @@ it("starts a chat that names the patient by URN, and links nothing", async () =>
             date: "2026-11-06",
             summary: "LDL saved as a draft",
             needsYou: "",
+            draftLabs: 0,
+            draftPlans: 0,
           },
         ],
         threads: [
@@ -275,6 +312,7 @@ function lab(fields: Partial<MedLab> & Pick<MedLab, "id" | "collected">): MedLab
     changeUnit: null,
     notCompared: null,
     noteId: "note-1",
+    revisions: [],
     ...fields,
   };
 }
@@ -454,6 +492,7 @@ it("keeps what is coming up apart from the history, and marks each lab line", as
             due: "2027-01-10",
             type: "lab",
             status: "planned",
+            doneOn: null,
           },
           {
             id: "plan-done",
@@ -462,6 +501,7 @@ it("keeps what is coming up apart from the history, and marks each lab line", as
             due: "2026-08-20",
             type: "imaging",
             status: "done",
+            doneOn: "2026-08-20",
           },
         ],
       },
@@ -624,4 +664,260 @@ it("offers no patient surface, and draws no record, for a chat with no linked pa
   // A record an earlier test left loaded may be read again; none is drawn for this chat.
   await expect.element(screen.getByText("Ni Made Suartini")).not.toBeInTheDocument();
   await expect.element(screen.getByRole("table")).not.toBeInTheDocument();
+});
+
+const CORRECTED: MedPatientRecord = {
+  ...RECORD,
+  patient: { ...RECORD.patient, id: "p-fix" },
+  labs: [
+    RECORD.labs[0]!,
+    {
+      ...RECORD.labs[1]!,
+      revisions: [
+        {
+          testAsWritten: "LDL",
+          value: 33.1,
+          valueText: "33.1",
+          unit: "mmol/L",
+          referenceRange: "",
+          flag: null,
+          collected: "2026-09-18",
+          status: "verified",
+          replacedAt: "2026-09-20T03:00:00.000Z",
+        },
+      ],
+    },
+  ],
+  plans: [
+    {
+      id: "plan-1",
+      patientId: "p-fix",
+      title: "Repeat lipid panel",
+      due: "2027-01-10",
+      type: "lab",
+      status: "planned",
+      doneOn: null,
+    },
+  ],
+};
+
+it("removes a result at once, puts it back from the toast, and shows what a correction replaced", async () => {
+  const linked = scopeThreadRef(PRIMARY, ThreadId.make("thread-fix"));
+  setup({
+    primaryEnvironmentId: PRIMARY,
+    mayRead: true,
+    routeThreadRef: linked,
+    responses: {
+      "/api/med/threads/thread-fix/patient": { patient: { id: "p-fix", name: "Ni Made Suartini" } },
+      "/api/med/patients/p-fix/record": CORRECTED,
+    },
+    writes: { "PUT /api/med/labs/l2/removed": { body: { removed: true } } },
+  });
+  await using screen = await render(
+    inApp(<MedSurfaceContent surface={medSurface("med-labs")} threadRef={linked} />),
+  );
+
+  const results = screen.getByRole("table", { name: "Results of LDL cholesterol" });
+  await expect.element(results.getByText(/^Was 33\.1 mmol\/L, corrected 20 Sep/)).toBeVisible();
+
+  await screen.getByRole("button", { name: /^Actions for LDL cholesterol, 18 Sep/ }).click();
+  // A corrected draft: it can be verified, corrected again, taken back a step, or removed.
+  await expect.element(page.getByRole("menuitem").first()).toBeVisible();
+  expect(
+    page
+      .getByRole("menuitem")
+      .elements()
+      .map((item) => item.textContent),
+  ).toEqual(["Verify", "Correct…", "Undo last correction", "Remove"]);
+  await page.getByRole("menuitem", { name: "Remove" }).click();
+
+  await expect.element(page.getByText("Removed LDL cholesterol 3.31 mmol/L")).toBeVisible();
+  await page.getByRole("button", { name: "Undo" }).click();
+  await expect.element(page.getByText("Put back LDL cholesterol 3.31 mmol/L")).toBeVisible();
+  expect(state.sent).toEqual([
+    ["PUT /api/med/labs/l2/removed", { removed: true }],
+    ["PUT /api/med/labs/l2/removed", { removed: false }],
+  ]);
+});
+
+it("corrects a result from its row, and keeps the form open on what the server refuses", async () => {
+  const linked = scopeThreadRef(PRIMARY, ThreadId.make("thread-fix"));
+  setup({
+    primaryEnvironmentId: PRIMARY,
+    mayRead: true,
+    routeThreadRef: linked,
+    responses: {
+      "/api/med/threads/thread-fix/patient": { patient: { id: "p-fix", name: "Ni Made Suartini" } },
+      "/api/med/patients/p-fix/record": CORRECTED,
+    },
+    writes: {
+      "PATCH /api/med/labs/l1": [
+        {
+          status: 422,
+          body: { _tag: "MedRefusedError", reason: "unit must not be blank." },
+        },
+        { body: { ...CORRECTED.labs[0], value: 152, valueText: "152" } },
+      ],
+    },
+  });
+  await using screen = await render(
+    inApp(<MedSurfaceContent surface={medSurface("med-labs")} threadRef={linked} />),
+  );
+
+  await screen.getByRole("button", { name: /^Actions for LDL cholesterol, 21 Aug/ }).click();
+  await page.getByRole("menuitem", { name: "Correct…" }).click();
+  const dialog = page.getByRole("dialog", { name: "Correct this result" });
+  // The form opens on what the result says, and the number follows a plainly written one.
+  await expect.element(dialog.getByLabelText("Result as written")).toHaveValue("162");
+  await userEvent.fill(dialog.getByLabelText("Result as written"), "152");
+  await expect.element(dialog.getByLabelText("Number")).toHaveValue("152");
+
+  await dialog.getByRole("button", { name: "Save correction" }).click();
+  await expect.element(dialog.getByRole("alert")).toHaveTextContent("unit must not be blank.");
+  await dialog.getByRole("button", { name: "Save correction" }).click();
+
+  await expect.element(page.getByText(/^Corrected LDL cholesterol\. It is a draft/)).toBeVisible();
+  await expect.element(dialog).not.toBeInTheDocument();
+  // Only what changed is sent, twice: once refused and once taken.
+  const change = ["PATCH /api/med/labs/l1", { value: 152, valueText: "152" }];
+  expect(state.sent).toEqual([change, change]);
+});
+
+it("closes a plan and reopens it from the toast, and changes nothing without the scope", async () => {
+  const linked = scopeThreadRef(PRIMARY, ThreadId.make("thread-fix"));
+  const answers = {
+    primaryEnvironmentId: PRIMARY,
+    mayRead: true,
+    routeThreadRef: linked,
+    responses: {
+      "/api/med/threads/thread-fix/patient": { patient: { id: "p-fix", name: "Ni Made Suartini" } },
+      "/api/med/patients/p-fix/record": CORRECTED,
+    },
+    writes: {
+      "PATCH /api/med/plans/plan-1": { body: { ...CORRECTED.plans[0], status: "done" } },
+    },
+  };
+  setup({ ...answers, mayChange: false });
+  await using screen = await render(
+    inApp(<MedSurfaceContent surface={medSurface("med-plan")} threadRef={linked} />),
+  );
+
+  // A session that may only read is offered no control at all.
+  await expect.element(screen.getByText("Repeat lipid panel")).toBeVisible();
+  await expect
+    .element(screen.getByRole("button", { name: /^Actions for/ }))
+    .not.toBeInTheDocument();
+
+  setup(answers);
+  await screen.rerender(
+    inApp(<MedSurfaceContent surface={medSurface("med-plan")} threadRef={linked} />),
+  );
+  await screen.getByRole("button", { name: "Actions for Repeat lipid panel" }).click();
+  await page.getByRole("menuitem", { name: "Mark done" }).click();
+  await expect.element(page.getByText("Marked done: Repeat lipid panel")).toBeVisible();
+  await page.getByRole("button", { name: "Undo" }).click();
+  await expect.element(page.getByText("Repeat lipid panel is open again")).toBeVisible();
+  expect(state.sent).toEqual([
+    ["PATCH /api/med/plans/plan-1", { status: "done" }],
+    ["PATCH /api/med/plans/plan-1", { status: "open" }],
+  ]);
+});
+
+it("verifies everything from one note on Needs you", async () => {
+  const waiting = {
+    id: "note-1",
+    threadId: "thread-filed",
+    title: "Labs 6 Nov",
+    date: "2026-11-06",
+    summary: "",
+    needsYou: "",
+    draftLabs: 2,
+    draftPlans: 1,
+  };
+  setup({
+    primaryEnvironmentId: PRIMARY,
+    mayRead: true,
+    responses: {
+      "/api/med/needs-you": {
+        inbox: [],
+        patients: [
+          {
+            patient: home("p-wait", "00-12-34-56").patient,
+            draftLabs: 2,
+            draftPlans: 1,
+            notes: [
+              waiting,
+              { ...waiting, id: "note-2", title: "Asked", draftLabs: 0, draftPlans: 0 },
+            ],
+          },
+        ],
+      },
+    },
+    writes: {
+      "POST /api/med/notes/note-1/verify": {
+        body: { labsVerified: 2, plansPlanned: 1, patientActivated: false },
+      },
+    },
+  });
+  await using screen = await render(inApp(<NeedsYouPage />));
+
+  // Only a note that holds drafts has anything to verify; the row still opens its chat.
+  await expect.element(screen.getByRole("link", { name: /Labs 6 Nov/ })).toBeVisible();
+  expect(screen.getByRole("button", { name: /^Verify / }).elements()).toHaveLength(1);
+  await screen
+    .getByRole("button", { name: "Verify 2 draft labs, 1 draft plan from Labs 6 Nov" })
+    .click();
+
+  await expect
+    .element(page.getByText("Verified 2 results and 1 plan from Labs 6 Nov"))
+    .toBeVisible();
+  expect(state.sent).toEqual([["POST /api/med/notes/note-1/verify", null]]);
+});
+
+it("edits a patient from their page, says whose URN is taken, and archives with an undo", async () => {
+  const patient = home("p-edit", "00-12-34-56").patient;
+  setup({
+    primaryEnvironmentId: PRIMARY,
+    mayRead: true,
+    responses: {
+      "/api/med/patients/p-edit": home("p-edit", "00-12-34-56"),
+      "/api/med/patients/p-edit/record": {
+        ...RECORD,
+        patient: { ...patient, diagnoses: "Ischemic stroke", alsoWrittenAs: ["Bu Made"] },
+      },
+    },
+    writes: {
+      "PATCH /api/med/patients/p-edit": [
+        {
+          status: 409,
+          body: { _tag: "MedUrnTakenError", patientId: "p-other", patientName: "I Wayan Sudarma" },
+        },
+        { body: { ...patient, diagnoses: "Ischemic stroke", status: "archived" } },
+        { body: { ...patient, diagnoses: "Ischemic stroke" } },
+      ],
+    },
+  });
+  await using screen = await render(inApp(<PatientHomePage patientId="p-edit" />));
+
+  await screen.getByRole("button", { name: "Edit details" }).click();
+  const dialog = page.getByRole("dialog", { name: "Edit patient details" });
+  // The diagnoses come from the patient's record: the page itself is not sent them.
+  await expect.element(dialog.getByLabelText("Diagnoses")).toHaveValue("Ischemic stroke");
+  await expect.element(dialog.getByLabelText("Also written as")).toHaveValue("Bu Made");
+  await userEvent.fill(dialog.getByLabelText("URN"), "00-45-67-89");
+  await dialog.getByRole("button", { name: "Save" }).click();
+  await expect
+    .element(dialog.getByRole("alert"))
+    .toHaveTextContent("This URN belongs to I Wayan Sudarma. Nothing was changed.");
+  await dialog.getByRole("button", { name: "Cancel" }).click();
+
+  await screen.getByRole("button", { name: "Archive" }).click();
+  await expect.element(page.getByText("Archived Ni Made Suartini")).toBeVisible();
+  await page.getByRole("button", { name: "Undo" }).click();
+  await expect.element(page.getByText("Ni Made Suartini is no longer archived")).toBeVisible();
+  expect(state.sent).toEqual([
+    ["PATCH /api/med/patients/p-edit", { urn: "00-45-67-89" }],
+    ["PATCH /api/med/patients/p-edit", { status: "archived" }],
+    ["PATCH /api/med/patients/p-edit", { status: "active" }],
+  ]);
 });
