@@ -13,15 +13,21 @@ describe("the T3 Med switch", () => {
     // Upstream's own list after the gate. A row upstream adds shows up here to be decided on,
     // and a coding row whose id upstream changes would slip back in and fail this.
     expect(THREAD_DETAILS_ITEMS.map((item) => item.id)).toEqual([
-      "environment",
-      "servers",
       "automations",
       "lineage",
       "sideChats",
       "usage",
       "context",
     ]);
-    for (const id of ["openIn", "scripts", "branch", "gitActions", "changes"]) {
+    for (const id of [
+      "environment",
+      "openIn",
+      "scripts",
+      "branch",
+      "gitActions",
+      "changes",
+      "servers",
+    ]) {
       expect(showsThreadDetailsItem(id)).toBe(false);
     }
     expect(showsThreadDetailsItem("sideChats")).toBe(true);

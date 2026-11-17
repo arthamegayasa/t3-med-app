@@ -13,6 +13,7 @@ import { splitTransferredFiles } from "../chat/workspaceFileDrop";
 import { setFileDragActive } from "../Sidebar.logic";
 import { toastManager } from "../ui/toast";
 import { stackedThreadToast } from "../ui/toastHelpers";
+import { T3MED } from "../../med/t3med";
 
 const isActivationPlatform = Schema.is(DesktopAppActivationPlatform);
 
@@ -105,8 +106,8 @@ export function SidebarFolderDrop(props: { children: ReactNode }) {
         event.preventDefault();
         setActive(false);
         const { files, folders } = splitTransferredFiles(event.dataTransfer);
-        if (folders.length > 0) void addFolders(folders);
-        if (files.length > 0 && !claimedByRow) {
+        if (folders.length > 0 && !T3MED) void addFolders(folders);
+        if (files.length > 0 && !claimedByRow && !T3MED) {
           toastManager.add(
             stackedThreadToast({
               type: "info",
@@ -118,7 +119,7 @@ export function SidebarFolderDrop(props: { children: ReactNode }) {
       }}
     >
       {props.children}
-      {isActive ? (
+      {isActive && !T3MED ? (
         <div
           aria-hidden
           className="pointer-events-none absolute inset-1.5 z-30 flex flex-col items-center justify-center gap-2 rounded-lg px-4 text-center bg-sidebar/90 text-sm text-sidebar-foreground ring-1 ring-inset ring-primary/70"

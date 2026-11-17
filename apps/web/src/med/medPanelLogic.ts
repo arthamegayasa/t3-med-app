@@ -331,7 +331,6 @@ export interface SurfaceAction {
 // The upstream surfaces a doctor still uses, by the id `RightPanelTabs` gives them, with the
 // key each takes here. Summary takes S, so the side chat moves to C.
 const KEPT_UPSTREAM_SURFACES: Readonly<Record<string, string | null>> = {
-  files: null,
   "side-chat": "C",
 };
 

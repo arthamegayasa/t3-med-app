@@ -364,7 +364,6 @@ function RightPanelEmptyState(props: {
       onClick: props.onAddTerminal,
     },
     {
-      id: "files",
       label: "Files",
       icon: Files,
       shortcut: "F",
@@ -1125,7 +1124,6 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       onClick: props.onAddTerminal,
     },
     {
-      id: "files",
       label: "Files",
       icon: Files,
       shortcut: "F",

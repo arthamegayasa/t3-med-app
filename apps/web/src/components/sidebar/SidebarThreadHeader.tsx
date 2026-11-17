@@ -11,6 +11,7 @@ import { cn } from "~/lib/utils";
 import { Button } from "../ui/button";
 import { SidebarInput, SidebarMenuButton } from "../ui/sidebar";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { T3MED } from "../../med/t3med";
 
 export interface SidebarThreadHeaderProps {
   hasProjects: boolean;
@@ -97,7 +98,7 @@ export function SidebarThreadHeader({
         ) : null}
       </div>
       <div className="flex shrink-0 items-center">
-        {hasProjects ? (
+        {hasProjects && !T3MED ? (
           <>
             {projectScope}
             <SidebarHeaderIconButton label="Add project" onClick={onNewProject}>

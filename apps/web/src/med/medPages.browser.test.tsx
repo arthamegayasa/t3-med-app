@@ -625,7 +625,7 @@ function RealLauncher() {
   );
 }
 
-it("keeps Files and Side chat of upstream's own launcher, and says why a patient surface is off", async () => {
+it("keeps only Side chat of upstream's own launcher, and says why a patient surface is off", async () => {
   const unlinked = scopeThreadRef(PRIMARY, ThreadId.make("thread-launcher"));
   setup({
     primaryEnvironmentId: PRIMARY,
@@ -640,12 +640,13 @@ it("keeps Files and Side chat of upstream's own launcher, and says why a patient
   await expect
     .element(launcher.getByRole("note"))
     .toHaveTextContent("No patient is linked to this chat yet. Give the chat the patient's URN.");
-  // Files and Side chat are kept by the ids the fork gives upstream's rows: if a merge drops
-  // an id, or upstream stops offering the row, this list is what changes.
+  // Side chat is kept by the id the fork gives upstream's row: if a merge drops the id, or
+  // upstream stops offering the row, this list is what changes. Files, Terminal, Diff, Browser,
+  // Device and the pull request rows are upstream's and not listed.
   expect(launcher.element().textContent).toMatch(
-    /^Open a surfaceSummaryS\s*LabsL\s*PlanP\s*TimelineT\s*No patient is linked[^F]*FilesF\s*Side chatC$/,
+    /^Open a surfaceSummaryS\s*LabsL\s*PlanP\s*TimelineT\s*No patient is linked[^F]*Side chatC$/,
   );
-  expect(launcher.element().getAttribute("data-surface-launcher-keys")).toBe("FC");
+  expect(launcher.element().getAttribute("data-surface-launcher-keys")).toBe("C");
 });
 
 it("offers no patient surface, and draws no record, for a chat with no linked patient", async () => {

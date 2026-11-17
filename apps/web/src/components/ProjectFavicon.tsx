@@ -12,6 +12,7 @@ import { deriveProjectIdentity } from "../projectIdentity";
 import { projectIconColorClassName } from "../projectIconColors";
 import { ProjectMonogram } from "./ProjectMonogram";
 import { cn } from "~/lib/utils";
+import { T3MED } from "~/med/t3med";
 
 // All lucide icons load as one chunk, only once a project uses a lucide override.
 const LucideProjectIcon = lazy(() =>
@@ -38,6 +39,7 @@ export function ProjectFavicon(input: {
   fallbackIcon?: ComponentType<{ className?: string }>;
 }) {
   const { project } = input;
+  if (T3MED) return null;
   if (project.projectIcon?.kind === "monogram") {
     return (
       <ProjectMonogram

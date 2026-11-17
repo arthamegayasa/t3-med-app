@@ -44,6 +44,7 @@ import { textDirection } from "~/textDirection";
 import { useClientSettings } from "../../hooks/useSettings";
 import { GuestShareIndicator } from "./GuestShareControls";
 import { MedThreadPatientCrumb } from "../../med/MedThreadPatientCrumb";
+import { T3MED } from "../../med/t3med";
 
 interface ChatHeaderProps {
   activeThreadEnvironmentId: EnvironmentId;
@@ -219,7 +220,7 @@ export const ChatHeader = memo(function ChatHeader({
   };
   const handleHeaderContextMenu = (event: ReactMouseEvent) => {
     if (renamingTitle !== null) return;
-    if (!isServerThread && onOpenProjectSettings === undefined) return;
+    if (!isServerThread && (T3MED || onOpenProjectSettings === undefined)) return;
     event.preventDefault();
     if (!isServerThread) {
       const api = readLocalApi();
@@ -260,7 +261,7 @@ export const ChatHeader = memo(function ChatHeader({
         ariaLabel="Thread breadcrumb"
         className="flex-1 overflow-clip [overflow-clip-margin:2px]"
       >
-        {activeProject ? (
+        {activeProject && !T3MED ? (
           <>
             <WorkspaceBreadcrumbItem className="shrink">
               <Tooltip>

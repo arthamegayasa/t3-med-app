@@ -134,6 +134,8 @@ import { isCommandPaletteOpen, openCommandPalette } from "../commandPaletteBus";
 import { registerSettleAndAdvance } from "../settleAndAdvance";
 import { startNewThreadFromContext } from "../lib/chatThreadActions";
 import { MedSidebarNav } from "../med/MedSidebarNav";
+import { patientProjectNames } from "../med/medHidden";
+import { T3MED } from "../med/t3med";
 import { useClientSettings } from "../hooks/useSettings";
 import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
 import { useLocalStorage } from "../hooks/useLocalStorage";
@@ -844,7 +846,7 @@ function useSidebarLookups() {
     environmentLabelById,
     providerEntriesByEnvironment,
     projectByKey,
-    projectDisplayNameByKey,
+    projectDisplayNameByKey: patientProjectNames(projectDisplayNameByKey),
     projectGroupByScopeKey,
     projectScopeItems,
   };
@@ -3291,7 +3293,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
             0 &&
           (settledCount === 0 || scopedProjectGroups.length > 0) ? (
             <div className="flex flex-col items-center gap-2 px-2 py-6 text-center text-xs text-muted-foreground/60">
-              {projects.length === 0 ? (
+              {projects.length === 0 && !T3MED ? (
                 <>
                   <span>No projects yet</span>
                   <button

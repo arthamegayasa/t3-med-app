@@ -492,14 +492,13 @@ describe("patientLauncherActions", () => {
     action("Timeline", "T"),
   ];
 
-  it("puts the patient surfaces first and keeps only Files and Side chat of the coding ones", () => {
+  it("puts the patient surfaces first and keeps only Side chat of upstream's", () => {
     const actions = patientLauncherActions(upstream, patient, true);
     expect(actions.map((entry) => [entry.label, entry.shortcut])).toEqual([
       ["Summary", "S"],
       ["Labs", "L"],
       ["Plan", "P"],
       ["Timeline", "T"],
-      ["Files", "F"],
       ["Side chat", "C"],
     ]);
     // One key opens one surface.
@@ -510,12 +509,9 @@ describe("patientLauncherActions", () => {
     const renamed = [action("Documents", "F", "files"), action("Ask aside", "S", "side-chat")];
     expect(
       patientLauncherActions(renamed, [], true).map((entry) => [entry.label, entry.shortcut]),
-    ).toEqual([
-      ["Documents", "F"],
-      ["Ask aside", "C"],
-    ]);
+    ).toEqual([["Ask aside", "C"]]);
     // A row that only has a kept row's label is not kept.
-    expect(patientLauncherActions([action("Files", "F")], [], true)).toEqual([]);
+    expect(patientLauncherActions([action("Side chat", "S")], [], true)).toEqual([]);
   });
 
   it("leaves upstream's launcher alone when the fork switch is off", () => {
