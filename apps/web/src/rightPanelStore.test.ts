@@ -15,6 +15,7 @@ import {
   selectThreadRightPanelState,
   useRightPanelStore,
 } from "./rightPanelStore";
+import { T3MED } from "./med/t3med";
 
 const refA = scopeThreadRef("env-1" as EnvironmentId, ThreadId.make("thread-A"));
 const refB = scopeThreadRef("env-1" as EnvironmentId, ThreadId.make("thread-B"));
@@ -705,7 +706,8 @@ describe("rightPanelStore", () => {
     });
   });
 
-  it("closes the popover atomically when the real right panel opens", () => {
+  // T3 Med starts with the thread details card closed (docs/t3-med/FORK.md).
+  it.skipIf(T3MED)("closes the popover atomically when the real right panel opens", () => {
     useRightPanelStore.getState().setThreadPanelOpen(refA, "popover", true);
     useRightPanelStore.getState().open(refA, "diff");
 

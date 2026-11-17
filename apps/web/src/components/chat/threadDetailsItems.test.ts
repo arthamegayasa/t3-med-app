@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
+import { T3MED } from "../../med/t3med";
+
 import {
   resolveThreadDetailsVisibility,
   setThreadDetailsItem,
@@ -9,7 +11,9 @@ import {
 const usage = THREAD_DETAILS_ITEMS.find((item) => item.id === "usage")!;
 const servers = THREAD_DETAILS_ITEMS.find((item) => item.id === "servers")!;
 
-describe("thread details items", () => {
+// T3 Med leaves the Environment and Servers rows these cases use out of the list
+// (docs/t3-med/FORK.md); `med/t3med.test.ts` covers the list that remains.
+describe.skipIf(T3MED)("thread details items", () => {
   it.each([
     { legacy: false, items: {}, usage: false, context: false },
     { legacy: true, items: {}, usage: true, context: true },

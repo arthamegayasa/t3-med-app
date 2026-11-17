@@ -2,6 +2,7 @@ import { EnvironmentId } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import type { toastManager } from "./ui/toast";
+import { T3MED } from "../med/t3med";
 
 const { add, update, openExternal, commands, starred, page } = vi.hoisted(() => ({
   add: vi.fn<typeof toastManager.add>(),
@@ -80,7 +81,8 @@ async function startSession() {
 // The toast's handlers ignore their click event.
 const click = (props: unknown) => (props as { onClick: () => unknown }).onClick();
 
-describe("recordPromptSent", () => {
+// T3 Med never asks a doctor to star upstream's repository (docs/t3-med/FORK.md).
+describe.skipIf(T3MED)("recordPromptSent", () => {
   vi.useFakeTimers();
 
   it("asks only after the focused page is idle", async () => {
