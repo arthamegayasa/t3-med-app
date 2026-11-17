@@ -91,7 +91,7 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
       className="flex h-full shrink-0 items-center gap-1 [-webkit-app-region:no-drag]"
       data-panel-layout-controls
     >
-      {showThreadPanelControl ? threadPanelControl : null}
+      {showThreadPanelControl && !T3MED ? threadPanelControl : null}
       {showTerminalControl && !T3MED ? (
         <Tooltip>
           <TooltipTrigger render={<span className="flex shrink-0" />}>

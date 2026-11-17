@@ -7,7 +7,6 @@ import { render } from "../../../test/render";
 import { TYPOGRAPHY_ADVANCED_STORAGE_KEY } from "../../appearanceFonts";
 import { getLocalStorageItem, removeLocalStorageItem } from "../../hooks/useLocalStorage";
 import { TypographySection } from "./TypographySettings";
-import { T3MED } from "../../med/t3med";
 
 const state = vi.hoisted(() => ({ searchTargetId: null as string | null }));
 
@@ -34,9 +33,7 @@ function setup(searchTargetId: string | null) {
 }
 
 describe("TypographySection", () => {
-  // T3 Med has no Terminal font row (docs/t3-med/FORK.md).
-  // oxfmt-ignore
-  it.skipIf(T3MED)("persists the advanced flag the terminal reads when a deep link targets an advanced row", async () => {
+  it("persists the advanced flag the terminal reads when a deep link targets an advanced row", async () => {
     using _storage = setup("terminal-font");
     await using screen = await render(<TypographySection />);
 

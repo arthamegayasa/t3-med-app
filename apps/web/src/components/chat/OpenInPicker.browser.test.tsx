@@ -70,7 +70,6 @@ import {
   registerOpenFavoriteEditorCommand,
   useOpenFavoriteEditorShortcut,
 } from "./OpenInPickerShortcut";
-import { T3MED } from "../../med/t3med";
 
 const primary = EnvironmentId.make("primary");
 const selected = EnvironmentId.make("selected");
@@ -169,9 +168,7 @@ async function setup() {
 }
 
 describe("host editor access", () => {
-  // T3 Med drops the open-in-editor shortcut (docs/t3-med/FORK.md).
-  // oxfmt-ignore
-  it.skipIf(T3MED)("uses the selected grant for both the button and a retained shortcut", async () => {
+  it("uses the selected grant for both the button and a retained shortcut", async () => {
     await using fixture = await setup();
     const { renderPicker, byLabel, primaryButton, click, pressOpenFavorite } = fixture;
     state.allowed.add(selected);
@@ -227,9 +224,7 @@ describe("remote editor links", () => {
 });
 
 describe("open in editor announcement", () => {
-  // T3 Med drops the open-in-editor shortcut (docs/t3-med/FORK.md).
-  // oxfmt-ignore
-  it.skipIf(T3MED)("speaks only after the shortcut opened the editor, from the picker or the fallback", async () => {
+  it("speaks only after the shortcut opened the editor, from the picker or the fallback", async () => {
     await using fixture = await setup();
     const { screen, renderPicker, pressOpenFavorite, FavoriteEditorFallback } = fixture;
     state.allowed.add(selected);

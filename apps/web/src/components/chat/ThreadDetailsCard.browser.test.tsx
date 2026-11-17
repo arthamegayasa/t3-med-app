@@ -8,7 +8,6 @@ import { PopoverCreateHandle } from "../ui/popover";
 import { ChatCanvasContext } from "./ChatCanvasContext";
 import { resolveChatCanvasLayout } from "./chatCanvasLayout";
 import { ThreadDetailsCard } from "./ThreadDetailsCard";
-import { T3MED } from "../../med/t3med";
 
 const threadA: ScopedThreadRef = {
   environmentId: EnvironmentId.make("environment"),
@@ -167,8 +166,7 @@ it("reopens after a normal close", async () => {
   await expect.element(page.getByText("Details for thread-b")).toBeVisible();
 });
 
-// T3 Med starts with the thread details card closed (docs/t3-med/FORK.md).
-it.skipIf(T3MED)("returns to full density when hidden items make the content fit", async () => {
+it("returns to full density when hidden items make the content fit", async () => {
   using fixture = setup();
   await using screen = await render(<Card threadRef={threadB} inline fixture={fixture} rows={6} />);
   const card = page.getByRole("region", { name: "Thread details" });
@@ -178,8 +176,7 @@ it.skipIf(T3MED)("returns to full density when hidden items make the content fit
   await expect.element(card).toHaveAttribute("data-density", "full");
 });
 
-// T3 Med starts with the thread details card closed (docs/t3-med/FORK.md).
-it.skipIf(T3MED)("keeps full density when many automations make the content tall", async () => {
+it("keeps full density when many automations make the content tall", async () => {
   using fixture = setup();
   await using _screen = await render(
     <Card threadRef={threadB} inline fixture={fixture} rows={2} automationRows={6} />,
@@ -190,8 +187,7 @@ it.skipIf(T3MED)("keeps full density when many automations make the content tall
     .toHaveAttribute("data-density", "full");
 });
 
-// T3 Med starts with the thread details card closed (docs/t3-med/FORK.md).
-it.skipIf(T3MED)("stays full while expanded server rows overflow", async () => {
+it("stays full while expanded server rows overflow", async () => {
   using fixture = setup();
   await using _screen = await render(
     <Card threadRef={threadB} inline fixture={fixture} rows={2} serverOverflowRows={4} />,

@@ -47,7 +47,6 @@ import {
   type FakeDriver,
 } from "../../test/fakeEnvironment";
 import { act, fakeTimers, render } from "../../test/render";
-import { T3MED } from "../med/t3med";
 
 const PNG = Uint8Array.from(
   atob(
@@ -110,9 +109,7 @@ vi.mock(import("~/rpc/requestLatencyState"), async (original) => ({
   trackRpcRequestSent: () => {},
 }));
 
-// T3 Med's sidebar does not name the project this waits for (docs/t3-med/FORK.md).
-// oxfmt-ignore
-it.skipIf(T3MED)("a machine chip stashed in one thread restores with its machine in another", async () => {
+it("a machine chip stashed in one thread restores with its machine in another", async () => {
   const other = threadWithHistory("thread-stash-restore", 1);
   const asking = threadWithQuestion("thread-stash-question", "Which file should change?");
   using _environment = installFakeEnvironment([other, asking]);
@@ -224,9 +221,7 @@ it("a question that opens while a stashed file is checked keeps a machine stash"
   usePromptStashStore.getState().takeEntry("stash-late-question");
 });
 
-// T3 Med's sidebar does not name the project this waits for (docs/t3-med/FORK.md).
-// oxfmt-ignore
-it.skipIf(T3MED)("a new draft does not load its reserved thread before the server lists it", async () => {
+it("a new draft does not load its reserved thread before the server lists it", async () => {
   using _environment = installFakeEnvironment([]);
   using fetchSpy = vi.spyOn(globalThis, "fetch");
   __setClientSettingsForTests({
@@ -256,9 +251,7 @@ it.skipIf(T3MED)("a new draft does not load its reserved thread before the serve
   expect(threadRequests).toEqual([]);
 });
 
-// T3 Med's sidebar does not name the project this waits for (docs/t3-med/FORK.md).
-// oxfmt-ignore
-it.skipIf(T3MED)("an interrupted image-only first send of a new thread says it may not have been sent", async () => {
+it("an interrupted image-only first send of a new thread says it may not have been sent", async () => {
   using _environment = installFakeEnvironment([]);
   __setClientSettingsForTests({
     ...DEFAULT_CLIENT_SETTINGS,
@@ -392,8 +385,7 @@ it("retains each thread's diff selection when returning from another thread or S
   });
 });
 
-// T3 Med's sidebar does not name the project this waits for (docs/t3-med/FORK.md).
-it.skipIf(T3MED)("a stashed prompt ending in a file chip restores with the chip", async () => {
+it("a stashed prompt ending in a file chip restores with the chip", async () => {
   using _environment = installFakeEnvironment([]);
   __setClientSettingsForTests({
     ...DEFAULT_CLIENT_SETTINGS,
@@ -589,9 +581,7 @@ it("a mounted thread view lets go of the thread structures it has replaced", asy
   expect(kept).toEqual([]);
 });
 
-// T3 Med's launcher has no Files row to open (docs/t3-med/FORK.md).
-// oxfmt-ignore
-it.skipIf(T3MED)("a shortcut conditioned on rightPanelOpen sees the thread's open right panel", async () => {
+it("a shortcut conditioned on rightPanelOpen sees the thread's open right panel", async () => {
   await page.viewport(1280, 800);
   const thread = threadWithHistory("thread-panel-shortcut", 1);
   using _environment = installFakeEnvironment([thread], {

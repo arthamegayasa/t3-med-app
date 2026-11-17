@@ -7,19 +7,3 @@ export const T3MED: boolean = true;
 
 /** The word after the T3 mark in the sidebar. */
 export const BRAND_WORD = T3MED ? "Med" : "Code";
-
-// Machines, worktrees, editors, scripts, Git and dev servers have no place beside a patient; the
-// other rows are about the chat.
-const CODING_THREAD_DETAILS: ReadonlySet<string> = new Set([
-  "environment",
-  "openIn",
-  "scripts",
-  "branch",
-  "gitActions",
-  "changes",
-  "servers",
-]);
-
-/** Whether the thread details menu offers this row. */
-export const showsThreadDetailsItem = (id: string): boolean =>
-  !T3MED || !CODING_THREAD_DETAILS.has(id);

@@ -5,7 +5,6 @@ import { act, render } from "../../../test/render";
 import { SidebarProvider } from "../ui/sidebar";
 import { SettingsSidebarNav } from "./SettingsSidebarNav";
 import { SETTINGS_NAV_GROUPS, SETTINGS_SECTION_LABELS } from "./settingsSearch";
-import { T3MED } from "../../med/t3med";
 
 vi.mock("./useAvailableSettingsSearchItems", () => ({
   useAvailableSettingsSearchItems: () => [
@@ -72,8 +71,7 @@ it("opens search from the physical Slash and F keys on non-US layouts", async ()
   }
 });
 
-// T3 Med's Settings has no Code group and fewer pages (docs/t3-med/FORK.md).
-it.skipIf(T3MED)("moves Tab through every settings section", async () => {
+it("moves Tab through every settings section", async () => {
   await page.viewport(1280, 800);
   await using _screen = await renderNav();
   await userEvent.click(page.getByRole("combobox", { name: "Search settings" }));
@@ -91,9 +89,7 @@ it.skipIf(T3MED)("moves Tab through every settings section", async () => {
   expect(tabbed).toEqual(sections);
 });
 
-// T3 Med's Settings has no Code group and fewer pages (docs/t3-med/FORK.md).
-// oxfmt-ignore
-it.skipIf(T3MED).each([1280, 390])("names each group by a heading outside it at %ipx wide", async (width) => {
+it.each([1280, 390])("names each group by a heading outside it at %ipx wide", async (width) => {
   await page.viewport(width, 800);
   await using _screen = await renderNav();
 

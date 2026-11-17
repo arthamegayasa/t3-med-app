@@ -87,7 +87,6 @@ import { PopoverCreateHandle } from "../ui/popover";
 import { ChatCanvasContext } from "./ChatCanvasContext";
 import { resolveChatCanvasLayout } from "./chatCanvasLayout";
 import { ThreadDetailsPanel } from "./ThreadDetailsPanel";
-import { T3MED } from "../../med/t3med";
 
 const threadRef: ScopedThreadRef = {
   environmentId: EnvironmentId.make("environment"),
@@ -179,9 +178,7 @@ function Panel({ fixture }: { fixture: ReturnType<typeof setup> }) {
   );
 }
 
-// T3 Med's thread details have no workspace or pull request rows (docs/t3-med/FORK.md).
-// oxfmt-ignore
-it.skipIf(T3MED)("offers no git controls in a No project thread, but shows its linked pull request", async () => {
+it("offers no git controls in a No project thread, but shows its linked pull request", async () => {
   using fixture = setup({
     workspaceRoot: SCRATCH_ROOT,
     folder: `${SCRATCH_ROOT}/thread`,
@@ -194,9 +191,7 @@ it.skipIf(T3MED)("offers no git controls in a No project thread, but shows its l
     .not.toBeInTheDocument();
 });
 
-// T3 Med's thread details have no workspace or pull request rows (docs/t3-med/FORK.md).
-// oxfmt-ignore
-it.skipIf(T3MED)("shows a linked pull request in a folder that is not a git repository", async () => {
+it("shows a linked pull request in a folder that is not a git repository", async () => {
   using fixture = setup({
     workspaceRoot: "/work/plain",
     folder: "/work/plain",
@@ -208,9 +203,7 @@ it.skipIf(T3MED)("shows a linked pull request in a folder that is not a git repo
   await expect.element(page.getByRole("button", { name: "Initialize Git" })).toBeVisible();
 });
 
-// T3 Med's thread details have no workspace or pull request rows (docs/t3-med/FORK.md).
-// oxfmt-ignore
-it.skipIf(T3MED)("offers no Initialize Git before the server config says where No project lives", async () => {
+it("offers no Initialize Git before the server config says where No project lives", async () => {
   using fixture = setup({
     workspaceRoot: SCRATCH_ROOT,
     folder: `${SCRATCH_ROOT}/thread`,

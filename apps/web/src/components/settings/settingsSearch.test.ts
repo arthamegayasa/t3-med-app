@@ -20,7 +20,6 @@ import {
   sourceControlHostSettingsSearchId,
   type SettingsSearchItem,
 } from "./settingsSearch";
-import { T3MED } from "../../med/t3med";
 
 vi.mock("~/env", async (importOriginal) => ({
   ...(await importOriginal<typeof import("~/env")>()),
@@ -197,8 +196,7 @@ describe("searchSettings", () => {
     expect(ids(true)).toContain("welcome-page");
   });
 
-  // T3 Med names the copy shortcut Thread: Copy, so "copy link" finds nothing (docs/t3-med/FORK.md).
-  it.skipIf(T3MED)("finds keybinding commands by label, command id, and default key", () => {
+  it("finds keybinding commands by label, command id, and default key", () => {
     expect(searchSettings("toggle sidebar")[0]?.id).toBe("keybinding-sidebar.toggle");
     expect(searchSettings("sidebar.toggle")[0]?.id).toBe("keybinding-sidebar.toggle");
     expect(searchSettings("mod+b")[0]?.id).toBe("keybinding-sidebar.toggle");

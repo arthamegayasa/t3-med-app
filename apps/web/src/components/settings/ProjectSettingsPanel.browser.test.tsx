@@ -138,7 +138,6 @@ import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { assetEnvironment } from "../../state/assets";
 import { buildSidebarProjectSnapshots } from "../../sidebarProjectGrouping";
 import { ProjectSettingsPanel } from "./ProjectSettingsPanel";
-import { T3MED } from "../../med/t3med";
 import { ProjectsSettings } from "./ProjectsSettings";
 import { SettingsScopeProvider } from "./SettingsScopeContext";
 import { SettingsScopeNotice } from "./SettingsScopeNotice";
@@ -649,8 +648,7 @@ describe("project settings scope", () => {
   const primaryOption = () => page.getByRole("menuitemradio", { name: /^primary/ });
   const remoteOption = () => page.getByRole("menuitemradio", { name: /^remote/ });
 
-  // T3 Med hides the sentence that chooses a project and a machine (docs/t3-med/FORK.md).
-  it.skipIf(T3MED)("offers every environment while no project is selected", async () => {
+  it("offers every environment while no project is selected", async () => {
     setup();
     state.projects = state.projects.filter((project) => project.environmentId === primaryId);
     await using _screen = await mountSettings({});
@@ -687,8 +685,7 @@ describe("project settings scope", () => {
     );
   });
 
-  // T3 Med hides the sentence that chooses a project and a machine (docs/t3-med/FORK.md).
-  it.skipIf(T3MED)("offers only the selected project's checkout environments", async () => {
+  it("offers only the selected project's checkout environments", async () => {
     setup();
     state.projects = state.projects.filter((project) => project.environmentId === primaryId);
     await using _screen = await mountSettings({ project: projectKey() });
@@ -699,9 +696,7 @@ describe("project settings scope", () => {
     await expect.element(remoteOption()).not.toBeInTheDocument();
   });
 
-  // T3 Med hides the sentence that chooses a project and a machine (docs/t3-med/FORK.md).
-  // oxfmt-ignore
-  it.skipIf(T3MED)("reaches each checkout on one environment and returns to all of them", async () => {
+  it("reaches each checkout on one environment and returns to all of them", async () => {
     setup();
     const [first] = state.projects;
     state.projects = [
@@ -731,8 +726,7 @@ describe("project settings scope", () => {
     );
   });
 
-  // T3 Med hides the sentence that chooses a project and a machine (docs/t3-med/FORK.md).
-  it.skipIf(T3MED)("keeps an unknown project recoverable from any environment", async () => {
+  it("keeps an unknown project recoverable from any environment", async () => {
     setup();
     state.projects = state.projects.filter((project) => project.environmentId === primaryId);
     await using screen = await mountSettings({ project: "removed-project" });
@@ -749,8 +743,7 @@ describe("project settings scope", () => {
     );
   });
 
-  // T3 Med hides the sentence that chooses a project and a machine (docs/t3-med/FORK.md).
-  it.skipIf(T3MED).each([
+  it.each([
     [undefined, "This project has no checkout on this environment."],
     [
       "removed-checkout",

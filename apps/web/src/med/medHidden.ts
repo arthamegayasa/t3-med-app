@@ -37,6 +37,8 @@ const HIDDEN_SETTINGS_TARGETS: ReadonlySet<string> = new Set([
   "project-order",
   // Appearance
   "composer-context",
+  // The thread details card is not drawn (`MedThreadDetailsPanel.tsx`).
+  "thread-details-items",
   "environment-identification",
   "terminal-font",
   // Threads: the New projects section, and where a new thread's checkout starts
@@ -130,6 +132,8 @@ const HIDDEN_KEYBINDING_COMMANDS: ReadonlySet<string> = new Set([
   "composer.previousWorktree",
   "composer.branch",
   "chat.newWithoutProject",
+  // The thread details card is not drawn.
+  "threadPanel.toggle",
 ]);
 
 /** Whether a shortcut command belongs to a hidden control, so its keys must do nothing. */
@@ -248,7 +252,7 @@ const NO_PROJECT_NAMES: ReadonlyMap<string, string> = new Map();
 const PATIENT_WORDING: Readonly<Record<string, string>> = {
   "Search commands, projects, and threads...": "Search commands and threads...",
   "No matching commands, projects, or threads.": "No matching commands or threads.",
-  "Pull Request: Copy Link or Thread": "Thread: Copy",
+  "Pull Request: Copy Link or Thread": "Thread: Copy Link",
   "Default model for new threads, selected automatically. Projects can override it.":
     "Default model for new threads, selected automatically.",
   "Default model for new threads. Projects can override it.": "Default model for new threads.",

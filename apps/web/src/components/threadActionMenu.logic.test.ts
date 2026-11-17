@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import { buildThreadActionMenuItems, type ThreadActionMenuState } from "./threadActionMenu.logic";
-import { T3MED } from "../med/t3med";
 
 const baseState: ThreadActionMenuState = {
   canOperate: true,
@@ -66,9 +65,7 @@ describe("buildThreadActionMenuItems", () => {
     },
   );
 
-  // T3 Med has no Turn into project row (docs/t3-med/FORK.md).
-  // oxfmt-ignore
-  it.skipIf(T3MED)("disables archive and turning into a project while the thread is running", () => {
+  it("disables archive and turning into a project while the thread is running", () => {
     const items = buildThreadActionMenuItems({
       ...baseState,
       isRunning: true,

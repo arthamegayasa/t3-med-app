@@ -20,7 +20,6 @@ import { expect, it, vi } from "vite-plus/test";
 
 import "~/index.css";
 import { act, render } from "../../../test/render";
-import { T3MED } from "../../med/t3med";
 
 type SessionResult = AsyncResult.AsyncResult<AuthSessionState, Error>;
 type Project = { id: ProjectId; environmentId: EnvironmentId; workspaceRoot: string };
@@ -372,9 +371,7 @@ function setup() {
   return now;
 }
 
-// T3 Med's welcome page has no Projects section, phone step or version notice (docs/t3-med/FORK.md).
-// oxfmt-ignore
-it.skipIf(T3MED)("rechecks after project creation and can retry its history without recreating the project", async () => {
+it("rechecks after project creation and can retry its history without recreating the project", async () => {
   using _now = setup();
   const creation = deferred<void>();
   state.createProject.mockImplementationOnce(async (input: CreateProjectInput) => {
@@ -402,9 +399,7 @@ it.skipIf(T3MED)("rechecks after project creation and can retry its history with
   expect(state.onDone).toHaveBeenCalledOnce();
 });
 
-// T3 Med's welcome page has no Projects section, phone step or version notice (docs/t3-med/FORK.md).
-// oxfmt-ignore
-it.skipIf(T3MED)("completes accepted imports when permission is revoked after the final server write", async () => {
+it("completes accepted imports when permission is revoked after the final server write", async () => {
   using _now = setup();
   appAtomRegistry.set(candidatesAtom(), [candidate("/projects/first")]);
   const imported = deferred<{ importedCount: number; skippedCount: number }>();
@@ -424,9 +419,7 @@ it.skipIf(T3MED)("completes accepted imports when permission is revoked after th
   expect(state.onDone).toHaveBeenCalledOnce();
 });
 
-// T3 Med's welcome page has no Projects section, phone step or version notice (docs/t3-med/FORK.md).
-// oxfmt-ignore
-it.skipIf(T3MED)("finishes setup without landing when the imported project never reaches the client", async () => {
+it("finishes setup without landing when the imported project never reaches the client", async () => {
   using _now = setup();
   appAtomRegistry.set(candidatesAtom(), [candidate("/projects/first")]);
   // The server accepts the project, but it never shows up in the client's projects.
@@ -453,9 +446,7 @@ it.skipIf(T3MED)("finishes setup without landing when the imported project never
   );
 });
 
-// T3 Med's welcome page has no Projects section, phone step or version notice (docs/t3-med/FORK.md).
-// oxfmt-ignore
-it.skipIf(T3MED)("waits for a ready agent to start, and Start without an agent still finishes setup", async () => {
+it("waits for a ready agent to start, and Start without an agent still finishes setup", async () => {
   using _now = setup();
   appAtomRegistry.set(state.providers as Atom.Writable<ReadonlyArray<ServerProvider>>, []);
   await using _screen = await mountWelcome();
@@ -466,8 +457,7 @@ it.skipIf(T3MED)("waits for a ready agent to start, and Start without an agent s
   expect(state.createProject).toHaveBeenCalledTimes(2);
 });
 
-// T3 Med's welcome page has no Projects section, phone step or version notice (docs/t3-med/FORK.md).
-it.skipIf(T3MED)("blocks leaving the page until the imported projects have landed", async () => {
+it("blocks leaving the page until the imported projects have landed", async () => {
   using _now = setup();
   const creation = deferred<void>();
   state.createProject.mockImplementationOnce(async (input: CreateProjectInput) => {
@@ -517,9 +507,7 @@ it.skipIf(T3MED)("blocks leaving the page until the imported projects have lande
   expect(state.createProject).toHaveBeenCalledTimes(2);
 });
 
-// T3 Med's welcome page has no Projects section, phone step or version notice (docs/t3-med/FORK.md).
-// oxfmt-ignore
-it.skipIf(T3MED)("gives projects a later scan finds the default, unless the main box was unchecked", async () => {
+it("gives projects a later scan finds the default, unless the main box was unchecked", async () => {
   using _now = setup();
   await using _screen = await mountWelcome();
   // Turning on another agent rescans and finds a recent project the user has not seen.
@@ -542,9 +530,7 @@ it.skipIf(T3MED)("gives projects a later scan finds the default, unless the main
   await vi.waitFor(() => expect(button("Start").disabled).toBe(false));
 });
 
-// T3 Med's welcome page has no Projects section, phone step or version notice (docs/t3-med/FORK.md).
-// oxfmt-ignore
-it.skipIf(T3MED)("keeps the project choice across a visit to Settings until setup finishes", async () => {
+it("keeps the project choice across a visit to Settings until setup finishes", async () => {
   using _now = setup();
   {
     await using _first = await mountWelcome();
@@ -564,8 +550,7 @@ it.skipIf(T3MED)("keeps the project choice across a visit to Settings until setu
   expect(button("Import 2 projects and start").disabled).toBe(false);
 });
 
-// T3 Med's welcome page has no Projects section, phone step or version notice (docs/t3-med/FORK.md).
-it.skipIf(T3MED)("stays busy while setup saves after an import with nothing to open", async () => {
+it("stays busy while setup saves after an import with nothing to open", async () => {
   using _now = setup();
   appAtomRegistry.set(candidatesAtom(), [candidate("/projects/first")]);
   state.importThreads.mockResolvedValue(AsyncResult.success({ importedCount: 0, skippedCount: 1 }));
@@ -584,9 +569,7 @@ it.skipIf(T3MED)("stays busy while setup saves after an import with nothing to o
   expect(state.createProject).toHaveBeenCalledOnce();
 });
 
-// T3 Med's welcome page has no Projects section, phone step or version notice (docs/t3-med/FORK.md).
-// oxfmt-ignore
-it.skipIf(T3MED)("leaves projects already in T3 Code out of the default import, unless the box is checked", async () => {
+it("leaves projects already in T3 Code out of the default import, unless the box is checked", async () => {
   using _now = setup();
   const existing = ProjectId.make("existing");
   const justAdded = ProjectId.make("just-added");
@@ -614,9 +597,7 @@ it.skipIf(T3MED)("leaves projects already in T3 Code out of the default import, 
   expect(button("Import threads and start").disabled).toBe(false);
 });
 
-// T3 Med's welcome page has no Projects section, phone step or version notice (docs/t3-med/FORK.md).
-// oxfmt-ignore
-it.skipIf(T3MED)("keeps the started projects checked when the page opens again after a quit", async () => {
+it("keeps the started projects checked when the page opens again after a quit", async () => {
   using _now = setup();
   const imported = deferred<{ importedCount: number; skippedCount: number }>();
   state.importThreads.mockImplementationOnce(async () =>
@@ -637,8 +618,7 @@ it.skipIf(T3MED)("keeps the started projects checked when the page opens again a
   await vi.waitFor(() => expect(pageText()).toContain("Import 2 projects and their threads"));
 });
 
-// T3 Med's welcome page has no Projects section, phone step or version notice (docs/t3-med/FORK.md).
-it.skipIf(T3MED)("keeps the project controls when a later scan fails", async () => {
+it("keeps the project controls when a later scan fails", async () => {
   using _now = setup();
   await using _screen = await mountWelcome();
   state.scanError = "The scan timed out.";
@@ -663,9 +643,7 @@ it("keeps saved picks when Start comes before the project list loads", async () 
   expect(localStorage.getItem(welcomeImportSelectionKey(primaryId))).toBe(saved);
 });
 
-// T3 Med's welcome page has no Projects section, phone step or version notice (docs/t3-med/FORK.md).
-// oxfmt-ignore
-it.skipIf(T3MED)("offers Update for a signed-in agent whose version is broken, and keeps Start off", async () => {
+it("offers Update for a signed-in agent whose version is broken, and keeps Start off", async () => {
   using _now = setup();
   appAtomRegistry.set(state.providers as Atom.Writable<ReadonlyArray<ServerProvider>>, [
     {
@@ -775,9 +753,7 @@ it("starts without importing when this connection cannot import projects", async
   expect(state.createProject).not.toHaveBeenCalled();
 });
 
-// T3 Med's welcome page has no Projects section, phone step or version notice (docs/t3-med/FORK.md).
-// oxfmt-ignore
-it.skipIf(T3MED)("says the phone is set up only once this computer is shared with the signed-in account", async () => {
+it("says the phone is set up only once this computer is shared with the signed-in account", async () => {
   using _now = setup();
   state.cloud = true;
   state.auth = { isLoaded: true, isSignedIn: true, userId: "user_1" };

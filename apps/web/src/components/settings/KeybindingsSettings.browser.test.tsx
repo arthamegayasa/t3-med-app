@@ -36,7 +36,6 @@ vi.mock(import("./SettingsScopeContext"), async (original) => ({
 
 import { Dialog, DialogPopup, DialogTitle } from "../ui/dialog";
 import { KeybindingsSettingsPanel } from "./KeybindingsSettings";
-import { T3MED } from "../../med/t3med";
 
 // The modal dialog's inert layer swallows pointer events in this harness, so drive the DOM.
 async function activate(locator: Locator, action: "click" | "focus") {
@@ -125,9 +124,7 @@ it("Esc in the keybindings search clears the query without closing Settings", as
   expect(onOpenChange).not.toHaveBeenCalled();
 });
 
-// T3 Med lists no Terminal: Toggle shortcut (docs/t3-med/FORK.md).
-// oxfmt-ignore
-it.skipIf(T3MED)("re-enables Save when a When editor closes on an expression it could not parse", async () => {
+it("re-enables Save when a When editor closes on an expression it could not parse", async () => {
   await using screen = await render(
     <RegistryProvider>
       <KeybindingsSettingsPanel />

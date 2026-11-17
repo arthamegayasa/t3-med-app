@@ -11,7 +11,6 @@ import { removeLocalStorageItem } from "../hooks/useLocalStorage";
 import { makeThreadFixture } from "../test-fixtures";
 import type { Project, Thread } from "../types";
 import { CommandPalette } from "./CommandPalette";
-import { T3MED } from "../med/t3med";
 
 const entities = vi.hoisted(() => ({
   projects: [] as ReadonlyArray<Project>,
@@ -97,9 +96,7 @@ describe("CommandPalette open intents", () => {
     await expect.element(page.getByPlaceholder("Search...")).toHaveFocus();
   });
 
-  // T3 Med's palette has no New thread in... (docs/t3-med/FORK.md).
-  // oxfmt-ignore
-  it.skipIf(T3MED)("highlights the first project when New thread in... opens from the root list", async () => {
+  it("highlights the first project when New thread in... opens from the root list", async () => {
     const environmentId = EnvironmentId.make("local");
     const project = (id: string, title: string): Project => ({
       id: ProjectId.make(id),
@@ -132,8 +129,7 @@ describe("CommandPalette open intents", () => {
     await expect.element(page.getByRole("option").nth(1)).not.toHaveAttribute("data-highlighted");
   });
 
-  // T3 Med's palette lists no project to find (docs/t3-med/FORK.md).
-  it.skipIf(T3MED)("opens a search intent with its query in the focused input", async () => {
+  it("opens a search intent with its query in the focused input", async () => {
     setup();
     await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
 
