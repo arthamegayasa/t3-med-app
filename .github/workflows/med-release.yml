@@ -40,10 +40,16 @@ jobs:
       size: ${{ steps.verify.outputs.size }}
       sha256: ${{ steps.verify.outputs.sha256 }}
     steps:
+      # Without .repos, as upstream's own workflows check out: it holds reference copies of other
+      # repositories, with submodule entries that have no address, and no build reads it.
       - name: Checkout
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           persist-credentials: false
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
 
       # Upstream's own setup: Vite+, the Node.js and pnpm the repository pins, and `vp install`.
       - name: Setup dependencies
