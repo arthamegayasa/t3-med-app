@@ -29,7 +29,7 @@ jobs:
   build:
     name: Build the Windows installer
     runs-on: windows-2025
-    timeout-minutes: 90
+    timeout-minutes: 30
     permissions:
       contents: read
     outputs:
@@ -124,7 +124,7 @@ jobs:
     name: Publish the release
     needs: build
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 10
     permissions:
       # Creates the release and, for a manual run, its tag. Nothing else is written.
       contents: write
@@ -146,13 +146,21 @@ jobs:
         run: echo "$MED_SHA256  release/$MED_INSTALLER" | sha256sum --check
 
       # gh uploads the files to a draft and publishes it when they are all there, so an installed
-      # app never finds a release without its latest.yml.
+      # app never finds a release without its latest.yml. The app shows the list above the
+      # "Full changelog" fold as the update's "What's changed"; the rest is for the release page.
       - name: Publish the GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           cat > "$RUNNER_TEMP/notes.md" <<EOF
-          T3 Med $MED_VERSION for Windows (x64), built on T3 Code $MED_UPSTREAM.
+          - T3 Med $MED_VERSION for Windows (x64), built on T3 Code $MED_UPSTREAM.
+
+          <details>
+          <summary>Full changelog</summary>
+
+          $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/commits/$MED_TAG
+
+          </details>
 
           An installed T3 Med finds this release by itself and offers it from the update button in its sidebar. To install T3 Med for the first time, download \`$MED_INSTALLER\`.
 
