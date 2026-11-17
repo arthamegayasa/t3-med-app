@@ -1,12 +1,19 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
+import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as Migrator from "effect/sql/Migrator";
+import * as SqlClient from "effect/sql/SqlClient";
 
 import * as ServerConfig from "../config.ts";
 import * as MedDatabase from "./MedDatabase.ts";
+import Migration0001 from "./Migrations/001_PatientStore.ts";
+import Migration0002 from "./Migrations/002_ThreadPatientsByPatient.ts";
+import * as PatientStore from "./PatientStore.ts";
 
 const tableNames = Effect.gen(function* () {
   const sql = yield* MedDatabase.MedDatabase;
@@ -66,6 +73,97 @@ it.layer(NodeServices.layer)("MedDatabase", (it) => {
         return yield* sql<{ readonly name: string }>`SELECT name FROM patients`;
       }).pipe(Effect.provide(layer));
       assert.deepStrictEqual(names, [{ name: "Wayan" }]);
+    }),
+  );
+
+  it.effect("brings a file filed into before corrections existed up to date, rows intact", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3med-db-test-" });
+      const dbPath = path.join(directory, "t3med.sqlite");
+      const at = "2026-11-01T00:00:00.000Z";
+
+      // The file as the first two migrations left it, with a verified result and a plan in it.
+      yield* Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        yield* Migrator.make({})({
+          loader: Migrator.fromRecord({
+            "1_PatientStore": Migration0001,
+            "2_ThreadPatientsByPatient": Migration0002,
+          }),
+          table: "t3med_migrations",
+        });
+        yield* sql`
+          INSERT INTO patients (id, name, status, created_at, updated_at)
+          VALUES ('p1', 'Wayan', 'active', ${at}, ${at})
+        `;
+        yield* sql`
+          INSERT INTO lab_tests (id, name, test_id, created_at, updated_at)
+          VALUES ('t1', 'LDL', 'ldl', ${at}, ${at})
+        `;
+        yield* sql`
+          INSERT INTO notes (id, patient_id, thread_id, title, date, kind, created_at, updated_at)
+          VALUES ('n1', 'p1', 'thread-1', 'Labs', '2026-11-01', 'chat', ${at}, ${at})
+        `;
+        yield* sql`
+          INSERT INTO labs (
+            id, patient_id, lab_test_id, test_as_written, value, value_text, unit, collected,
+            status, is_baseline, source_note_id, created_at, updated_at
+          )
+          VALUES (
+            'l1', 'p1', 't1', 'LDL', 7.8, '7.8', 'mg/dL', '2026-11-01',
+            'verified', 1, 'n1', ${at}, ${at}
+          )
+        `;
+        yield* sql`
+          INSERT INTO plans (
+            id, patient_id, title, due, type, status, source_note_id, created_at, updated_at
+          )
+          VALUES ('pl1', 'p1', 'Clinic visit', '2026-11-25', 'follow_up', 'planned', 'n1', ${at}, ${at})
+        `;
+      }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: dbPath })));
+
+      yield* Effect.gen(function* () {
+        const store = yield* PatientStore.PatientStore;
+        const before = yield* store.getPatientRecord({ patientId: "p1" });
+        assert.deepStrictEqual(
+          before.labs.map((lab) => [
+            lab.id,
+            lab.valueText,
+            lab.status,
+            lab.isBaseline,
+            lab.revisions,
+          ]),
+          [["l1", "7.8", "verified", true, []]],
+        );
+        assert.deepStrictEqual(
+          before.plans.map((plan) => [plan.id, plan.status, plan.doneOn]),
+          [["pl1", "planned", null]],
+        );
+
+        // The ways back work on rows filed before there were any.
+        const corrected = yield* store.correctLab({ labId: "l1", value: 78, valueText: "78" });
+        assert.deepStrictEqual(
+          [corrected.valueText, corrected.status, corrected.revisions.map((was) => was.valueText)],
+          ["78", "draft", ["7.8"]],
+        );
+        const done = yield* store.updatePlan({
+          planId: "pl1",
+          status: "done",
+          doneOn: "2026-11-20",
+        });
+        assert.deepStrictEqual([done.status, done.doneOn], ["done", "2026-11-20"]);
+        yield* store.setRemoved({ row: "plan", id: "pl1", removed: true });
+        assert.lengthOf(yield* store.listPlans({ patientId: "p1" }), 0);
+      }).pipe(
+        Effect.provide(
+          PatientStore.layer.pipe(
+            Layer.provide(MedDatabase.layerFromPath(dbPath)),
+            Layer.provide(NodeCrypto.layer),
+          ),
+        ),
+      );
     }),
   );
 
