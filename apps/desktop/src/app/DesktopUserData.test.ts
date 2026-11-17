@@ -7,38 +7,27 @@ import * as PlatformError from "effect/PlatformError";
 
 import { clearStaleGpuCaches, resolveUserDataPath } from "./DesktopUserData.ts";
 
+// T3 Med: upstream copies `Local State` out of an older T3 Code profile here. Beside a real
+// T3 Code those folders are another application's, so the fork resolves its own and opens none.
 it.effect.each(["t3code", "T3 Code (Alpha)"])(
-  "preserves Windows credential keys from %s without copying browser databases",
+  "leaves the %s profile of T3 Code alone",
   (sourceName) =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-v2-profile-" });
       const source = path.join(directory, sourceName);
-      const destination = path.join(directory, "t3code-v2");
       const state = '{"os_crypt":{"encrypted_key":"test-encrypted-key"}}';
-      yield* fs.makeDirectory(path.join(directory, "T3 Code (Alpha)"), { recursive: true });
-      yield* fs.makeDirectory(path.join(source, "IndexedDB"), { recursive: true });
+      yield* fs.makeDirectory(source, { recursive: true });
       yield* fs.writeFileString(path.join(source, "Local State"), state);
-      yield* fs.writeFileString(path.join(source, "IndexedDB", "LOCK"), "V1 owns this database");
-      yield* resolveUserDataPath({
+      const userDataPath = yield* resolveUserDataPath({
         appDataDirectory: directory,
         isDevelopment: false,
         platform: "win32",
       });
-      assert.equal(yield* fs.readFileString(path.join(destination, "Local State")), state);
+      assert.equal(userDataPath, path.join(directory, "t3med"));
+      assert.deepEqual(yield* fs.readDirectory(directory), [sourceName]);
       assert.equal(yield* fs.readFileString(path.join(source, "Local State")), state);
-      assert.isFalse(yield* fs.exists(path.join(destination, "IndexedDB")));
-      yield* fs.writeFileString(path.join(destination, "Local State"), "existing V2 state");
-      yield* resolveUserDataPath({
-        appDataDirectory: directory,
-        isDevelopment: false,
-        platform: "win32",
-      });
-      assert.equal(
-        yield* fs.readFileString(path.join(destination, "Local State")),
-        "existing V2 state",
-      );
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 

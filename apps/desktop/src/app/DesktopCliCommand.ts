@@ -20,6 +20,7 @@ import { pathSetup, readUserLoginShell } from "@t3tools/shared/shell";
 import * as DesktopCliShim from "./DesktopCliShim.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import { makeComponentLogger } from "./DesktopObservability.ts";
+import { MED_KEEPS_OFF_PATH } from "../med/identity.ts";
 
 const { logInfo, logWarning } = makeComponentLogger("desktop-cli-command");
 
@@ -418,7 +419,8 @@ export const make = Effect.gen(function* () {
 
   const installOnFirstLaunch: DesktopCliCommand["Service"]["installOnFirstLaunch"] = Effect.gen(
     function* () {
-      if (!environment.isPackaged || (yield* exists(firstLaunchMarker))) return;
+      if (MED_KEEPS_OFF_PATH || !environment.isPackaged || (yield* exists(firstLaunchMarker)))
+        return;
       // Mark first so a failed or removed install is never retried behind the user's back.
       yield* fs.writeFileString(firstLaunchMarker, "");
       if (!freshInstall) {
