@@ -1,5 +1,6 @@
-import { EnvironmentId, ProjectId } from "@t3tools/contracts";
-import type { MedPatientHome } from "@t3tools/contracts/med";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { EnvironmentId, ProjectId, type ScopedThreadRef, ThreadId } from "@t3tools/contracts";
+import type { MedLab, MedPatientHome, MedPatientRecord } from "@t3tools/contracts/med";
 import type { ReactNode } from "react";
 import { expect, it, vi } from "vite-plus/test";
 
@@ -17,6 +18,7 @@ const state = vi.hoisted(() => ({
   mayRead: false,
   projects: [] as ReadonlyArray<unknown>,
   threadTitles: {} as Record<string, string>,
+  routeThreadRef: null as unknown,
   responses: {} as Record<string, unknown>,
   requests: [] as Array<string>,
   openDraft: (..._args: ReadonlyArray<unknown>): Promise<null> => Promise.resolve(null),
@@ -37,6 +39,10 @@ vi.mock(import("../state/entities"), async (importOriginal) => ({
     (ref !== null && ref.threadId in state.threadTitles
       ? { title: state.threadTitles[ref.threadId] }
       : null) as never,
+}));
+vi.mock(import("../hooks/useThreadRouteTarget"), async (importOriginal) => ({
+  ...(await importOriginal()),
+  useThreadRouteRef: () => state.routeThreadRef as never,
 }));
 vi.mock(import("../hooks/useHandleNewThread"), async (importOriginal) => ({
   ...(await importOriginal()),
@@ -59,8 +65,12 @@ vi.mock(import("../environments/primary/httpLayer"), async (importOriginal) => {
   };
 });
 
+import { selectThreadRightPanelState, useRightPanelStore } from "../rightPanelStore";
 import { refreshMedData } from "./medData";
 import { MedSidebarNav } from "./MedSidebarNav";
+import { MedSurfaceContent } from "./MedSurfaceContent";
+import { useMedSurfaceActions } from "./MedSurfaceLauncher";
+import { medSurface } from "./medSurfaces";
 import { MedThreadPatientCrumb } from "./MedThreadPatientCrumb";
 import { PatientHomePage } from "./PatientHomePage";
 
@@ -70,6 +80,7 @@ function setup(input: {
   readonly responses?: Record<string, unknown>;
   readonly projects?: ReadonlyArray<Project>;
   readonly threadTitles?: Record<string, string>;
+  readonly routeThreadRef?: ScopedThreadRef | null;
 }) {
   const openDraft = vi.fn((..._args: ReadonlyArray<unknown>) => Promise.resolve(null));
   Object.assign(state, {
@@ -77,6 +88,7 @@ function setup(input: {
     mayRead: input.mayRead,
     projects: input.projects ?? [],
     threadTitles: input.threadTitles ?? {},
+    routeThreadRef: input.routeThreadRef ?? null,
     responses: input.responses ?? {},
     requests: [],
     openDraft,
@@ -239,4 +251,152 @@ it("does not start a chat for a patient who has no URN, and says why", async () 
       "This patient has no URN yet, and a chat started here names them by URN.",
     );
   expect(openDraft).not.toHaveBeenCalled();
+});
+
+function lab(fields: Partial<MedLab> & Pick<MedLab, "id" | "collected">): MedLab {
+  return {
+    labTestId: "test-ldl",
+    testId: "ldl",
+    testName: "LDL cholesterol",
+    testAsWritten: "LDL",
+    value: null,
+    valueText: "",
+    unit: "mg/dL",
+    referenceRange: "",
+    flag: null,
+    status: "verified",
+    isBaseline: false,
+    valueInBaselineUnit: null,
+    changeFromBaseline: null,
+    changePercent: null,
+    changeUnit: null,
+    notCompared: null,
+    noteId: "note-1",
+    ...fields,
+  };
+}
+
+const RECORD: MedPatientRecord = {
+  patient: { ...home("p1", "00-12-34-56").patient, diagnoses: "Ischemic stroke" },
+  labs: [
+    lab({
+      id: "l1",
+      collected: "2026-08-21",
+      value: 162,
+      valueText: "162",
+      isBaseline: true,
+      notCompared: "first_result",
+    }),
+    // Written in mmol/L. The server says what it is in the baseline's unit; the page never works it out.
+    lab({
+      id: "l2",
+      collected: "2026-09-18",
+      value: 3.31,
+      valueText: "3.31",
+      unit: "mmol/L",
+      status: "draft",
+      valueInBaselineUnit: 128,
+      changeFromBaseline: -34,
+      changePercent: -21,
+      changeUnit: "mg/dL",
+    }),
+  ],
+  plans: [],
+  notes: [],
+};
+
+function Launcher() {
+  const actions = useMedSurfaceActions([]);
+  return (
+    <ul aria-label="Surfaces">
+      {actions.map((action) => (
+        <li key={action.label}>
+          <button type="button" disabled={!action.available} onClick={action.onClick}>
+            {action.label}
+          </button>
+          {action.available ? null : <span>{action.disabledReason}</span>}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+it("offers the patient surfaces for a thread with a linked patient, and opens one as a tab", async () => {
+  const linked = scopeThreadRef(PRIMARY, ThreadId.make("thread-here"));
+  setup({
+    primaryEnvironmentId: PRIMARY,
+    mayRead: true,
+    routeThreadRef: linked,
+    responses: {
+      "/api/med/threads/thread-here/patient": { patient: { id: "p1", name: "Ni Made Suartini" } },
+      "/api/med/patients/p1/record": RECORD,
+    },
+  });
+  await using screen = await render(
+    inApp(
+      <>
+        <Launcher />
+        <MedSurfaceContent surface={medSurface("med-labs")} threadRef={linked} />
+      </>,
+    ),
+  );
+
+  const labs = screen.getByRole("button", { name: "Labs" });
+  await expect.element(labs).toBeEnabled();
+  expect(
+    screen
+      .getByRole("list", { name: "Surfaces" })
+      .getByRole("button")
+      .elements()
+      .map((button) => button.textContent),
+  ).toEqual(["Summary", "Labs", "Plan", "Timeline"]);
+  await labs.click();
+  expect(
+    selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, linked),
+  ).toMatchObject({
+    isOpen: true,
+    activeSurfaceId: "med-labs",
+    surfaces: [medSurface("med-labs")],
+  });
+
+  // The chart is in the baseline's mg/dL with the server's 128; the table keeps what was written.
+  await expect
+    .element(
+      screen.getByRole("img", {
+        name: /^LDL cholesterol in mg\/dL: 162 on .*baseline.*, 128 on .*draft/,
+      }),
+    )
+    .toBeVisible();
+  const results = screen.getByRole("table", { name: "Results of LDL cholesterol" });
+  await expect.element(results.getByText("3.31 mmol/L")).toBeVisible();
+  await expect.element(results.getByText("−34 mg/dL (−21%)")).toBeVisible();
+  expect(state.requests.filter((request) => !request.startsWith("GET "))).toEqual([]);
+});
+
+it("offers no patient surface, and draws no record, for a chat with no linked patient", async () => {
+  const unlinked = scopeThreadRef(PRIMARY, ThreadId.make("thread-none"));
+  setup({
+    primaryEnvironmentId: PRIMARY,
+    mayRead: true,
+    routeThreadRef: unlinked,
+    responses: { "/api/med/threads/thread-none/patient": { patient: null } },
+  });
+  await using screen = await render(
+    inApp(
+      <>
+        <Launcher />
+        <MedSurfaceContent surface={medSurface("med-summary")} threadRef={unlinked} />
+      </>,
+    ),
+  );
+
+  await expect
+    .element(screen.getByText(/^No patient is linked to this chat yet\. Give the chat/))
+    .toBeVisible();
+  for (const name of ["Summary", "Labs", "Plan", "Timeline"]) {
+    await expect.element(screen.getByRole("button", { name })).toBeDisabled();
+  }
+  // A record an earlier test left loaded may be read again; none is drawn for this chat.
+  await expect.element(screen.getByText("Ni Made Suartini")).not.toBeInTheDocument();
+  await expect.element(screen.getByRole("table")).not.toBeInTheDocument();
 });

@@ -6,7 +6,6 @@
 import { useAtom } from "@effect/atom-react";
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import type { MedLab, MedPatientRecord } from "@t3tools/contracts/med";
-import { FlaskConicalIcon } from "lucide-react";
 import type { ReactNode } from "react";
 
 import { Badge } from "../components/ui/badge";
@@ -226,7 +225,7 @@ function Summary({ record, today }: { readonly record: MedPatientRecord; readonl
 /** Every result of one test, newest first, with the store's comparison to the baseline. */
 function TestResults({ test, today }: { readonly test: LabTestGroup; readonly today: string }) {
   return (
-    <div className="px-0.5">
+    <div className="@container px-0.5">
       <Table aria-label={`Results of ${test.name}`}>
         <TableHeader>
           <TableRow>
@@ -236,7 +235,7 @@ function TestResults({ test, today }: { readonly test: LabTestGroup; readonly to
             <TableHead className="h-8">
               <Quiet>Result</Quiet>
             </TableHead>
-            <TableHead className="h-8">
+            <TableHead className="hidden h-8 @md:table-cell">
               <Quiet>Reference</Quiet>
             </TableHead>
             <TableHead className="h-8">
@@ -245,7 +244,7 @@ function TestResults({ test, today }: { readonly test: LabTestGroup; readonly to
             <TableHead className="h-8">
               <Quiet>From baseline</Quiet>
             </TableHead>
-            <TableHead className="h-8">
+            <TableHead className="hidden h-8 @md:table-cell">
               <Quiet>Status</Quiet>
             </TableHead>
           </TableRow>
@@ -257,9 +256,17 @@ function TestResults({ test, today }: { readonly test: LabTestGroup; readonly to
                 <Quiet>{formatDay(result.collected, today)}</Quiet>
               </TableCell>
               <TableCell>
-                <span className="font-medium tabular-nums">{valueLabel(result)}</span>
+                <span className="flex flex-col gap-0.5">
+                  <span className="font-medium tabular-nums">{valueLabel(result)}</span>
+                  <span className="flex items-center gap-1.5 @md:hidden">
+                    {result.referenceRange === "" ? null : (
+                      <Quiet>Ref. {result.referenceRange}</Quiet>
+                    )}
+                    {result.status === "draft" ? <StatusCell status="draft" /> : null}
+                  </span>
+                </span>
               </TableCell>
-              <TableCell>
+              <TableCell className="hidden @md:table-cell">
                 <Quiet>{result.referenceRange}</Quiet>
               </TableCell>
               <TableCell>
@@ -268,7 +275,7 @@ function TestResults({ test, today }: { readonly test: LabTestGroup; readonly to
               <TableCell className="whitespace-normal">
                 <span className="tabular-nums">{changeLabel(result)}</span>
               </TableCell>
-              <TableCell>
+              <TableCell className="hidden @md:table-cell">
                 <StatusCell status={result.status} />
               </TableCell>
             </TableRow>
@@ -306,7 +313,7 @@ function Labs({ record, today }: { readonly record: MedPatientRecord; readonly t
                 {series === null ? test.name : `${test.name}, ${series.unit}`}
               </SelectValue>
             </SelectTrigger>
-            <SelectPopup>
+            <SelectPopup alignItemWithTrigger={false}>
               {tests.map((entry) => (
                 <SelectItem key={entry.labTestId} hideIndicator value={entry.labTestId}>
                   {entry.name}
@@ -323,10 +330,10 @@ function Labs({ record, today }: { readonly record: MedPatientRecord; readonly t
           <MedLabChart name={test.name} series={series} />
         )}
       </div>
-      <Section title={`Results of ${test.name}`} aside={test.results.length}>
+      <Section title={`Results of ${test.name}`}>
         <TestResults test={test} today={today} />
       </Section>
-      <Section title="Latest result of every test" aside={tests.length}>
+      <Section title="Latest result of every test">
         <LatestResults tests={tests} today={today} />
       </Section>
     </>
@@ -409,16 +416,18 @@ function Timeline({
                 }
                 if (entry.kind === "plan") {
                   return (
-                    <MedPlanRow key={entry.plan.id} plan={entry.plan} today={today} showStatus />
+                    <MedPlanRow
+                      key={entry.plan.id}
+                      plan={entry.plan}
+                      today={today}
+                      showStatus
+                      showDue={false}
+                    />
                   );
                 }
                 const drafts = entry.labs.filter((result) => result.status === "draft").length;
                 return (
                   <MedPage.Row key={`labs:${day}`} className="items-start">
-                    <FlaskConicalIcon
-                      aria-hidden
-                      className="mt-0.5 size-4 shrink-0 text-muted-foreground"
-                    />
                     <span className="flex min-w-0 flex-1 flex-col">
                       <MedPage.Primary>{counted(entry.labs.length, "lab result")}</MedPage.Primary>
                       <MedPage.Detail>

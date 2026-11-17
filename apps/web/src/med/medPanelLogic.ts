@@ -79,11 +79,16 @@ export interface ChartGeometry {
   readonly baselineY: number;
 }
 
+// The least the chart's height stands for, as a share of the largest value: a small change
+// then looks small instead of filling the chart.
+const MIN_VALUE_SPAN = 0.25;
+
 const dayNumber = (isoDate: string) => Date.parse(`${isoDate}T00:00:00.000Z`) / 86_400_000;
 
 /**
  * Where a series is drawn, in percent of the plot: days apart on the calendar are apart on the
- * chart, and the highest value is at the top. A date that cannot be read spaces the points evenly.
+ * chart, and the values fill the height unless they differ by little. A date that cannot be
+ * read spaces the points evenly.
  */
 export function chartGeometry(series: LabSeries): ChartGeometry {
   const days = series.points.map((point) => dayNumber(point.collected));
@@ -91,9 +96,14 @@ export function chartGeometry(series: LabSeries): ChartGeometry {
   const firstDay = days[0] ?? 0;
   const span = (days.at(-1) ?? 0) - firstDay;
   const values = series.points.map((point) => point.value);
-  const top = Math.max(...values);
-  const range = top - Math.min(...values);
-  const yOf = (value: number) => (range === 0 ? 50 : ((top - value) / range) * 100);
+  const highest = Math.max(...values);
+  const lowest = Math.min(...values);
+  const range = Math.max(
+    highest - lowest,
+    MIN_VALUE_SPAN * Math.max(...values.map((value) => Math.abs(value))),
+  );
+  const middle = (highest + lowest) / 2;
+  const yOf = (value: number) => (range === 0 ? 50 : 50 + ((middle - value) / range) * 100);
   const last = series.points.length - 1;
   const points = series.points.map((point, index) => ({
     ...point,

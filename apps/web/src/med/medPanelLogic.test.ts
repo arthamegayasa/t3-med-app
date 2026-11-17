@@ -167,6 +167,16 @@ describe("chartGeometry", () => {
     expect(geometry.baselineY).toBe(0);
   });
 
+  it("does not stretch a small change to the full height of the chart", () => {
+    // Creatinine 0.9 to 1.0 is a ninth of the value, not a climb from the floor to the ceiling.
+    const geometry = chartGeometry({
+      unit: "mg/dL",
+      notPlotted: 0,
+      points: [point("c1", "2026-08-21", 0.9, true), point("c2", "2026-11-06", 1)],
+    });
+    expect(geometry.points.map(({ y }) => Math.round(y))).toEqual([70, 30]);
+  });
+
   it("centres a single result, and results that do not differ", () => {
     const one = chartGeometry({
       unit: "%",
