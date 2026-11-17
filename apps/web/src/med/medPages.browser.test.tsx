@@ -1,6 +1,11 @@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { EnvironmentId, ProjectId, type ScopedThreadRef, ThreadId } from "@t3tools/contracts";
-import type { MedLab, MedPatientHome, MedPatientRecord } from "@t3tools/contracts/med";
+import type {
+  MedLab,
+  MedPatientHome,
+  MedPatientRecord,
+  MedWaitingNote,
+} from "@t3tools/contracts/med";
 // Dialogs are laid out by the stylesheet: without it a modal's own backdrop covers its buttons.
 import "~/index.css";
 
@@ -241,8 +246,11 @@ it("starts a chat that names the patient by URN, and links nothing", async () =>
             date: "2026-11-06",
             summary: "LDL saved as a draft",
             needsYou: "",
+            needsYouHandledAt: null,
             draftLabs: 0,
             draftPlans: 0,
+            draftLabRows: [],
+            draftPlanRows: [],
           },
         ],
         threads: [
@@ -493,6 +501,7 @@ it("keeps what is coming up apart from the history, and marks each lab line", as
             type: "lab",
             status: "planned",
             doneOn: null,
+            updatedAt: "2026-11-01T00:00:00.000Z",
           },
           {
             id: "plan-done",
@@ -502,6 +511,7 @@ it("keeps what is coming up apart from the history, and marks each lab line", as
             type: "imaging",
             status: "done",
             doneOn: "2026-08-20",
+            updatedAt: "2026-11-01T00:00:00.000Z",
           },
         ],
       },
@@ -666,6 +676,9 @@ it("offers no patient surface, and draws no record, for a chat with no linked pa
   await expect.element(screen.getByRole("table")).not.toBeInTheDocument();
 });
 
+// What a change answers with as the row's `updatedAt`: its undo sends it back.
+const STAMP = "2026-11-17T03:00:00.000Z";
+
 const CORRECTED: MedPatientRecord = {
   ...RECORD,
   patient: { ...RECORD.patient, id: "p-fix" },
@@ -675,6 +688,8 @@ const CORRECTED: MedPatientRecord = {
       ...RECORD.labs[1]!,
       revisions: [
         {
+          id: "rev-1",
+          correctedBy: "agent",
           testAsWritten: "LDL",
           value: 33.1,
           valueText: "33.1",
@@ -697,6 +712,7 @@ const CORRECTED: MedPatientRecord = {
       type: "lab",
       status: "planned",
       doneOn: null,
+      updatedAt: "2026-11-01T00:00:00.000Z",
     },
   ],
 };
@@ -711,14 +727,16 @@ it("removes a result at once, puts it back from the toast, and shows what a corr
       "/api/med/threads/thread-fix/patient": { patient: { id: "p-fix", name: "Ni Made Suartini" } },
       "/api/med/patients/p-fix/record": CORRECTED,
     },
-    writes: { "PUT /api/med/labs/l2/removed": { body: { removed: true } } },
+    writes: { "PUT /api/med/labs/l2/removed": { body: { removed: true, updatedAt: STAMP } } },
   });
   await using screen = await render(
     inApp(<MedSurfaceContent surface={medSurface("med-labs")} threadRef={linked} />),
   );
 
   const results = screen.getByRole("table", { name: "Results of LDL cholesterol" });
-  await expect.element(results.getByText(/^Was 33\.1 mmol\/L, corrected 20 Sep/)).toBeVisible();
+  await expect
+    .element(results.getByText(/^Was 33\.1 mmol\/L, corrected by agent, 20 Sep/))
+    .toBeVisible();
 
   await screen.getByRole("button", { name: /^Actions for LDL cholesterol, 18 Sep/ }).click();
   // A corrected draft: it can be verified, corrected again, taken back a step, or removed.
@@ -736,7 +754,7 @@ it("removes a result at once, puts it back from the toast, and shows what a corr
   await expect.element(page.getByText("Put back LDL cholesterol 3.31 mmol/L")).toBeVisible();
   expect(state.sent).toEqual([
     ["PUT /api/med/labs/l2/removed", { removed: true }],
-    ["PUT /api/med/labs/l2/removed", { removed: false }],
+    ["PUT /api/med/labs/l2/removed", { removed: false, ifUpdatedAt: STAMP }],
   ]);
 });
 
@@ -756,8 +774,22 @@ it("corrects a result from its row, and keeps the form open on what the server r
           status: 422,
           body: { _tag: "MedRefusedError", reason: "unit must not be blank." },
         },
-        { body: { ...CORRECTED.labs[0], value: 152, valueText: "152" } },
+        {
+          body: {
+            ...CORRECTED.labs[0],
+            value: 152,
+            valueText: "152",
+            revisions: [
+              { ...CORRECTED.labs[1]!.revisions[0]!, id: "rev-new", correctedBy: "doctor" },
+            ],
+          },
+        },
       ],
+      // An agent corrected the result again before the doctor reached for Undo.
+      "POST /api/med/labs/l1/undo-correction": {
+        status: 409,
+        body: { _tag: "MedChangedSinceError", row: "lab", id: "l1" },
+      },
     },
   });
   await using screen = await render(
@@ -788,6 +820,53 @@ it("corrects a result from its row, and keeps the form open on what the server r
   // Only what changed is sent, twice: once refused and once taken.
   const change = ["PATCH /api/med/labs/l1", { value: 152, valueText: "152" }];
   expect(state.sent).toEqual([change, change]);
+
+  // Undo takes back this correction and no other; the row has changed, and the toast says so.
+  await page.getByRole("button", { name: "Undo" }).click();
+  await expect.element(page.getByText("Could not undo the correction")).toBeVisible();
+  await expect
+    .element(page.getByText("This result has changed since, so it was not undone."))
+    .toBeVisible();
+  expect(state.sent.at(-1)).toEqual([
+    "POST /api/med/labs/l1/undo-correction",
+    { revisionId: "rev-new" },
+  ]);
+});
+
+it("returns a verified result to draft, and undoes a correction from its row", async () => {
+  const linked = scopeThreadRef(PRIMARY, ThreadId.make("thread-fix"));
+  setup({
+    primaryEnvironmentId: PRIMARY,
+    mayRead: true,
+    routeThreadRef: linked,
+    responses: {
+      "/api/med/threads/thread-fix/patient": { patient: { id: "p-fix", name: "Ni Made Suartini" } },
+      "/api/med/patients/p-fix/record": CORRECTED,
+    },
+    writes: {
+      "PUT /api/med/labs/l1/verified": { body: { verified: false, updatedAt: STAMP } },
+      "POST /api/med/labs/l2/undo-correction": { body: { ...CORRECTED.labs[1], revisions: [] } },
+    },
+  });
+  await using screen = await render(
+    inApp(<MedSurfaceContent surface={medSurface("med-labs")} threadRef={linked} />),
+  );
+
+  await screen.getByRole("button", { name: /^Actions for LDL cholesterol, 21 Aug/ }).click();
+  await page.getByRole("menuitem", { name: "Return to draft" }).click();
+  await expect.element(page.getByText("LDL cholesterol 162 mg/dL is a draft again")).toBeVisible();
+  await page.getByRole("button", { name: "Undo" }).click();
+  await expect.element(page.getByText("Verified LDL cholesterol 162 mg/dL")).toBeVisible();
+
+  // The row's own undo names the correction listed under it, the latest one.
+  await screen.getByRole("button", { name: /^Actions for LDL cholesterol, 18 Sep/ }).click();
+  await page.getByRole("menuitem", { name: "Undo last correction" }).click();
+  await expect.element(page.getByText("Put back what LDL cholesterol said before")).toBeVisible();
+  expect(state.sent).toEqual([
+    ["PUT /api/med/labs/l1/verified", { verified: false }],
+    ["PUT /api/med/labs/l1/verified", { verified: true, ifUpdatedAt: STAMP }],
+    ["POST /api/med/labs/l2/undo-correction", { revisionId: "rev-1" }],
+  ]);
 });
 
 it("closes a plan and reopens it from the toast, and changes nothing without the scope", async () => {
@@ -801,7 +880,9 @@ it("closes a plan and reopens it from the toast, and changes nothing without the
       "/api/med/patients/p-fix/record": CORRECTED,
     },
     writes: {
-      "PATCH /api/med/plans/plan-1": { body: { ...CORRECTED.plans[0], status: "done" } },
+      "PATCH /api/med/plans/plan-1": {
+        body: { ...CORRECTED.plans[0], status: "done", updatedAt: STAMP },
+      },
     },
   };
   setup({ ...answers, mayChange: false });
@@ -826,21 +907,46 @@ it("closes a plan and reopens it from the toast, and changes nothing without the
   await expect.element(page.getByText("Repeat lipid panel is open again")).toBeVisible();
   expect(state.sent).toEqual([
     ["PATCH /api/med/plans/plan-1", { status: "done" }],
-    ["PATCH /api/med/plans/plan-1", { status: "open" }],
+    ["PATCH /api/med/plans/plan-1", { status: "open", ifUpdatedAt: STAMP }],
   ]);
 });
 
-it("verifies everything from one note on Needs you", async () => {
-  const waiting = {
-    id: "note-1",
-    threadId: "thread-filed",
-    title: "Labs 6 Nov",
-    date: "2026-11-06",
-    summary: "",
-    needsYou: "",
-    draftLabs: 2,
-    draftPlans: 1,
-  };
+const WAITING: MedWaitingNote = {
+  id: "note-1",
+  threadId: "thread-filed",
+  title: "Labs 6 Nov",
+  date: "2026-11-06",
+  summary: "",
+  needsYou: "",
+  needsYouHandledAt: null,
+  draftLabs: 2,
+  draftPlans: 1,
+  draftLabRows: [
+    {
+      id: "l1",
+      testName: "LDL cholesterol",
+      valueText: "162",
+      unit: "mg/dL",
+      collected: "2026-11-06",
+    },
+    { id: "l2", testName: "Anti-dsDNA", valueText: "negative", unit: "", collected: "2026-11-06" },
+  ],
+  draftPlanRows: [{ id: "plan-1", title: "Repeat lipid panel", due: "2027-01-10" }],
+};
+
+const ASKED: MedWaitingNote = {
+  ...WAITING,
+  id: "note-2",
+  title: "Asked",
+  needsYou: "Which lab ran this?",
+  draftLabs: 0,
+  draftPlans: 0,
+  draftLabRows: [],
+  draftPlanRows: [],
+};
+
+it("verifies the drafts a note lists on Needs you and no others, with an undo", async () => {
+  const rows = { labIds: ["l1", "l2"], planIds: ["plan-1"] };
   setup({
     primaryEnvironmentId: PRIMARY,
     mayRead: true,
@@ -852,33 +958,157 @@ it("verifies everything from one note on Needs you", async () => {
             patient: home("p-wait", "00-12-34-56").patient,
             draftLabs: 2,
             draftPlans: 1,
-            notes: [
-              waiting,
-              { ...waiting, id: "note-2", title: "Asked", draftLabs: 0, draftPlans: 0 },
-            ],
+            notes: [WAITING, ASKED],
+          },
+        ],
+      },
+    },
+    writes: {
+      // One of the three was verified elsewhere meanwhile: the answer says what this call did.
+      "POST /api/med/notes/note-1/verify": {
+        body: {
+          labsVerified: 1,
+          plansPlanned: 1,
+          patientActivated: false,
+          labIds: ["l2"],
+          planIds: ["plan-1"],
+        },
+      },
+      "POST /api/med/notes/note-1/unverify": { body: { labIds: ["l2"], planIds: ["plan-1"] } },
+      "PUT /api/med/notes/note-2/question-handled": [
+        { body: { handled: true } },
+        { body: { handled: false } },
+      ],
+    },
+  });
+  await using screen = await render(inApp(<NeedsYouPage />));
+
+  // The note says what it would verify, row by row; the row itself still opens its chat.
+  await expect.element(screen.getByRole("link", { name: /Labs 6 Nov/ })).toBeVisible();
+  const drafts = screen.getByRole("list", { name: "Drafts from Labs 6 Nov" });
+  expect(
+    drafts
+      .getByRole("listitem")
+      .elements()
+      .map((item) => item.textContent),
+  ).toEqual([
+    "LDL cholesterol 162 mg/dL, 6 Nov",
+    "Anti-dsDNA negative, 6 Nov",
+    "Plan: Repeat lipid panel, due 10 Jan 2027",
+  ]);
+  expect(screen.getByRole("button", { name: /^Verify / }).elements()).toHaveLength(1);
+  await screen.getByRole("button", { name: "Verify 2 results and 1 plan from Labs 6 Nov" }).click();
+
+  // The toast names the patient and what was verified, by what the server says it did.
+  await expect
+    .element(page.getByText("Verified 1 result and 1 plan for Ni Made Suartini"))
+    .toBeVisible();
+  await expect
+    .element(page.getByText("Anti-dsDNA negative, 6 Nov; Repeat lipid panel, due 10 Jan 2027"))
+    .toBeVisible();
+  await page.getByRole("button", { name: "Undo" }).click();
+  await expect
+    .element(page.getByText("1 result and 1 plan for Ni Made Suartini: drafts again"))
+    .toBeVisible();
+  expect(state.sent).toEqual([
+    ["POST /api/med/notes/note-1/verify", rows],
+    ["POST /api/med/notes/note-1/unverify", { labIds: ["l2"], planIds: ["plan-1"] }],
+  ]);
+
+  // A note that only asks something has one control, which takes it off this page.
+  await expect.element(screen.getByText("Which lab ran this?")).toBeVisible();
+  await expect.element(page.getByRole("button", { name: "Undo" })).not.toBeInTheDocument();
+  await screen.getByRole("button", { name: "Mark the question in Asked as handled" }).click();
+  await expect.element(page.getByText("Marked the question in Asked as handled")).toBeVisible();
+  await page.getByRole("button", { name: "Undo" }).click();
+  await expect.element(page.getByText("The question in Asked waits for you again")).toBeVisible();
+  expect(state.sent.slice(2)).toEqual([
+    ["PUT /api/med/notes/note-2/question-handled", { handled: true }],
+    ["PUT /api/med/notes/note-2/question-handled", { handled: false }],
+  ]);
+});
+
+it("shows each plan's status on a patient's page, moves a note to the Inbox and restores what was removed", async () => {
+  const plan = { ...CORRECTED.plans[0]!, patientId: "p-home" };
+  setup({
+    primaryEnvironmentId: PRIMARY,
+    mayRead: true,
+    responses: {
+      "/api/med/patients/p-home": home("p-home", "00-12-34-56", {
+        notes: [
+          {
+            ...WAITING,
+            draftLabs: 1,
+            draftPlans: 0,
+            draftLabRows: [WAITING.draftLabRows[0]!],
+            draftPlanRows: [],
+          },
+        ],
+        upcomingPlans: [plan, { ...plan, id: "plan-2", title: "EEG", status: "draft" }],
+      }),
+      "/api/med/patients/p-home/removed": {
+        labs: [{ ...WAITING.draftLabRows[1]!, removedAt: "2026-11-16T03:00:00.000Z" }],
+        plans: [
+          {
+            id: "plan-9",
+            title: "Brain MRI",
+            due: "2026-12-01",
+            removedAt: "2026-11-15T03:00:00.000Z",
           },
         ],
       },
     },
     writes: {
       "POST /api/med/notes/note-1/verify": {
-        body: { labsVerified: 2, plansPlanned: 1, patientActivated: false },
+        body: {
+          labsVerified: 1,
+          plansPlanned: 0,
+          patientActivated: false,
+          labIds: ["l1"],
+          planIds: [],
+        },
       },
+      "POST /api/med/notes/note-1/inbox": { body: { noteId: "note-1" } },
+      "PUT /api/med/plans/plan-9/removed": { body: { removed: false, updatedAt: STAMP } },
     },
   });
-  await using screen = await render(inApp(<NeedsYouPage />));
+  await using screen = await render(inApp(<PatientHomePage patientId="p-home" />));
 
-  // Only a note that holds drafts has anything to verify; the row still opens its chat.
-  await expect.element(screen.getByRole("link", { name: /Labs 6 Nov/ })).toBeVisible();
-  expect(screen.getByRole("button", { name: /^Verify / }).elements()).toHaveLength(1);
-  await screen
-    .getByRole("button", { name: "Verify 2 draft labs, 1 draft plan from Labs 6 Nov" })
-    .click();
+  // A confirmed plan says so, as on the Plan surface: without it a draft is the only one marked.
+  const plans = screen.getByRole("list", { name: "Plans" });
+  await expect.element(plans.getByText("Planned")).toBeVisible();
+  await expect.element(plans.getByText("Draft")).toBeVisible();
 
-  await expect
-    .element(page.getByText("Verified 2 results and 1 plan from Labs 6 Nov"))
-    .toBeVisible();
-  expect(state.sent).toEqual([["POST /api/med/notes/note-1/verify", null]]);
+  // Verifying from here lists the rows first: the page itself shows only how many there are.
+  await screen.getByRole("button", { name: "Actions for Labs 6 Nov" }).click();
+  await page.getByRole("menuitem", { name: "Verify 1 result…" }).click();
+  const verifying = page.getByRole("alertdialog", { name: "Verify 1 result from Labs 6 Nov?" });
+  await expect.element(verifying.getByText("LDL cholesterol 162 mg/dL, 6 Nov")).toBeVisible();
+  await verifying.getByRole("button", { name: "Verify" }).click();
+  await expect.element(page.getByText("Verified 1 result for Ni Made Suartini")).toBeVisible();
+
+  await screen.getByRole("button", { name: "Actions for Labs 6 Nov" }).click();
+  await page.getByRole("menuitem", { name: "Move to Inbox…" }).click();
+  const moving = page.getByRole("alertdialog", { name: "Move Labs 6 Nov to the Inbox?" });
+  await moving.getByRole("button", { name: "Move to Inbox" }).click();
+  await expect.element(page.getByText("Moved Labs 6 Nov to the Inbox")).toBeVisible();
+
+  // What was removed is folded away at the foot of the page, and each row can be put back.
+  const removed = screen.getByRole("button", { name: /^Removed/ });
+  await expect.element(removed).toHaveTextContent("Removed2");
+  await expect.element(screen.getByRole("list", { name: "Removed" })).not.toBeInTheDocument();
+  await removed.click();
+  const list = screen.getByRole("list", { name: "Removed" });
+  await expect.element(list.getByText("Anti-dsDNA negative, 6 Nov")).toBeVisible();
+  await expect.element(list.getByText("Removed 15 Nov")).toBeVisible();
+  await list.getByRole("button", { name: "Restore Plan: Brain MRI, due 1 Dec" }).click();
+  await expect.element(page.getByText("Put back Brain MRI")).toBeVisible();
+
+  expect(state.sent).toEqual([
+    ["POST /api/med/notes/note-1/verify", { labIds: ["l1"], planIds: [] }],
+    ["POST /api/med/notes/note-1/inbox", null],
+    ["PUT /api/med/plans/plan-9/removed", { removed: false }],
+  ]);
 });
 
 it("edits a patient from their page, says whose URN is taken, and archives with an undo", async () => {
@@ -924,7 +1154,7 @@ it("edits a patient from their page, says whose URN is taken, and archives with 
   await expect.element(page.getByText("Ni Made Suartini is no longer archived")).toBeVisible();
   expect(state.sent).toEqual([
     ["PATCH /api/med/patients/p-edit", { urn: "00-45-67-89" }],
-    ["PATCH /api/med/patients/p-edit", { status: "archived" }],
-    ["PATCH /api/med/patients/p-edit", { status: "active" }],
+    ["PATCH /api/med/patients/p-edit", { archived: true }],
+    ["PATCH /api/med/patients/p-edit", { archived: false }],
   ]);
 });

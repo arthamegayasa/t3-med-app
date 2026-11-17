@@ -1,14 +1,17 @@
-/** T3 Med: per patient, the notes that ask the doctor something or hold drafts to check. */
-import { needsYouAtom, useMedMayChange, useMedQuery, useToday } from "./medData";
+/**
+ * T3 Med: per patient, the notes that ask the doctor something or hold drafts to check. Each
+ * note lists its drafts, so what the doctor verifies is what is on the screen.
+ */
+import { questionWaits } from "./medChangeLogic";
+import { needsYouAtom, useMedQuery, useToday } from "./medData";
 import { draftsLabel, formatDay } from "./medLogic";
 import { MedLink } from "./MedLink";
-import { VerifyNoteButton } from "./MedNoteActions";
+import { NoteDraftRows, NoteWaitingActions } from "./MedNoteActions";
 import { MedPage } from "./MedPage";
 
 export function NeedsYouPage() {
   const query = useMedQuery(needsYouAtom);
   const today = useToday();
-  const mayChange = useMedMayChange();
   return (
     <MedPage.Root title="Needs you">
       <MedPage.Query query={query}>
@@ -21,7 +24,7 @@ export function NeedsYouPage() {
           ) : (
             patients.map(({ patient, draftLabs, draftPlans, notes }) => (
               <section key={patient.id} className="flex flex-col gap-1">
-                <MedPage.Lead ends={mayChange ? "chevron-button" : "chevron"}>
+                <MedPage.Lead>
                   <span className="flex min-w-0 items-baseline gap-2">
                     <MedLink
                       to="/patients/$patientId"
@@ -35,28 +38,26 @@ export function NeedsYouPage() {
                   <span className="shrink-0">{draftsLabel(draftLabs, draftPlans)}</span>
                 </MedPage.Lead>
                 <MedPage.List aria-label={`What needs you for ${patient.name}`}>
-                  {notes.map((note) => {
-                    const drafts = draftsLabel(note.draftLabs, note.draftPlans);
-                    return (
-                      <MedPage.ThreadRow
-                        key={note.id}
-                        threadId={note.threadId}
-                        actionsEnd={mayChange ? "button" : undefined}
-                        actions={<VerifyNoteButton note={note} />}
-                      >
-                        <span className="flex min-w-0 flex-1 flex-col">
-                          <MedPage.Primary>{note.title}</MedPage.Primary>
-                          {note.needsYou.trim() === "" ? null : (
-                            <MedPage.Detail>{note.needsYou.trim()}</MedPage.Detail>
-                          )}
-                          {drafts === null ? null : (
-                            <MedPage.Secondary className="text-xs">{drafts}</MedPage.Secondary>
-                          )}
-                        </span>
-                        <MedPage.Aside>{formatDay(note.date, today)}</MedPage.Aside>
-                      </MedPage.ThreadRow>
-                    );
-                  })}
+                  {notes.map((note) => (
+                    <MedPage.ThreadRow
+                      key={note.id}
+                      threadId={note.threadId}
+                      below={
+                        <>
+                          <NoteDraftRows note={note} />
+                          <NoteWaitingActions note={note} patientName={patient.name} />
+                        </>
+                      }
+                    >
+                      <span className="flex min-w-0 flex-1 flex-col">
+                        <MedPage.Primary>{note.title}</MedPage.Primary>
+                        {questionWaits(note) ? (
+                          <MedPage.Detail>{note.needsYou.trim()}</MedPage.Detail>
+                        ) : null}
+                      </span>
+                      <MedPage.Aside>{formatDay(note.date, today)}</MedPage.Aside>
+                    </MedPage.ThreadRow>
+                  ))}
                 </MedPage.List>
               </section>
             ))

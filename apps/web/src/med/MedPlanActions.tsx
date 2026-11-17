@@ -40,15 +40,28 @@ const update =
   (client) =>
     client.patients.updatePlan({ headers: {}, params: { planId }, payload });
 
-const setVerified =
-  (planId: string, verified: boolean): MedSend<unknown> =>
-  (client) =>
-    client.patients.setPlanVerified({ headers: {}, params: { planId }, payload: { verified } });
+interface Stamp {
+  readonly updatedAt: string;
+}
 
-const setRemoved =
-  (planId: string, removed: boolean): MedSend<unknown> =>
+// `ifUpdatedAt` is sent by an undo: the plan as the undone change left it, or nothing is done.
+const setVerified =
+  (planId: string, verified: boolean, ifUpdatedAt?: string): MedSend<Stamp> =>
   (client) =>
-    client.patients.setPlanRemoved({ headers: {}, params: { planId }, payload: { removed } });
+    client.patients.setPlanVerified({
+      headers: {},
+      params: { planId },
+      payload: { verified, ...(ifUpdatedAt === undefined ? {} : { ifUpdatedAt }) },
+    });
+
+export const setPlanRemoved =
+  (planId: string, removed: boolean, ifUpdatedAt?: string): MedSend<Stamp> =>
+  (client) =>
+    client.patients.setPlanRemoved({
+      headers: {},
+      params: { planId },
+      payload: { removed, ...(ifUpdatedAt === undefined ? {} : { ifUpdatedAt }) },
+    });
 
 function ChangePlanDialog({
   plan,
@@ -73,16 +86,17 @@ function ChangePlanDialog({
     const result = await actOnMed({
       send: update(plan.id, change),
       done: `Changed ${form.title.trim()}`,
-      undo: {
+      undo: ({ updatedAt }) => ({
         // What it had in the fields that changed, and only those.
         send: update(plan.id, {
           ...(change.title === undefined ? {} : { title: plan.title }),
           ...(change.due === undefined ? {} : { due: plan.due }),
           ...(change.doneOn === undefined || plan.doneOn === null ? {} : { doneOn: plan.doneOn }),
+          ifUpdatedAt: updatedAt,
         }),
         done: `${plan.title} is as it was`,
         failed: "Could not undo the change",
-      },
+      }),
     });
     if (result.ok) return onClose();
     setSaving(false);
@@ -165,33 +179,33 @@ export function PlanRowActions({ plan }: { readonly plan: MedPlan }) {
   const [changing, setChanging] = useState(false);
   if (!mayChange) return null;
   const { id, title } = plan;
-  const reopen = {
-    send: update(id, { status: "open" }),
-    done: `${title} is open again`,
-    failed: "Could not reopen this plan",
-  };
+  const reopened = { done: `${title} is open again`, failed: "Could not reopen this plan" };
+  const reopen = ({ updatedAt }: Stamp) => ({
+    ...reopened,
+    send: update(id, { status: "open", ifUpdatedAt: updatedAt }),
+  });
   const run: Record<PlanAction, () => void> = {
     verify: () =>
       void actOnMed({
         send: setVerified(id, true),
         done: `Verified ${title}`,
         failed: "Could not verify this plan",
-        undo: {
-          send: setVerified(id, false),
+        undo: ({ updatedAt }) => ({
+          send: setVerified(id, false, updatedAt),
           done: `${title} is a draft again`,
           failed: "Could not return it to draft",
-        },
+        }),
       }),
     unverify: () =>
       void actOnMed({
         send: setVerified(id, false),
         done: `${title} is a draft again`,
         failed: "Could not return it to draft",
-        undo: {
-          send: setVerified(id, true),
+        undo: ({ updatedAt }) => ({
+          send: setVerified(id, true, updatedAt),
           done: `Verified ${title}`,
           failed: "Could not verify this plan",
-        },
+        }),
       }),
     done: () =>
       void actOnMed({
@@ -209,19 +223,21 @@ export function PlanRowActions({ plan }: { readonly plan: MedPlan }) {
       }),
     reopen: () =>
       void actOnMed({
-        ...reopen,
-        undo:
+        ...reopened,
+        send: update(id, { status: "open" }),
+        undo: ({ updatedAt }) =>
           plan.status === "done"
             ? {
                 send: update(id, {
                   status: "done",
                   ...(plan.doneOn === null ? {} : { doneOn: plan.doneOn }),
+                  ifUpdatedAt: updatedAt,
                 }),
                 done: `${title} is done again`,
                 failed: "Could not mark this plan done",
               }
             : {
-                send: update(id, { status: "cancelled" }),
+                send: update(id, { status: "cancelled", ifUpdatedAt: updatedAt }),
                 done: `${title} is cancelled again`,
                 failed: "Could not cancel this plan",
               },
@@ -229,14 +245,14 @@ export function PlanRowActions({ plan }: { readonly plan: MedPlan }) {
     change: () => setChanging(true),
     remove: () =>
       void actOnMed({
-        send: setRemoved(id, true),
+        send: setPlanRemoved(id, true),
         done: `Removed ${title}`,
         failed: "Could not remove this plan",
-        undo: {
-          send: setRemoved(id, false),
+        undo: ({ updatedAt }) => ({
+          send: setPlanRemoved(id, false, updatedAt),
           done: `Put back ${title}`,
           failed: "Could not put it back",
-        },
+        }),
       }),
   };
   return (

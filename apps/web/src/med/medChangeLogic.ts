@@ -3,13 +3,17 @@
  * change carries only what changed and an unchanged form sends nothing.
  */
 import {
+  type MedDraftLab,
+  type MedDraftPlan,
   type MedLab,
   type MedLabCorrection,
   type MedLabRevision,
   type MedPatientDetails,
   type MedPatientEdit,
+  type MedNoteRows,
   type MedPlan,
   type MedPlanChange,
+  type MedWaitingNote,
   writtenNumberReadings,
 } from "@t3tools/contracts/med";
 
@@ -147,6 +151,52 @@ export function revisionChanges(
   ];
 }
 
+/** Who made a correction and when, after what it replaced: `corrected by agent, 17 Nov`. */
+export function correctedLabel(
+  revision: Pick<MedLabRevision, "correctedBy" | "replacedAt">,
+  today: string,
+): string {
+  const day = formatDay(revision.replacedAt.slice(0, 10), today);
+  if (revision.correctedBy === null) return `corrected ${day}`;
+  return `corrected by ${revision.correctedBy === "agent" ? "agent" : "you"}, ${day}`;
+}
+
+/** A draft result as a list names it: test, result as written, unit and the day collected. */
+export function draftLabLabel(lab: MedDraftLab, today: string): string {
+  const result = lab.unit === "" ? lab.valueText : `${lab.valueText} ${lab.unit}`;
+  return `${lab.testName} ${result}, ${formatDay(lab.collected, today)}`;
+}
+
+export function draftPlanLabel(plan: MedDraftPlan, today: string): string {
+  return `${plan.title}, due ${formatDay(plan.due, today)}`;
+}
+
+/** The drafts of a note as the page shows them: verifying confirms these and no others. */
+export function noteRowsOf(
+  note: Pick<MedWaitingNote, "draftLabRows" | "draftPlanRows">,
+): MedNoteRows {
+  return {
+    labIds: note.draftLabRows.map((lab) => lab.id),
+    planIds: note.draftPlanRows.map((plan) => plan.id),
+  };
+}
+
+const counted = (count: number, noun: string) => `${count} ${noun}${count === 1 ? "" : "s"}`;
+
+/** `2 results and 1 plan`, or null for none of either. */
+export function rowsLabel(rows: MedNoteRows): string | null {
+  const parts = [
+    ...(rows.labIds.length === 0 ? [] : [counted(rows.labIds.length, "result")]),
+    ...(rows.planIds.length === 0 ? [] : [counted(rows.planIds.length, "plan")]),
+  ];
+  return parts.length === 0 ? null : parts.join(" and ");
+}
+
+/** Whether a note still asks the doctor something: a question not yet marked as handled. */
+export function questionWaits(note: Pick<MedWaitingNote, "needsYou" | "needsYouHandledAt">) {
+  return note.needsYou.trim() !== "" && note.needsYouHandledAt === null;
+}
+
 export interface PlanForm {
   readonly title: string;
   readonly due: string;
@@ -219,18 +269,33 @@ export function patientEditOf(
   return { change: Object.keys(change).length === 0 ? null : change };
 }
 
+const spellingKey = (spelling: string) => tidy(spelling).toLowerCase();
+
 /**
- * The edit that takes one back: what the patient had in every field the edit changed, and the
- * spellings always, because a rename adds the old name to them.
+ * The edit that takes one back: what the patient had in every field the edit changed, and for
+ * the spellings only the ones the edit put on or took off. The list is never sent whole, so a
+ * spelling an agent added since the edit stays.
  */
-export function patientUndoOf(patient: MedPatientDetails, edit: MedPatientEdit): MedPatientEdit {
+export function patientUndoOf(
+  before: MedPatientDetails,
+  after: Pick<MedPatientDetails, "name" | "alsoWrittenAs">,
+  edit: MedPatientEdit,
+): MedPatientEdit {
+  const had = new Set(before.alsoWrittenAs.map(spellingKey));
+  const has = new Set(after.alsoWrittenAs.map(spellingKey));
+  // A rename back makes the name it replaces a spelling, which the patient never had.
+  const removeSpellings = [
+    ...after.alsoWrittenAs,
+    ...(spellingKey(after.name) === spellingKey(before.name) ? [] : [after.name]),
+  ].filter((spelling) => !had.has(spellingKey(spelling)));
+  const addSpellings = before.alsoWrittenAs.filter((spelling) => !has.has(spellingKey(spelling)));
   return {
-    ...(edit.name === undefined ? {} : { name: patient.name }),
-    ...(edit.urn === undefined ? {} : { urn: patient.urn }),
-    ...(edit.sex === undefined ? {} : { sex: patient.sex }),
-    ...(edit.dateOfBirth === undefined ? {} : { dateOfBirth: patient.dateOfBirth }),
-    ...(edit.diagnoses === undefined ? {} : { diagnoses: patient.diagnoses }),
-    ...(edit.status === undefined ? {} : { status: patient.status }),
-    alsoWrittenAs: patient.alsoWrittenAs,
+    ...(edit.name === undefined ? {} : { name: before.name }),
+    ...(edit.urn === undefined ? {} : { urn: before.urn }),
+    ...(edit.sex === undefined ? {} : { sex: before.sex }),
+    ...(edit.dateOfBirth === undefined ? {} : { dateOfBirth: before.dateOfBirth }),
+    ...(edit.diagnoses === undefined ? {} : { diagnoses: before.diagnoses }),
+    ...(removeSpellings.length === 0 ? {} : { removeSpellings }),
+    ...(addSpellings.length === 0 ? {} : { addSpellings }),
   };
 }

@@ -53,10 +53,13 @@ import {
 } from "./medPanelLogic";
 import { PlanRowActions } from "./MedPlanActions";
 import { MedPlanRow } from "./MedPlanRow";
+import { MedRemoved } from "./MedRemoved";
 import type { MedSurface } from "./medSurfaces";
 import { PatientFacts } from "./PatientHomePage";
 
 const SUMMARY_PLAN_LIMIT = 3;
+const REMOVED_LABS = ["labs"] as const;
+const REMOVED_PLANS = ["plans"] as const;
 
 function Shell({ children }: { readonly children: ReactNode }) {
   return (
@@ -376,6 +379,7 @@ function Labs({ record, today }: { readonly record: MedPatientRecord; readonly t
           No lab results are filed for {record.patient.name} yet. Paste a lab sheet into the chat to
           file them.
         </MedPage.Note>
+        <MedRemoved patientId={record.patient.id} kinds={REMOVED_LABS} />
       </>
     );
   }
@@ -423,6 +427,7 @@ function Labs({ record, today }: { readonly record: MedPatientRecord; readonly t
           }}
         />
       </Section>
+      <MedRemoved patientId={record.patient.id} kinds={REMOVED_LABS} />
     </>
   );
 }
@@ -438,6 +443,7 @@ function Plans({ record, today }: { readonly record: MedPatientRecord; readonly 
         <MedPage.Note>
           No plans are filed for {record.patient.name} yet. Tell the chat what to do and by when.
         </MedPage.Note>
+        <MedRemoved patientId={record.patient.id} kinds={REMOVED_PLANS} />
       </>
     );
   }
@@ -476,6 +482,7 @@ function Plans({ record, today }: { readonly record: MedPatientRecord; readonly 
           </MedPage.List>
         </Section>
       )}
+      <MedRemoved patientId={record.patient.id} kinds={REMOVED_PLANS} />
     </>
   );
 }

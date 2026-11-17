@@ -1,5 +1,6 @@
 /** T3 Med: the form that edits who a patient is. A saved edit can be undone from its toast. */
-import type { MedPatientDetails } from "@t3tools/contracts/med";
+import { type MedPatientDetails, MedUrnTakenError } from "@t3tools/contracts/med";
+import * as Schema from "effect/Schema";
 import { useId, useState } from "react";
 
 import { Button } from "../components/ui/button";
@@ -33,15 +34,9 @@ const SEXES = [
   { value: "male", label: "Male" },
 ] as const;
 
-const takenBy = (failure: unknown) =>
-  typeof failure === "object" &&
-  failure !== null &&
-  "_tag" in failure &&
-  failure._tag === "MedUrnTakenError" &&
-  "patientName" in failure &&
-  typeof failure.patientName === "string"
-    ? failure.patientName
-    : null;
+const isUrnTaken = Schema.is(MedUrnTakenError);
+
+const takenBy = (failure: unknown) => (isUrnTaken(failure) ? failure.patientName : null);
 
 function PatientEditForm({
   patient,
@@ -71,16 +66,17 @@ function PatientEditForm({
           payload: change,
         }),
       done: ({ name }) => `Saved the details of ${name}`,
-      undo: {
+      // Only what this edit changed goes back, so what was added since stays.
+      undo: (saved) => ({
         send: (client) =>
           client.patients.updatePatient({
             headers: {},
             params: { patientId: patient.id },
-            payload: patientUndoOf(patient, change),
+            payload: patientUndoOf(patient, saved, change),
           }),
         done: `The details of ${patient.name} are as they were`,
         failed: "Could not undo the edit",
-      },
+      }),
     });
     if (result.ok) return onClose();
     setSaving(false);

@@ -118,24 +118,50 @@ function Opens() {
 }
 
 /**
- * A row that opens its thread in the primary environment, or a plain row without a thread.
- * `actions` sit after the link, never inside it: a control in a link is no control. A list
- * whose rows can have actions names their width in `actionsEnd` on every row, so a row with
- * none still ends where the others do.
+ * A row that opens its thread, or a plain row without one. `actions` sit after the link, never
+ * in it, in a width every row of the list names in `actionsEnd`. `below` belongs to the row
+ * and is outside the link too: what it would confirm, and the controls that confirm it.
  */
 function ThreadRow({
   threadId,
   actions,
   actionsEnd,
+  below,
   children,
 }: {
   readonly threadId: string | null;
   readonly actions?: ReactNode;
   readonly actionsEnd?: keyof typeof ACTIONS_SLOT | undefined;
+  readonly below?: ReactNode;
   readonly children: ReactNode;
 }) {
   const environmentId = useMedEnvironmentId();
   const opens = threadId !== null && environmentId !== null;
+  if (below !== undefined) {
+    const cells = (
+      <>
+        {children}
+        {opens ? <Opens /> : <span aria-hidden className="size-4 shrink-0" />}
+      </>
+    );
+    return (
+      <li className="flex flex-col">
+        {opens ? (
+          <MedLink
+            variant="row"
+            to="/$environmentId/$threadId"
+            params={{ environmentId, threadId }}
+            className={ROW_CLASS}
+          >
+            {cells}
+          </MedLink>
+        ) : (
+          <div className={ROW_CLASS}>{cells}</div>
+        )}
+        <div className="flex flex-col gap-2 px-2.5 pb-2.5">{below}</div>
+      </li>
+    );
+  }
   if (!opens && actionsEnd === undefined) return <Row>{children}</Row>;
   return (
     <li className="flex items-center gap-1">

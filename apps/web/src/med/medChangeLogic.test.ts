@@ -2,17 +2,23 @@ import type { MedLab, MedPatientDetails, MedPlan } from "@t3tools/contracts/med"
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  correctedLabel,
+  draftLabLabel,
+  draftPlanLabel,
   followWritten,
   labActions,
   labCorrectionOf,
   labFormOf,
+  noteRowsOf,
   patientEditOf,
   patientFormOf,
   patientUndoOf,
   planActions,
   planChangeOf,
   planFormOf,
+  questionWaits,
   revisionChanges,
+  rowsLabel,
 } from "./medChangeLogic";
 
 const lab: MedLab = {
@@ -125,6 +131,8 @@ describe("labCorrectionOf", () => {
 
 describe("revisionChanges", () => {
   const before = {
+    id: "rev-1",
+    correctedBy: "agent" as const,
     testAsWritten: "LDL",
     value: 8,
     valueText: "8",
@@ -147,6 +155,56 @@ describe("revisionChanges", () => {
     ).toEqual(["test LDL", "reference < 100", "no flag", "collected 10 Mar"]);
     expect(revisionChanges({ ...lab, unit: "mmol/L" }, before, "2026-11-17")).toEqual(["8 mg/dL"]);
   });
+
+  it("says who corrected, and nobody when that was not recorded", () => {
+    expect(correctedLabel(before, "2026-11-17")).toBe("corrected by agent, 17 Nov");
+    expect(correctedLabel({ ...before, correctedBy: "doctor" }, "2026-11-17")).toBe(
+      "corrected by you, 17 Nov",
+    );
+    expect(correctedLabel({ ...before, correctedBy: null }, "2026-11-17")).toBe("corrected 17 Nov");
+  });
+});
+
+describe("a note's drafts", () => {
+  const note = {
+    draftLabRows: [
+      {
+        id: "l1",
+        testName: "LDL cholesterol",
+        valueText: "162",
+        unit: "mg/dL",
+        collected: "2026-11-06",
+      },
+      {
+        id: "l2",
+        testName: "Anti-dsDNA",
+        valueText: "negative",
+        unit: "",
+        collected: "2026-11-06",
+      },
+    ],
+    draftPlanRows: [{ id: "pl1", title: "Clinic visit", due: "2026-11-25" }],
+  };
+
+  it("names each draft, and verifies the rows listed and no others", () => {
+    expect(note.draftLabRows.map((row) => draftLabLabel(row, "2026-11-17"))).toEqual([
+      "LDL cholesterol 162 mg/dL, 6 Nov",
+      "Anti-dsDNA negative, 6 Nov",
+    ]);
+    expect(draftPlanLabel(note.draftPlanRows[0]!, "2026-11-17")).toBe("Clinic visit, due 25 Nov");
+    expect(noteRowsOf(note)).toEqual({ labIds: ["l1", "l2"], planIds: ["pl1"] });
+    expect(rowsLabel(noteRowsOf(note))).toBe("2 results and 1 plan");
+    expect(rowsLabel({ labIds: ["l1"], planIds: [] })).toBe("1 result");
+    expect(rowsLabel({ labIds: [], planIds: [] })).toBeNull();
+  });
+
+  it("counts a question as waiting until it is marked as handled", () => {
+    expect(questionWaits({ needsYou: "Which lab?", needsYouHandledAt: null })).toBe(true);
+    expect(
+      questionWaits({ needsYou: "Which lab?", needsYouHandledAt: "2026-11-17T02:00:00.000Z" }),
+    ).toBe(false);
+    expect(questionWaits({ needsYou: " ", needsYouHandledAt: null })).toBe(false);
+  });
 });
 
 describe("row actions", () => {
@@ -162,6 +220,8 @@ describe("row actions", () => {
         status: "draft",
         revisions: [
           {
+            id: "rev-1",
+            correctedBy: null,
             testAsWritten: "LDL",
             value: 8,
             valueText: "8",
@@ -206,6 +266,7 @@ describe("planChangeOf", () => {
     type: "follow_up",
     status: "planned",
     doneOn: null,
+    updatedAt: "2026-11-01T00:00:00.000Z",
   };
 
   it("sends only what changed, and the done day only of a plan that is done", () => {
@@ -269,16 +330,29 @@ describe("patientEditOf", () => {
     });
   });
 
-  it("undoes an edit with what the patient had, spellings included", () => {
-    // A rename keeps the old name as a spelling, so the undo puts the old list back too.
-    expect(patientUndoOf(patient, { name: "Wayan S.", urn: null })).toEqual({
+  it("undoes an edit field by field, and only the spellings that edit changed", () => {
+    // A rename kept the old name as a spelling; the undo takes that and the new name off.
+    const renamed = { name: "Wayan S.", alsoWrittenAs: ["Pak Yan", "I Wayan Sudarma"] };
+    expect(patientUndoOf(patient, renamed, { name: "Wayan S.", urn: null })).toEqual({
       name: "I Wayan Sudarma",
       urn: "00-45-67-89",
-      alsoWrittenAs: ["Pak Yan"],
+      removeSpellings: ["I Wayan Sudarma", "Wayan S."],
     });
-    expect(patientUndoOf(patient, { status: "archived" })).toEqual({
-      status: "active",
-      alsoWrittenAs: ["Pak Yan"],
+    // The list is never sent whole: a spelling an agent adds after the edit is not named, so
+    // it stays.
+    expect(patientUndoOf(patient, renamed, { name: "Wayan S." })).not.toHaveProperty(
+      "alsoWrittenAs",
+    );
+    // An edit of the list itself: what it took off goes back on, what it put on comes off.
+    expect(
+      patientUndoOf(
+        patient,
+        { name: patient.name, alsoWrittenAs: ["Pak Wayan"] },
+        { alsoWrittenAs: ["Pak Wayan"] },
+      ),
+    ).toEqual({ removeSpellings: ["Pak Wayan"], addSpellings: ["Pak Yan"] });
+    expect(patientUndoOf(patient, patient, { diagnoses: "Migraine" })).toEqual({
+      diagnoses: "Ischemic stroke",
     });
   });
 });

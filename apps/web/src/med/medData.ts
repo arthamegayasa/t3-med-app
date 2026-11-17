@@ -98,6 +98,13 @@ export const patientRecordAtom = Atom.family((patientId: string) =>
   ),
 );
 
+/** What was removed for one patient: the list that puts a result or a plan back. */
+export const patientRemovedAtom = Atom.family((patientId: string) =>
+  medQuery(`patient-removed:${patientId}`, (client) =>
+    client.patients.removed({ headers: {}, params: { patientId } }),
+  ),
+);
+
 // The test the Labs surface shows for a patient, kept while its tab is closed or behind another.
 export const selectedLabTestAtom = Atom.family((patientId: string) =>
   Atom.make<string | null>(null).pipe(

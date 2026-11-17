@@ -11,6 +11,7 @@ import { resolveDefaultProjectRef, useNewThreadHandler } from "../hooks/useHandl
 import { useProjects, useQuietThreadShell } from "../state/entities";
 import { useUiStateStore } from "../uiStateStore";
 import { actOnMed } from "./medActions";
+import { questionWaits } from "./medChangeLogic";
 import {
   type MedSend,
   patientHomeAtom,
@@ -24,6 +25,7 @@ import { NoteRowActions } from "./MedNoteActions";
 import { MedPage } from "./MedPage";
 import { PlanRowActions } from "./MedPlanActions";
 import { MedPlanRow } from "./MedPlanRow";
+import { MedRemoved } from "./MedRemoved";
 import { PatientEditDialog } from "./PatientEditDialog";
 
 const STATUS_LABEL = { new: "New", active: "Active", archived: "Archived" } as const;
@@ -97,10 +99,12 @@ function NewChatButton({ patient }: { readonly patient: MedPatientHome["patient"
   );
 }
 
-const setStatus =
-  (patientId: string, status: MedPatientHome["patient"]["status"]): MedSend<unknown> =>
+// Bringing back returns the patient to the status held before archiving, which the store
+// keeps: a patient who was new is new again, not active.
+const setArchived =
+  (patientId: string, archived: boolean): MedSend<unknown> =>
   (client) =>
-    client.patients.updatePatient({ headers: {}, params: { patientId }, payload: { status } });
+    client.patients.updatePatient({ headers: {}, params: { patientId }, payload: { archived } });
 
 /**
  * Edit, and archive or bring back. Archiving takes the patient off Needs you and Upcoming and
@@ -120,11 +124,11 @@ function PatientControls({ patient }: { readonly patient: MedPatientHome["patien
         variant="outline"
         onClick={() =>
           void actOnMed({
-            send: setStatus(patient.id, archived ? "active" : "archived"),
+            send: setArchived(patient.id, !archived),
             done: archived ? `Brought back ${patient.name}` : `Archived ${patient.name}`,
             failed: archived ? "Could not bring this patient back" : "Could not archive",
             undo: {
-              send: setStatus(patient.id, patient.status),
+              send: setArchived(patient.id, archived),
               done: archived
                 ? `${patient.name} is archived again`
                 : `${patient.name} is no longer archived`,
@@ -232,11 +236,11 @@ export function PatientHomePage({ patientId }: { readonly patientId: string }) {
                           <MedPage.Secondary className="flex-1 text-xs">
                             {chat.note.summary}
                           </MedPage.Secondary>
-                          {chat.note.needsYou.trim() === "" ? null : (
+                          {questionWaits(chat.note) ? (
                             <Badge variant="info" size="sm">
                               Needs you
                             </Badge>
-                          )}
+                          ) : null}
                           <MedPage.Aside className="ml-0">
                             {formatDay(chat.day, today)}
                           </MedPage.Aside>
@@ -258,12 +262,14 @@ export function PatientHomePage({ patientId }: { readonly patientId: string }) {
                         key={plan.id}
                         plan={plan}
                         today={today}
+                        showStatus
                         actions={mayChange ? <PlanRowActions plan={plan} /> : undefined}
                       />
                     ))}
                   </MedPage.List>
                 </section>
               )}
+              <MedRemoved patientId={patient.id} />
             </>
           );
         }}

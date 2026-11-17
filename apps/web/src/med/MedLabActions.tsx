@@ -23,6 +23,7 @@ import {
 } from "../components/ui/select";
 import { actOnMed } from "./medActions";
 import {
+  correctedLabel,
   followWritten,
   type LabAction,
   labActions,
@@ -51,20 +52,38 @@ const FLAGS = [
   { value: "high", label: "High" },
 ] as const;
 
+interface Stamp {
+  readonly updatedAt: string;
+}
+
+// `ifUpdatedAt` is sent by an undo: the row as the undone change left it, or nothing is done.
 const setVerified =
-  (labId: string, verified: boolean): MedSend<unknown> =>
+  (labId: string, verified: boolean, ifUpdatedAt?: string): MedSend<Stamp> =>
   (client) =>
-    client.patients.setLabVerified({ headers: {}, params: { labId }, payload: { verified } });
+    client.patients.setLabVerified({
+      headers: {},
+      params: { labId },
+      payload: { verified, ...(ifUpdatedAt === undefined ? {} : { ifUpdatedAt }) },
+    });
 
-const setRemoved =
-  (labId: string, removed: boolean): MedSend<unknown> =>
+export const setLabRemoved =
+  (labId: string, removed: boolean, ifUpdatedAt?: string): MedSend<Stamp> =>
   (client) =>
-    client.patients.setLabRemoved({ headers: {}, params: { labId }, payload: { removed } });
+    client.patients.setLabRemoved({
+      headers: {},
+      params: { labId },
+      payload: { removed, ...(ifUpdatedAt === undefined ? {} : { ifUpdatedAt }) },
+    });
 
+// Names the correction it takes back, so it never undoes one made after it.
 const undoCorrection =
-  (labId: string): MedSend<unknown> =>
+  (labId: string, revisionId: string | undefined): MedSend<unknown> =>
   (client) =>
-    client.patients.undoLabCorrection({ headers: {}, params: { labId } });
+    client.patients.undoLabCorrection({
+      headers: {},
+      params: { labId },
+      payload: revisionId === undefined ? {} : { revisionId },
+    });
 
 /** What each correction replaced, the latest first, under the result it belongs to. */
 export function LabRevisions({ lab, today }: { readonly lab: MedLab; readonly today: string }) {
@@ -75,11 +94,11 @@ export function LabRevisions({ lab, today }: { readonly lab: MedLab; readonly to
         const changes = revisionChanges(lab.revisions[index - 1] ?? lab, revision, today);
         return (
           <li
-            key={revision.replacedAt}
+            key={revision.id}
             className="whitespace-normal text-muted-foreground text-xs tabular-nums"
           >
-            Was {changes.length === 0 ? "the same" : changes.join(", ")}, corrected{" "}
-            {formatDay(revision.replacedAt.slice(0, 10), today)}
+            Was {changes.length === 0 ? "the same" : changes.join(", ")},{" "}
+            {correctedLabel(revision, today)}
           </li>
         );
       })}
@@ -111,11 +130,11 @@ function CorrectLabDialog({
       send: (client) =>
         client.patients.correctLab({ headers: {}, params: { labId: lab.id }, payload: change }),
       done: `Corrected ${lab.testName}. It is a draft until you verify it.`,
-      undo: {
-        send: undoCorrection(lab.id),
+      undo: (corrected) => ({
+        send: undoCorrection(lab.id, corrected.revisions[0]?.id),
         done: "Correction undone",
         failed: "Could not undo the correction",
-      },
+      }),
     });
     if (result.ok) return onClose();
     setSaving(false);
@@ -265,40 +284,40 @@ export function LabRowActions({ lab, today }: { readonly lab: MedLab; readonly t
         send: setVerified(lab.id, true),
         done: `Verified ${name}`,
         failed: "Could not verify this result",
-        undo: {
-          send: setVerified(lab.id, false),
+        undo: ({ updatedAt }) => ({
+          send: setVerified(lab.id, false, updatedAt),
           done: `${name} is a draft again`,
           failed: "Could not return it to draft",
-        },
+        }),
       }),
     unverify: () =>
       void actOnMed({
         send: setVerified(lab.id, false),
         done: `${name} is a draft again`,
         failed: "Could not return it to draft",
-        undo: {
-          send: setVerified(lab.id, true),
+        undo: ({ updatedAt }) => ({
+          send: setVerified(lab.id, true, updatedAt),
           done: `Verified ${name}`,
           failed: "Could not verify this result",
-        },
+        }),
       }),
     correct: () => setCorrecting(true),
     "undo-correction": () =>
       void actOnMed({
-        send: undoCorrection(lab.id),
+        send: undoCorrection(lab.id, lab.revisions[0]?.id),
         done: `Put back what ${lab.testName} said before`,
         failed: "Could not undo the correction",
       }),
     remove: () =>
       void actOnMed({
-        send: setRemoved(lab.id, true),
+        send: setLabRemoved(lab.id, true),
         done: `Removed ${name}`,
         failed: "Could not remove this result",
-        undo: {
-          send: setRemoved(lab.id, false),
+        undo: ({ updatedAt }) => ({
+          send: setLabRemoved(lab.id, false, updatedAt),
           done: `Put back ${name}`,
           failed: "Could not put it back",
-        },
+        }),
       }),
   };
   return (

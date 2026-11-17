@@ -385,6 +385,7 @@ const plan = (
   type: "follow_up",
   status,
   doneOn,
+  updatedAt: "2026-11-01T00:00:00.000Z",
 });
 
 const plans = [
@@ -426,6 +427,7 @@ describe("patientTimeline", () => {
       date,
       summary: "",
       needsYou: "",
+      needsYouHandledAt: null,
     });
     const timeline = patientTimeline({
       labs: [baseline, hba1c, converted, antibody, draft],
