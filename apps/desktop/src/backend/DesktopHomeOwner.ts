@@ -96,11 +96,11 @@ export const homeOwnedMessage = (owner: Option.Option<HomeOwner>): string =>
     onSome: (owner) => {
       const kind = owner.serviceManaged
         ? "The T3 Code background service"
-        : "Another T3 Code server (for example `t3 serve`, or one started over SSH)";
+        : "Another T3 Med server (for example `start-t3-med.cmd`)";
       const version = owner.serverVersion ? `, version ${owner.serverVersion}` : "";
       const stop = owner.serviceManaged
         ? "Stop it with `t3 service uninstall`, passing `--base-dir` with this T3 home"
         : "If a T3 Code app on another machine started it over SSH, that app restarts it: remove or disconnect that SSH environment there, or quit that app. Then stop the server";
-      return `${kind} is using this T3 home (PID ${owner.pid}, port ${owner.port}${version}). ${stop}, and reopen T3 Code. You can also set a separate T3CODE_HOME and pair with the running server.`;
+      return `${kind} is using this T3 home (PID ${owner.pid}, port ${owner.port}${version}). ${stop}, and reopen T3 Med.`;
     },
   });

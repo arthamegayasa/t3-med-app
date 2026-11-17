@@ -30,7 +30,7 @@ Never rename these, in upstream code or in fork code that refers to them.
 | The desktop app    | `scripts/lib/med-identity.ts`: product name, app id `com.arthamegayasa.t3med`, package name `t3med`, window scheme `t3med`, profile folder, port 3900                                         | Never upstream's value: T3 Code runs on the same machine. See The desktop app in FORK.md                                                                                  |
 | What is hidden     | One-line conditions on `T3MED` (`apps/web/src/med/t3med.ts`)                                                                                                                                  | Hide, never delete: `false` must give upstream's chrome back                                                                                                              |
 
-Fork code lives in `med/` folders (`apps/server/src/med/`, `apps/web/src/med/`, `apps/server/src/mcp/toolkits/patient/`, `packages/contracts/src/med.ts`) and each file's first comment starts with `T3 Med:`. An edit to an upstream file is one import and one line where it can be, shaped so the formatter does not re-indent upstream's code: a second argument to a call that wraps a long list re-flowed 150 lines of `RightPanelTabs.tsx`, and a separate hook name did not.
+Fork code lives in `med/` folders (`apps/server/src/med/`, `apps/web/src/med/`, `apps/server/src/mcp/toolkits/patient/`, `packages/contracts/src/med.ts`, `apps/desktop/src/med/`, `scripts/med/`, `assets/med/`; `scripts/lib/med-identity.ts` sits beside upstream's script libraries because both the app and the packaging compile that folder) and each file's first comment starts with `T3 Med:`. An edit to an upstream file is one import and one line where it can be, shaped so the formatter does not re-indent upstream's code: a second argument to a call that wraps a long list re-flowed 150 lines of `RightPanelTabs.tsx`, and a separate hook name did not.
 
 ## Taking an upstream release
 
@@ -58,7 +58,8 @@ Done about once a month, from a stable tag. This is the routine as it was run fo
    grep -rn "t3med" apps/server/src/os-jank.ts apps/server/src/cli/browser.ts apps/desktop/src/app/DesktopStatePaths.ts
    grep -rn "arthamegayasa" packages/shared/src apps/desktop/src
    grep -rn "med/identity\|med/workspace" apps/desktop/src --include=*.ts | grep -v "src/med/"
-   grep -n "t3med" apps/server/src/httpCors.ts apps/server/src/cliCompileCache.ts packages/shared/src/providerAuthReturnUrl.ts apps/desktop/package.json
+   grep -n "t3med" apps/server/src/httpCors.ts apps/server/src/cliCompileCache.ts packages/shared/src/providerAuthReturnUrl.ts
+   grep -n '"productName": "T3 Med"' apps/desktop/package.json
    grep -n "MED_\|medStagePackageJson\|applyMedWebIcons" scripts/build-desktop-artifact.ts
    ```
 

@@ -12,6 +12,7 @@ import * as ElectronMenu from "../electron/ElectronMenu.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as DesktopUpdates from "../updates/DesktopUpdates.ts";
 import * as DesktopWindow from "./DesktopWindow.ts";
+import { MED_HIDES_UPDATE_MENU } from "../med/identity.ts";
 
 export class DesktopApplicationMenuActionError extends Schema.TaggedError<DesktopApplicationMenuActionError>()(
   "DesktopApplicationMenuActionError",
@@ -352,6 +353,7 @@ export const make = Effect.gen(function* () {
           {
             label: "Check for Updates...",
             click: checkForUpdatesClick,
+            visible: !MED_HIDES_UPDATE_MENU,
           },
         ],
       },

@@ -426,7 +426,7 @@ function AboutVersionSection() {
           }
         />
       ) : null}
-      {hasDesktopBridge ? <CliCommandSettingsRow /> : null}
+      {hasDesktopBridge && !T3MED ? <CliCommandSettingsRow /> : null}
       {switchChannel === null ? null : (
         <UpdateTrackSwitchDialog channel={switchChannel} onClose={() => setSwitchChannel(null)} />
       )}

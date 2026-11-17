@@ -23,7 +23,8 @@ const nonEmpty = (value: unknown): string | undefined =>
 /** The workspace named by the settings file's text, or undefined when it names none. */
 export function parseMedWorkspaceSetting(raw: string): string | undefined {
   try {
-    const parsed: unknown = JSON.parse(raw);
+    // Windows PowerShell 5.1 writes a byte order mark, which JSON.parse refuses.
+    const parsed: unknown = JSON.parse(raw.replace(/^﻿/, ""));
     return typeof parsed === "object" && parsed !== null && "workspace" in parsed
       ? nonEmpty(parsed.workspace)
       : undefined;
@@ -88,6 +89,12 @@ export const medPrimaryStart = Effect.fn("med.desktop.primaryStart")(function* (
   const settingsFile = readSettingsFile(settingsPath);
   if (settingsFile === undefined) writeDefaultSettingsFile(settingsPath);
   const workspace = resolveMedWorkspace({ env: env[WORKSPACE_ENV], settingsFile });
+  if (settingsFile !== undefined && parseMedWorkspaceSetting(settingsFile) === undefined) {
+    // In JSON a Windows path needs doubled backslashes; a hand edit often forgets.
+    yield* Effect.logWarning("T3 Med workspace setting could not be read; using the default", {
+      settingsPath,
+    });
+  }
   if (!isDirectory(workspace)) {
     yield* Effect.logWarning("T3 Med workspace folder not found; starting without a project", {
       workspace,

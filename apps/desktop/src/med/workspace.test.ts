@@ -20,6 +20,11 @@ describe("resolveMedWorkspace", () => {
     );
   });
 
+  it("reads a file saved with a byte order mark, as Windows PowerShell saves it", () => {
+    const raw = `﻿${JSON.stringify({ workspace: "E:\Clinic" })}`;
+    assert.equal(parseMedWorkspaceSetting(raw), "E:\Clinic");
+  });
+
   it("falls back to the default when the file names no folder", () => {
     for (const raw of ["", "not json", "[]", "{}", '{"workspace":""}', '{"workspace":7}']) {
       assert.equal(parseMedWorkspaceSetting(raw), undefined, raw);

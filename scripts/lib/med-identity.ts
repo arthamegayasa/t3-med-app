@@ -49,6 +49,9 @@ export const MED_OWN_USER_DATA: boolean = true;
  */
 export const MED_KEEPS_OFF_PATH: boolean = true;
 
+/** The fork has no update feed (docs/t3-med/FORK.md, Updates), so the menu offers no check. */
+export const MED_HIDES_UPDATE_MENU: boolean = true;
+
 /** Electron's user-data folder under `%APPDATA%`. Upstream's are `t3code-v2` and `t3code-dev`. */
 export const medUserDataDirName = (isDevelopment: boolean): string =>
   isDevelopment ? `${MED_PACKAGE_NAME}-dev` : MED_PACKAGE_NAME;
