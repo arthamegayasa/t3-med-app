@@ -31,7 +31,7 @@ describe("the list of upstream tests T3 Med skips", () => {
   });
 
   it("finds a file's entries by its absolute path, on Windows too", () => {
-    expect(skippedTestsOfFile("D:\app\apps\web\src\a.test.ts", list)).toHaveLength(3);
+    expect(skippedTestsOfFile("D:\\app\\apps\\web\\src\\a.test.ts", list)).toHaveLength(3);
     expect(skippedTestsOfFile("/app/apps/web/src/b.test.ts", list)).toHaveLength(1);
     // A file whose name only ends the same is another file.
     expect(skippedTestsOfFile("/app/apps/web/src/extra-a.test.ts", list)).toEqual([]);

@@ -26,6 +26,7 @@ import {
 } from "@t3tools/shared/managedPolicyFile";
 
 import { telemetryChannel } from "../config.ts";
+import { medPolicy } from "../med/settingsDefaults.ts";
 import * as ManagedLimits from "./managedLimits.ts";
 import * as ManagedProviders from "./managedProviders.ts";
 import * as ManagedSettings from "./managedSettings.ts";
@@ -202,7 +203,7 @@ const make = Effect.gen(function* () {
       lockedSettings: policy.summary.lockedSettings,
     });
   }
-  return policy;
+  return medPolicy(policy);
 });
 
 // A single-executable server resolves packages on disk only through `require`.

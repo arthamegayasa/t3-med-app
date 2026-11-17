@@ -99,6 +99,7 @@ import {
   makeAcpClientPolicyGrants,
   unknownRecord,
 } from "./clientPolicy.ts";
+import { patientToolDisposition } from "./med/patientToolApproval.ts";
 import { parseElicitationForm } from "./elicitationForm.ts";
 import {
   makeAcpClientTerminals,
@@ -6914,7 +6915,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                       ? { ...params, toolCall: { ...params.toolCall, kind: knownKind } }
                       : params,
                   );
-                  if (disposition === "allow") {
+                  const patientTool = patientToolDisposition(
+                    disposition,
+                    (context?.input.runtimePolicy ?? latestRuntimePolicy).runtimeMode,
+                    context?.tools.get(params.toolCall.toolCallId),
+                  );
+                  if (patientTool === "allow") {
                     const optionId = selectAutoApprovedPermissionOption(answerableParams);
                     return {
                       _tag: "Immediate" as const,

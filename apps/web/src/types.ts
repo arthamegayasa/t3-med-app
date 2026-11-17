@@ -26,9 +26,10 @@ import type { ThreadCheckpointSummary } from "@t3tools/client-runtime/state/thre
 import { videoMimeType } from "@t3tools/shared/video";
 
 export { videoMimeType } from "@t3tools/shared/video";
+import { medRuntimeMode } from "./med/medDefaults";
 
 export type SessionPhase = "disconnected" | "connecting" | "ready" | "running";
-export const DEFAULT_RUNTIME_MODE: RuntimeMode = "full-access";
+export const DEFAULT_RUNTIME_MODE: RuntimeMode = medRuntimeMode("full-access");
 
 export const DEFAULT_INTERACTION_MODE: ProviderInteractionMode = "default";
 export const DEFAULT_THREAD_TERMINAL_HEIGHT = 280;

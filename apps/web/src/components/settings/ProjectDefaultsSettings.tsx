@@ -1,5 +1,4 @@
 import {
-  DEFAULT_SERVER_SETTINGS,
   type ModelSelection,
   type WorktreeSubmodules,
   managedRuntimeModeDenial,
@@ -36,6 +35,7 @@ import {
   SettingsSection,
 } from "./settingsLayout";
 import { useScopedModelDisabledReason } from "./useScopedModelAvailability";
+import { DEFAULT_SERVER_SETTINGS } from "../../med/medDefaults";
 import { patientWording } from "../../med/medHidden";
 import {
   useScopedSettings,

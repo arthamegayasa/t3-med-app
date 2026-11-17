@@ -181,6 +181,17 @@ const layerHandlers = HttpApiBuilder.group(
         }),
       )
       .handle(
+        "threadPatients",
+        Effect.fn("med.patients.threadPatients")(function* (args) {
+          yield* annotateEnvironmentRequest(args.endpoint.name);
+          yield* requireEnvironmentScope(AuthOrchestrationReadScope);
+          const links = yield* store
+            .listThreadPatients()
+            .pipe(Effect.catchTags({ PatientStoreError: failStore }));
+          return { links };
+        }),
+      )
+      .handle(
         "threadPatient",
         Effect.fn("med.patients.threadPatient")(function* (args) {
           yield* annotateEnvironmentRequest(args.endpoint.name);

@@ -14,6 +14,33 @@ import {
   EnvironmentScopeRequiredError,
 } from "./environmentHttp.ts";
 
+/** The name agents know T3 Med's own MCP server by. Upstream's, never renamed. */
+export const MED_MCP_SERVER_NAME = "t3-code";
+
+/**
+ * The tools an agent files and reads patient data with. A thread that asks before it acts runs
+ * exactly these without asking; `handlers.test.ts` holds the list to the toolkit's.
+ */
+export const PATIENT_TOOL_NAMES: ReadonlyArray<string> = [
+  "patient_find",
+  "patient_create",
+  "patient_update",
+  "patient_file",
+  "patient_record",
+  "patient_review",
+  "patient_upcoming",
+  "patient_verify",
+  "patient_move_note",
+  "patient_correct_lab",
+  "patient_remove",
+  "patient_update_plan",
+  "patient_return_note",
+];
+
+/** Whether a call names one of the patient tools on T3 Med's own server, and nothing else. */
+export const isPatientToolCall = (server: unknown, tool: unknown): boolean =>
+  server === MED_MCP_SERVER_NAME && typeof tool === "string" && PATIENT_TOOL_NAMES.includes(tool);
+
 /**
  * A URN as it is compared: upper case, letters and digits only. The store keys patients by it
  * and the directory searches by it, so both must build it the same way.
@@ -248,6 +275,17 @@ export const MedThreadPatient = Schema.Struct({
 });
 export type MedThreadPatient = typeof MedThreadPatient.Type;
 
+// One answer for every sidebar row, so the thread list never asks once per thread.
+export const MedThreadPatientLink = Schema.Struct({
+  threadId: Schema.String,
+  patientId: Schema.String,
+  name: Schema.String,
+  urn: Schema.NullOr(Schema.String),
+});
+export type MedThreadPatientLink = typeof MedThreadPatientLink.Type;
+export const MedThreadPatientLinks = Schema.Struct({ links: Schema.Array(MedThreadPatientLink) });
+export type MedThreadPatientLinks = typeof MedThreadPatientLinks.Type;
+
 export class MedPatientNotFoundError extends Schema.TaggedError<MedPatientNotFoundError>()(
   "MedPatientNotFoundError",
   { patientId: Schema.String },
@@ -458,6 +496,13 @@ class MedPatientsHttpApi extends HttpApiGroup.make("patients")
     HttpApiEndpoint.get("counts", "/api/med/counts", {
       headers: BearerHeaders,
       success: MedCounts,
+      error: ReadErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.get("threadPatients", "/api/med/thread-patients", {
+      headers: BearerHeaders,
+      success: MedThreadPatientLinks,
       error: ReadErrors,
     }).middleware(EnvironmentAuthenticatedAuth),
   )

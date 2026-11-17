@@ -142,6 +142,7 @@ const READ_ROUTES = [
   "/api/med/upcoming",
   "/api/med/counts",
   "/api/med/threads/thread-1/patient",
+  "/api/med/thread-patients",
 ];
 
 const WRITE_ROUTES = [
@@ -234,6 +235,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("med HTTP routes"
         "GET /api/med/patients/:patientId",
         "GET /api/med/patients/:patientId/record",
         "GET /api/med/patients/:patientId/removed",
+        "GET /api/med/thread-patients",
         "GET /api/med/threads/:threadId/patient",
         "GET /api/med/upcoming",
         "PATCH /api/med/labs/:labId",
@@ -876,6 +878,18 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("med HTTP routes"
         });
         assert.deepStrictEqual((yield* get("/api/med/threads/thread-3/patient")).body, {
           patient: { id: made.id, name: "Ni Made Ayu" },
+        });
+        // Every linked thread in one answer, for the sidebar: the Inbox chat (thread-2) has none.
+        assert.deepStrictEqual((yield* get("/api/med/thread-patients")).body, {
+          links: [
+            {
+              threadId: "thread-1",
+              patientId: wayan.id,
+              name: "I Wayan Sudarma",
+              urn: "00-45-67-89",
+            },
+            { threadId: "thread-3", patientId: made.id, name: "Ni Made Ayu", urn: null },
+          ],
         });
       }).pipe(Effect.provide(layerStore)),
   );

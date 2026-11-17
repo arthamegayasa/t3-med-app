@@ -116,6 +116,7 @@ import {
   describeMcpElicitation,
   toMcpElicitationResponse,
 } from "../../provider/CodexMcpElicitation.ts";
+import { isPatientToolApproval } from "../../med/toolApproval.ts";
 import {
   materializeCodexShadowHome,
   resolveCodexHomeLayout,
@@ -6087,6 +6088,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             if (context.input.runtimePolicy.runtimeMode === "full-access") {
               return acceptance;
             }
+            if (isPatientToolApproval(payload)) return acceptance;
 
             const nativeRequestId =
               payload.mode === "url"

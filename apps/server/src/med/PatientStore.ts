@@ -29,6 +29,14 @@ export type PatientStatus = (typeof PATIENT_STATUSES)[number];
 export type PatientSex = (typeof PATIENT_SEXES)[number];
 export type NoteKind = (typeof NOTE_KINDS)[number];
 
+/** A thread and the patient it is linked to, with what a thread row shows of them. */
+export interface ThreadPatientLink {
+  readonly threadId: string;
+  readonly patientId: string;
+  readonly name: string;
+  readonly urn: string | null;
+}
+
 export interface Patient {
   readonly id: string;
   readonly name: string;
@@ -1082,6 +1090,11 @@ export class PatientStore extends Context.Service<
     readonly getThreadPatient: (
       threadId: string,
     ) => Effect.Effect<Option.Option<Patient>, PatientStoreError>;
+    /** Every thread's link, oldest thread id first: what a thread list shows beside each row. */
+    readonly listThreadPatients: () => Effect.Effect<
+      ReadonlyArray<ThreadPatientLink>,
+      PatientStoreError
+    >;
   }
 >()("t3/med/PatientStore") {}
 
@@ -2865,6 +2878,19 @@ const make = Effect.gen(function* () {
 
     getThreadPatient: Effect.fn("PatientStore.getThreadPatient")(function* (threadId) {
       return yield* readThreadPatient(threadId);
+    }),
+
+    listThreadPatients: Effect.fn("PatientStore.listThreadPatients")(function* () {
+      return yield* sql<ThreadPatientLink>`
+        SELECT
+          t.thread_id AS "threadId",
+          p.id AS "patientId",
+          p.name AS "name",
+          p.urn AS "urn"
+        FROM thread_patients t
+        JOIN patients p ON p.id = t.patient_id
+        ORDER BY t.thread_id
+      `.pipe(failedIn("listThreadPatients:query"));
     }),
   });
 });
