@@ -262,6 +262,19 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("PatientStore", (
         "W. Sudarma",
         "Pak Yan",
       ]);
+
+      // The doctor's own list replaces the spellings, and wins over the old name a rename keeps.
+      const edit = (fields: Parameters<Store["updatePatient"]>[1]) =>
+        store
+          .updatePatient(patient.id, fields)
+          .pipe(Effect.map(({ name, alsoWrittenAs }) => [name, ...alsoWrittenAs]));
+      assert.deepStrictEqual(
+        yield* edit({ alsoWrittenAs: ["Pak Yan", " pak  yan ", "Wayan Sudarma", "", "Yan"] }),
+        ["Wayan Sudarma", "Pak Yan", "Yan"],
+      );
+      assert.deepStrictEqual(yield* edit({ name: "I Wayan Sudarma", alsoWrittenAs: [] }), [
+        "I Wayan Sudarma",
+      ]);
     }).pipe(Effect.provide(layerStore)),
   );
 
@@ -2080,6 +2093,571 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("PatientStore", (
         [null, null, "in_inbox"],
         [null, null, "in_inbox"],
       ]);
+    }).pipe(Effect.provide(layerStore)),
+  );
+
+  it.effect("corrects a filed result: a draft again, baselines redone, the old values kept", () =>
+    Effect.gen(function* () {
+      const store = yield* PatientStore.PatientStore;
+      const patient = yield* store.createPatient({ name: "Wayan" });
+      const filed = yield* fileLinked(store, {
+        threadId: "thread-1",
+        patientId: patient.id,
+        title: "Labs",
+        labs: [
+          { testAsWritten: "LDL", value: 160, unit: "mg/dL", collected: "2026-01-10" },
+          {
+            testAsWritten: "LDL",
+            value: 8,
+            unit: "mg/dL",
+            referenceRange: "< 100",
+            collected: "2026-03-10",
+          },
+          { testAsWritten: "HDL", value: 40, unit: "mg/dL", collected: "2026-02-10" },
+        ],
+      });
+      yield* store.verifyNote(filed.note.id);
+      const [first, typo, hdl] = filed.labs;
+      const read = (labId: string) =>
+        store
+          .listLabs({ patientId: patient.id })
+          .pipe(Effect.map((labs) => labs.find((lab) => lab.id === labId)!));
+      yield* TestClock.adjust(Duration.minutes(1));
+
+      // The sheet says 80, not 8.
+      const corrected = yield* store.correctLab({ labId: typo!.id, value: 80, valueText: "80" });
+      assert.deepInclude(corrected, {
+        id: typo!.id,
+        value: 80,
+        valueText: "80",
+        referenceRange: "< 100",
+        status: "draft",
+        isBaseline: false,
+        changeFromBaseline: -80,
+        changePercent: -50,
+      });
+      assert.deepStrictEqual(corrected.revisions, [
+        {
+          testAsWritten: "LDL",
+          value: 8,
+          valueText: "8",
+          unit: "mg/dL",
+          referenceRange: "< 100",
+          flag: null,
+          collected: "2026-03-10",
+          status: "verified",
+          replacedAt: corrected.updatedAt,
+        },
+      ]);
+      assert.deepStrictEqual(
+        [(yield* read(first!.id)).status, (yield* read(hdl!.id)).status],
+        ["verified", "verified"],
+      );
+      assert.strictEqual((yield* store.getPatientHome(patient.id)).draftLabs, 1);
+
+      // An earlier date makes it the baseline, and the old baseline is compared with it.
+      const earlier = yield* store.correctLab({ labId: typo!.id, collected: "2026-01-02" });
+      assert.deepInclude(earlier, { collected: "2026-01-02", isBaseline: true });
+      assert.deepInclude(yield* read(first!.id), { isBaseline: false, changeFromBaseline: 80 });
+      assert.deepStrictEqual(
+        earlier.revisions.map((revision) => [revision.collected, revision.value, revision.status]),
+        [
+          ["2026-03-10", 80, "draft"],
+          ["2026-03-10", 8, "verified"],
+        ],
+      );
+
+      // Another test: both tests' baselines are worked out again.
+      const renamed = yield* store.correctLab({ labId: typo!.id, testAsWritten: "HDL" });
+      assert.deepInclude(renamed, {
+        labTestId: hdl!.labTestId,
+        testId: "hdl",
+        testAsWritten: "HDL",
+        isBaseline: true,
+      });
+      assert.deepInclude(yield* read(first!.id), { isBaseline: true, changeFromBaseline: null });
+      assert.deepInclude(yield* read(hdl!.id), { isBaseline: false, changeFromBaseline: -40 });
+
+      // A correction that changes nothing records nothing.
+      assert.lengthOf((yield* store.correctLab({ labId: typo!.id, unit: "mg/dL" })).revisions, 3);
+
+      // Undone one step at a time, back to what was first filed and verified.
+      assert.deepInclude(yield* store.undoLabCorrection(typo!.id), {
+        labTestId: first!.labTestId,
+        collected: "2026-01-02",
+        isBaseline: true,
+        status: "draft",
+      });
+      assert.deepInclude(yield* read(hdl!.id), { isBaseline: true, changeFromBaseline: null });
+      assert.deepInclude(yield* store.undoLabCorrection(typo!.id), {
+        collected: "2026-03-10",
+        value: 80,
+        changeFromBaseline: -80,
+        status: "draft",
+      });
+      const undone = yield* store.undoLabCorrection(typo!.id);
+      assert.deepInclude(undone, { value: 8, valueText: "8", status: "verified", revisions: [] });
+      assert.strictEqual(
+        yield* failureTag(store.undoLabCorrection(typo!.id)),
+        "NoLabCorrectionError",
+      );
+
+      assert.deepStrictEqual(
+        yield* refusedField(store.correctLab({ labId: typo!.id, collected: "2026-02-30" })),
+        ["InvalidDateError", "collected"],
+      );
+      // The number and the text as written are replaced together, and never both left out.
+      assert.deepStrictEqual(
+        yield* refusedField(store.correctLab({ labId: typo!.id, value: null })),
+        ["InvalidLabValueError", "value"],
+      );
+      assert.deepInclude(
+        yield* store.correctLab({ labId: typo!.id, value: null, valueText: "haemolysed" }),
+        { value: null, valueText: "haemolysed", changeFromBaseline: null },
+      );
+      assert.strictEqual(
+        yield* failureTag(store.correctLab({ labId: "missing", value: 1 })),
+        "LabNotFoundError",
+      );
+    }).pipe(Effect.provide(layerStore)),
+  );
+
+  it.effect("removes a lab or plan from every list, count and baseline, and puts it back", () =>
+    Effect.gen(function* () {
+      const store = yield* PatientStore.PatientStore;
+      const patient = yield* store.createPatient({ name: "Wayan" });
+      const filed = yield* fileLinked(store, {
+        threadId: "thread-1",
+        patientId: patient.id,
+        title: "Labs",
+        labs: [
+          { testAsWritten: "LDL", value: 160, unit: "mg/dL", collected: "2026-01-10" },
+          { testAsWritten: "LDL", value: 80, unit: "mg/dL", collected: "2026-03-10" },
+        ],
+        plans: [{ title: "Clinic visit", due: "2026-11-25", type: "follow_up" }],
+      });
+      const [first, second] = filed.labs;
+      const plan = filed.plans[0]!;
+      const seen = Effect.gen(function* () {
+        const home = yield* store.getPatientHome(patient.id);
+        const waiting = yield* store.listNeedsYou();
+        return {
+          labs: (yield* store.getPatientRecord({ patientId: patient.id })).labs.map((lab) => [
+            lab.id,
+            lab.isBaseline,
+            lab.changeFromBaseline,
+          ]),
+          plans: (yield* store.listPlans({ patientId: patient.id })).length,
+          drafts: [home.draftLabs, home.draftPlans],
+          ahead: [home.upcomingPlans.length, (yield* store.listUpcomingPlans()).length],
+          upcoming: (yield* store.getCounts()).upcoming,
+          waiting: waiting.patients.map((entry) => [entry.draftLabs, entry.draftPlans]),
+        };
+      });
+      const whole = {
+        labs: [
+          [first!.id, true, null],
+          [second!.id, false, -80],
+        ],
+        plans: 1,
+        drafts: [2, 1],
+        ahead: [1, 1],
+        upcoming: 1,
+        waiting: [[2, 1]],
+      };
+      assert.deepStrictEqual(yield* seen, whole);
+
+      yield* store.setRemoved({ row: "lab", id: first!.id, removed: true });
+      yield* store.setRemoved({ row: "lab", id: first!.id, removed: true });
+      yield* store.setRemoved({ row: "plan", id: plan.id, removed: true });
+      assert.deepStrictEqual(yield* seen, {
+        labs: [[second!.id, true, null]],
+        plans: 0,
+        drafts: [1, 0],
+        ahead: [0, 0],
+        upcoming: 0,
+        waiting: [[1, 0]],
+      });
+      // What is removed is neither corrected, changed nor verified.
+      assert.strictEqual(
+        yield* failureTag(store.correctLab({ labId: first!.id, value: 1 })),
+        "LabNotFoundError",
+      );
+      assert.strictEqual(
+        yield* failureTag(store.updatePlan({ planId: plan.id, status: "done" })),
+        "PlanNotFoundError",
+      );
+      assert.deepStrictEqual(yield* store.verifyNote(filed.note.id), {
+        labsVerified: 1,
+        plansPlanned: 0,
+        patientActivated: true,
+      });
+
+      yield* store.setRemoved({ row: "lab", id: first!.id, removed: false });
+      yield* store.setRemoved({ row: "plan", id: plan.id, removed: false });
+      assert.deepStrictEqual(yield* seen, { ...whole, drafts: [1, 1], waiting: [[1, 1]] });
+
+      assert.strictEqual(
+        yield* failureTag(store.setRemoved({ row: "lab", id: plan.id, removed: true })),
+        "LabNotFoundError",
+      );
+      assert.strictEqual(
+        yield* failureTag(store.setRemoved({ row: "plan", id: "missing", removed: false })),
+        "PlanNotFoundError",
+      );
+    }).pipe(Effect.provide(layerStore)),
+  );
+
+  it.effect("marks a plan done with its day, cancels, reopens and changes it", () =>
+    Effect.gen(function* () {
+      const store = yield* PatientStore.PatientStore;
+      const patient = yield* store.createPatient({ name: "Wayan" });
+      const filed = yield* fileLinked(store, {
+        threadId: "thread-1",
+        patientId: patient.id,
+        title: "Plans",
+        plans: [
+          { title: "Clinic visit", due: "2026-11-25", type: "follow_up" },
+          { title: "EEG", due: "2026-11-27", type: "procedure" },
+        ],
+      });
+      const [visit, eeg] = filed.plans;
+      const today = (yield* store.upsertThreadNote({
+        threadId: "thread-9",
+        patientId: null,
+        title: "Today",
+      })).date;
+
+      // A draft that is closed and reopened is a draft again: reopening verifies nothing.
+      assert.deepInclude(yield* store.updatePlan({ planId: eeg!.id, status: "done" }), {
+        status: "done",
+        doneOn: today,
+      });
+      assert.deepInclude(yield* store.updatePlan({ planId: eeg!.id, status: "open" }), {
+        status: "draft",
+        doneOn: null,
+      });
+
+      yield* store.verifyNote(filed.note.id);
+      const done = yield* store.updatePlan({
+        planId: visit!.id,
+        status: "done",
+        doneOn: "2026-11-20",
+      });
+      assert.deepInclude(done, { status: "done", doneOn: "2026-11-20", due: "2026-11-25" });
+      assert.deepStrictEqual(
+        (yield* store.listUpcomingPlans()).map((plan) => plan.id),
+        [eeg!.id],
+      );
+      assert.deepInclude(yield* store.updatePlan({ planId: visit!.id, doneOn: "2026-11-21" }), {
+        status: "done",
+        doneOn: "2026-11-21",
+      });
+      assert.deepInclude(yield* store.updatePlan({ planId: visit!.id, status: "cancelled" }), {
+        status: "cancelled",
+        doneOn: null,
+      });
+      assert.deepInclude(yield* store.updatePlan({ planId: visit!.id, status: "open" }), {
+        status: "planned",
+        doneOn: null,
+      });
+
+      // The doctor's own change of a confirmed plan stays confirmed; an agent's is a draft again.
+      assert.deepInclude(
+        yield* store.updatePlan({
+          planId: visit!.id,
+          title: "  Clinic visit, with MRI ",
+          due: "2026-12-02",
+        }),
+        { title: "Clinic visit, with MRI", due: "2026-12-02", status: "planned" },
+      );
+      assert.deepInclude(
+        yield* store.updatePlan({ planId: visit!.id, threadId: "thread-1", due: "2026-12-03" }),
+        { due: "2026-12-03", status: "draft" },
+      );
+
+      const refused = (fields: Omit<Parameters<Store["updatePlan"]>[0], "planId">) =>
+        refusedField(store.updatePlan({ planId: visit!.id, ...fields }));
+      assert.deepStrictEqual(yield* refused({ due: "2026-13-01" }), ["InvalidDateError", "due"]);
+      assert.deepStrictEqual(yield* refused({ title: " " }), ["BlankFieldError", "title"]);
+      assert.deepStrictEqual(yield* refused({ status: "done", doneOn: "20 Nov" }), [
+        "InvalidDateError",
+        "doneOn",
+      ]);
+      assert.deepStrictEqual(yield* refused({ doneOn: "2026-11-20" }), [
+        "PlanNotDoneError",
+        undefined,
+      ]);
+      assert.deepStrictEqual(yield* refused({ status: "planned" as never }), [
+        "InvalidChoiceError",
+        "status",
+      ]);
+      assert.strictEqual(
+        yield* failureTag(store.updatePlan({ planId: "missing", status: "done" })),
+        "PlanNotFoundError",
+      );
+    }).pipe(Effect.provide(layerStore)),
+  );
+
+  it.effect("verifies one draft result or plan, and returns it to draft", () =>
+    Effect.gen(function* () {
+      const store = yield* PatientStore.PatientStore;
+      const patient = yield* store.createPatient({ name: "Wayan" });
+      const ldl = { testAsWritten: "LDL", value: 100, unit: "mg/dL", collected: "2026-04-10" };
+      const plan = { title: "Clinic visit", due: "2026-11-25", type: "follow_up" } as const;
+      const filed = yield* fileLinked(store, {
+        threadId: "thread-1",
+        patientId: patient.id,
+        title: "Visit",
+        labs: [ldl, { ...ldl, testAsWritten: "HDL" }],
+        plans: [plan, { ...plan, title: "EEG" }],
+      });
+      const inbox = yield* store.fileFromThread({
+        threadId: "thread-2",
+        patientId: null,
+        title: "Unknown",
+        labs: [ldl],
+        plans: [plan],
+      });
+      const statuses = Effect.gen(function* () {
+        const labs = yield* store.listLabs({ patientId: patient.id });
+        const plans = yield* store.listPlans({ patientId: patient.id });
+        return [
+          (yield* store.getPatient(patient.id)).status,
+          ...filed.labs.map((filedLab) => labs.find((lab) => lab.id === filedLab.id)?.status),
+          ...filed.plans.map((filedPlan) => plans.find((row) => row.id === filedPlan.id)?.status),
+        ];
+      });
+      const set = (row: "lab" | "plan", id: string, verified: boolean) =>
+        store.setVerified({ row, id, verified });
+
+      yield* set("lab", filed.labs[0]!.id, true);
+      assert.deepStrictEqual(yield* statuses, ["active", "verified", "draft", "draft", "draft"]);
+      yield* set("plan", filed.plans[1]!.id, true);
+      yield* set("plan", filed.plans[1]!.id, true);
+      assert.deepStrictEqual(yield* statuses, ["active", "verified", "draft", "draft", "planned"]);
+      yield* set("lab", filed.labs[0]!.id, false);
+      yield* set("plan", filed.plans[1]!.id, false);
+      assert.deepStrictEqual(yield* statuses, ["active", "draft", "draft", "draft", "draft"]);
+
+      // A plan that is done is neither a draft nor planned, so this leaves it alone.
+      yield* store.updatePlan({ planId: filed.plans[0]!.id, status: "done" });
+      yield* set("plan", filed.plans[0]!.id, false);
+      yield* set("plan", filed.plans[0]!.id, true);
+      assert.strictEqual((yield* statuses)[3], "done");
+
+      assert.strictEqual(
+        yield* failureTag(set("lab", inbox.labs[0]!.id, true)),
+        "NoteInInboxError",
+      );
+      assert.strictEqual(
+        yield* failureTag(set("plan", inbox.plans[0]!.id, true)),
+        "NoteInInboxError",
+      );
+      assert.strictEqual(yield* failureTag(set("lab", "missing", true)), "LabNotFoundError");
+      assert.strictEqual(yield* failureTag(set("plan", "missing", false)), "PlanNotFoundError");
+    }).pipe(Effect.provide(layerStore)),
+  );
+
+  it.effect("moves a patient's note back to the Inbox with its labs and plans as drafts", () =>
+    Effect.gen(function* () {
+      const store = yield* PatientStore.PatientStore;
+      const patient = yield* store.createPatient({ name: "Wayan" });
+      const earlier = yield* fileLinked(store, {
+        threadId: "thread-1",
+        patientId: patient.id,
+        title: "January",
+        labs: [{ testAsWritten: "LDL", value: 160, unit: "mg/dL", collected: "2026-01-10" }],
+      });
+      const later = yield* fileLinked(store, {
+        threadId: "thread-2",
+        patientId: patient.id,
+        title: "March",
+        labs: [{ testAsWritten: "LDL", value: 80, unit: "mg/dL", collected: "2026-03-10" }],
+        plans: [{ title: "Clinic visit", due: "2026-11-25", type: "follow_up" }],
+      });
+      yield* store.verifyNote(earlier.note.id);
+      yield* store.verifyNote(later.note.id);
+      const labs = (owner: PatientStore.RowOwner) =>
+        store
+          .listLabs(owner)
+          .pipe(
+            Effect.map((rows) =>
+              rows.map((lab) => [
+                lab.value,
+                lab.status,
+                lab.isBaseline,
+                lab.changeFromBaseline,
+                lab.notCompared,
+              ]),
+            ),
+          );
+      assert.deepStrictEqual(yield* labs({ patientId: patient.id }), [
+        [160, "verified", true, null, "first_result"],
+        [80, "verified", false, -80, null],
+      ]);
+
+      // The note that held the baseline leaves: the patient's other result takes over.
+      const moved = yield* store.moveNoteToInbox({ noteId: earlier.note.id });
+      assert.deepInclude(moved, { id: earlier.note.id, patientId: null, threadId: "thread-1" });
+      assert.deepStrictEqual(yield* labs({ patientId: patient.id }), [
+        [80, "verified", true, null, "first_result"],
+      ]);
+      assert.deepStrictEqual(yield* labs({ inbox: true }), [
+        [160, "draft", false, null, "in_inbox"],
+      ]);
+      // The thread stays linked: only the agent tools, on evidence, change whom a thread is about.
+      assert.strictEqual(
+        Option.getOrNull(yield* store.getThreadPatient("thread-1"))?.id,
+        patient.id,
+      );
+
+      const returned = yield* store.returnThreadNoteToInbox({ threadId: "thread-2" });
+      assert.strictEqual(returned.note.id, later.note.id);
+      assert.deepStrictEqual(
+        returned.labs.map((lab) => [lab.value, lab.status, lab.patientId]),
+        [[80, "draft", null]],
+      );
+      assert.deepStrictEqual(yield* labs({ patientId: patient.id }), []);
+      assert.deepStrictEqual(
+        (yield* store.listPlans({ inbox: true })).map((plan) => [plan.title, plan.status]),
+        [["Clinic visit", "draft"]],
+      );
+      assert.lengthOf((yield* store.getPatientRecord({ patientId: patient.id })).notes, 0);
+
+      // And forward again, as the existing move does.
+      yield* store.moveNoteToPatient({ noteId: earlier.note.id, patientId: patient.id });
+      yield* store.moveNoteToPatient({ noteId: later.note.id, patientId: patient.id });
+      assert.deepStrictEqual(yield* labs({ patientId: patient.id }), [
+        [160, "draft", true, null, "first_result"],
+        [80, "draft", false, -80, null],
+      ]);
+
+      assert.strictEqual(
+        yield* failureTag(
+          store
+            .moveNoteToInbox({ noteId: earlier.note.id })
+            .pipe(Effect.andThen(store.moveNoteToInbox({ noteId: earlier.note.id }))),
+        ),
+        "NoteAlreadyInInboxError",
+      );
+      assert.strictEqual(
+        yield* failureTag(store.moveNoteToInbox({ noteId: "missing" })),
+        "NoteNotFoundError",
+      );
+      assert.strictEqual(
+        yield* failureTag(store.returnThreadNoteToInbox({ threadId: "thread-1" })),
+        "ThreadNoteNotFoundError",
+      );
+      const unlinked = yield* store
+        .returnThreadNoteToInbox({ threadId: "thread-7" })
+        .pipe(Effect.flip);
+      assert.strictEqual(
+        unlinked.message,
+        "This thread is not linked to a patient; find the patient by URN, or move this thread's Inbox note to a patient, before returning its note.",
+      );
+    }).pipe(Effect.provide(layerStore)),
+  );
+
+  it.effect("merges a returned note into the Inbox note its thread already has", () =>
+    Effect.gen(function* () {
+      const store = yield* PatientStore.PatientStore;
+      const patient = yield* store.createPatient({ name: "Wayan" });
+      const forPatient = yield* fileLinked(store, {
+        threadId: "thread-1",
+        patientId: patient.id,
+        title: "For Wayan",
+        summary: "Filed for Wayan",
+        labs: [{ testAsWritten: "LDL", value: 160, unit: "mg/dL", collected: "2026-01-10" }],
+        files: [{ name: "sheet.pdf", path: "C:\\sheets\\sheet.pdf" }],
+      });
+      const inInbox = yield* store.fileFromThread({
+        threadId: "thread-1",
+        patientId: null,
+        title: "Unknown",
+        summary: "Someone else",
+        plans: [{ title: "EEG", due: "2026-11-27", type: "procedure" }],
+      });
+
+      const merged = yield* store.moveNoteToInbox({ noteId: forPatient.note.id });
+      assert.deepInclude(merged, {
+        id: inInbox.note.id,
+        patientId: null,
+        title: "Unknown",
+        summary: "Someone else\n\nFiled for Wayan",
+      });
+      assert.deepStrictEqual(
+        (yield* store.listLabs({ inbox: true })).map((lab) => lab.sourceNoteId),
+        [inInbox.note.id],
+      );
+      assert.lengthOf(yield* store.listPlans({ inbox: true, sourceNoteId: inInbox.note.id }), 1);
+      assert.lengthOf(yield* store.addNoteFiles({ noteId: inInbox.note.id, files: [] }), 1);
+      assert.strictEqual(
+        yield* failureTag(store.moveNoteToInbox({ noteId: forPatient.note.id })),
+        "NoteNotFoundError",
+      );
+    }).pipe(Effect.provide(layerStore)),
+  );
+
+  it.effect("lets a thread change only its patient's rows and what its own notes filed", () =>
+    Effect.gen(function* () {
+      const store = yield* PatientStore.PatientStore;
+      const wayan = yield* store.createPatient({ name: "Wayan" });
+      const made = yield* store.createPatient({ name: "Made" });
+      const ldl = { testAsWritten: "LDL", value: 100, unit: "mg/dL", collected: "2026-04-10" };
+      const plan = { title: "Clinic visit", due: "2026-11-25", type: "follow_up" } as const;
+      const ofWayan = yield* fileLinked(store, {
+        threadId: "thread-1",
+        patientId: wayan.id,
+        title: "Wayan",
+        labs: [ldl],
+        plans: [plan],
+      });
+      const ofMade = yield* fileLinked(store, {
+        threadId: "thread-2",
+        patientId: made.id,
+        title: "Made",
+        labs: [ldl],
+        plans: [plan],
+      });
+      const inbox = yield* store.fileFromThread({
+        threadId: "thread-3",
+        patientId: null,
+        title: "Unknown",
+        labs: [ldl],
+        plans: [plan],
+      });
+      const attempts = (threadId: string, filed: typeof ofWayan) =>
+        Effect.all([
+          failureTag(store.correctLab({ threadId, labId: filed.labs[0]!.id, value: 101 })),
+          failureTag(
+            store.setRemoved({ threadId, row: "lab", id: filed.labs[0]!.id, removed: false }),
+          ),
+          failureTag(
+            store.setRemoved({ threadId, row: "plan", id: filed.plans[0]!.id, removed: false }),
+          ),
+          failureTag(store.updatePlan({ threadId, planId: filed.plans[0]!.id, due: "2026-11-26" })),
+        ]);
+      const allowed = ["succeeded", "succeeded", "succeeded", "succeeded"];
+      const refused = Array.from({ length: 4 }, () => "RowOutOfReachError");
+
+      // Another thread linked to the same patient reaches the patient's rows too.
+      yield* store.linkThread({ threadId: "thread-4", patientId: wayan.id });
+      assert.deepStrictEqual(yield* attempts("thread-1", ofWayan), allowed);
+      assert.deepStrictEqual(yield* attempts("thread-4", ofWayan), allowed);
+      assert.deepStrictEqual(yield* attempts("thread-3", inbox), allowed);
+
+      assert.deepStrictEqual(yield* attempts("thread-1", ofMade), refused);
+      assert.deepStrictEqual(yield* attempts("thread-1", inbox), refused);
+      assert.deepStrictEqual(yield* attempts("thread-9", ofWayan), refused);
+      assert.deepStrictEqual(
+        (yield* store.listLabs({ patientId: made.id })).map((lab) => [lab.value, lab.revisions]),
+        [[100, []]],
+      );
+
+      // A thread that has moved on to another patient still reaches what its own note filed.
+      yield* store.linkThread({ threadId: "thread-1", patientId: made.id });
+      assert.deepStrictEqual(yield* attempts("thread-1", ofWayan), allowed);
     }).pipe(Effect.provide(layerStore)),
   );
 

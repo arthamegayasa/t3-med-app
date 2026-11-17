@@ -22,6 +22,8 @@ const PATIENT_SEXES = ["female", "male"] as const;
 const LAB_FLAGS = ["low", "normal", "high"] as const;
 const PLAN_TYPES = ["follow_up", "lab", "imaging", "procedure", "other"] as const;
 const NOTE_KINDS = ["chat", "lab_sheet", "imaging_report", "clinical_note", "other"] as const;
+/** What `updatePlan` can do to a plan's status; `open` reopens one that is done or cancelled. */
+const PLAN_MOVES = ["done", "cancelled", "open"] as const;
 
 export type PatientStatus = (typeof PATIENT_STATUSES)[number];
 export type PatientSex = (typeof PATIENT_SEXES)[number];
@@ -90,6 +92,19 @@ export type NotComparedReason =
   | "baseline_has_no_unit"
   | "no_verified_conversion";
 
+/** What a result said before a correction replaced it. */
+export interface LabRevision {
+  readonly testAsWritten: string;
+  readonly value: number | null;
+  readonly valueText: string;
+  readonly unit: string;
+  readonly referenceRange: string;
+  readonly flag: LabFlag | null;
+  readonly collected: string;
+  readonly status: "draft" | "verified";
+  readonly replacedAt: string;
+}
+
 export interface Lab {
   readonly id: string;
   readonly patientId: string | null;
@@ -120,6 +135,8 @@ export interface Lab {
   readonly notCompared: NotComparedReason | null;
   readonly lab: string;
   readonly sourceNoteId: string;
+  /** What it said before each correction, the latest first; empty when never corrected. */
+  readonly revisions: ReadonlyArray<LabRevision>;
   readonly createdAt: string;
   readonly updatedAt: string;
 }
@@ -184,6 +201,8 @@ export interface Plan {
   readonly due: string;
   readonly type: PlanType;
   readonly status: "draft" | "planned" | "done" | "cancelled";
+  /** The day a done plan was done; null for every other status. */
+  readonly doneOn: string | null;
   readonly sourceNoteId: string;
   readonly createdAt: string;
   readonly updatedAt: string;
@@ -280,10 +299,62 @@ export class ThreadNotLinkedError extends Schema.TaggedError<ThreadNotLinkedErro
 
 export class ThreadHasNoPatientError extends Schema.TaggedError<ThreadHasNoPatientError>()(
   "ThreadHasNoPatientError",
-  {},
+  { before: Schema.Literals(["verifying", "returning its note"]) },
 ) {
   override get message(): string {
-    return "This thread is not linked to a patient; find the patient by URN, or move this thread's Inbox note to a patient, before verifying.";
+    return `This thread is not linked to a patient; find the patient by URN, or move this thread's Inbox note to a patient, before ${this.before}.`;
+  }
+}
+
+export class LabNotFoundError extends Schema.TaggedError<LabNotFoundError>()("LabNotFoundError", {
+  labId: Schema.String,
+}) {
+  override get message(): string {
+    return `No lab result has the id ${this.labId}.`;
+  }
+}
+
+export class PlanNotFoundError extends Schema.TaggedError<PlanNotFoundError>()(
+  "PlanNotFoundError",
+  { planId: Schema.String },
+) {
+  override get message(): string {
+    return `No plan has the id ${this.planId}.`;
+  }
+}
+
+export class RowOutOfReachError extends Schema.TaggedError<RowOutOfReachError>()(
+  "RowOutOfReachError",
+  { row: Schema.Literals(["lab", "plan"]), id: Schema.String },
+) {
+  override get message(): string {
+    return `This thread may change only what is filed for the patient it is linked to or from its own notes; ${this.row} ${this.id} is neither.`;
+  }
+}
+
+export class NoLabCorrectionError extends Schema.TaggedError<NoLabCorrectionError>()(
+  "NoLabCorrectionError",
+  { labId: Schema.String },
+) {
+  override get message(): string {
+    return `Lab result ${this.labId} has no correction to undo.`;
+  }
+}
+
+export class PlanNotDoneError extends Schema.TaggedError<PlanNotDoneError>()("PlanNotDoneError", {
+  planId: Schema.String,
+}) {
+  override get message(): string {
+    return `doneOn is the day a plan was done; plan ${this.planId} is not done, so send it with status done.`;
+  }
+}
+
+export class NoteAlreadyInInboxError extends Schema.TaggedError<NoteAlreadyInInboxError>()(
+  "NoteAlreadyInInboxError",
+  { noteId: Schema.String },
+) {
+  override get message(): string {
+    return `Note ${this.noteId} is already in the Inbox.`;
   }
 }
 
@@ -411,20 +482,19 @@ const requireChoice = (field: string, value: string, allowed: ReadonlyArray<stri
 // Untraced: runs once per result of a batch, inside the span of `fileLabs`.
 const checkLabResult = Effect.fnUntraced(function* (
   result: LabResultInput,
-  index: number,
-  list: string,
+  /** What comes before a field's name in a refusal: `labs[1].`, or nothing for one result. */
+  field: string,
 ) {
-  const field = `${list}[${index}]`;
-  yield* requireText(`${field}.testAsWritten`, result.testAsWritten);
-  yield* requireIsoDate(`${field}.collected`, result.collected);
+  yield* requireText(`${field}testAsWritten`, result.testAsWritten);
+  yield* requireIsoDate(`${field}collected`, result.collected);
   const flag = result.flag ?? null;
-  if (flag !== null) yield* requireChoice(`${field}.flag`, flag, LAB_FLAGS);
+  if (flag !== null) yield* requireChoice(`${field}flag`, flag, LAB_FLAGS);
   const { value } = result;
   const valueText = result.valueText ?? "";
   const written = valueText.trim() === "" ? null : valueText;
   // A result is a finite number or, when it is not a number, what the sheet says; never neither.
   if (value === null ? written === null : !Number.isFinite(value)) {
-    return yield* new InvalidLabValueError({ field: `${field}.value` });
+    return yield* new InvalidLabValueError({ field: `${field}value` });
   }
   return {
     test_as_written: tidy(result.testAsWritten),
@@ -476,7 +546,10 @@ const toLabTest = (row: LabTestRow): LabTest => ({
   alsoWrittenAs: splitSpellings(row.alsoWrittenAs),
 });
 
-interface LabRow extends Omit<Lab, "isBaseline" | "baseline" | "changeUnit" | "notCompared"> {
+interface LabRow extends Omit<
+  Lab,
+  "isBaseline" | "baseline" | "changeUnit" | "notCompared" | "revisions"
+> {
   readonly isBaseline: number;
   /** The patient's baseline row for the test, when that is another row than this one. */
   readonly baselineValue: number | null;
@@ -490,7 +563,10 @@ const hasNoUnit = (unit: string) => {
 };
 
 // Read from what `recomputeBaseline` stored, in the order `compareToBaseline` refuses.
-const toLab = ({ baselineValue, baselineUnit, baselineCollected, ...row }: LabRow): Lab => {
+const toLab = (
+  { baselineValue, baselineUnit, baselineCollected, ...row }: LabRow,
+  revisions: ReadonlyArray<LabRevision>,
+): Lab => {
   const baseline =
     row.valueInBaselineUnit === null ||
     baselineValue === null ||
@@ -521,6 +597,7 @@ const toLab = ({ baselineValue, baselineUnit, baselineCollected, ...row }: LabRo
         ? null
         : Result.getOrElse(normaliseUnit(baseline.unit), () => baseline.unit),
     notCompared,
+    revisions,
   };
 };
 
@@ -608,7 +685,7 @@ export class PatientStore extends Context.Service<
     readonly getPatientHome: (patientId: string) => Effect.Effect<
       {
         readonly patient: Patient;
-        readonly notes: ReadonlyArray<Note>;
+        readonly notes: ReadonlyArray<WaitingNote>;
         readonly threads: ReadonlyArray<LinkedThread>;
         readonly draftLabs: number;
         readonly draftPlans: number;
@@ -643,6 +720,8 @@ export class PatientStore extends Context.Service<
         readonly sex?: PatientSex | null | undefined;
         readonly dateOfBirth?: string | null | undefined;
         readonly diagnoses?: string | undefined;
+        /** Every other way the name is written: replaces the list, and what a rename would keep. */
+        readonly alsoWrittenAs?: ReadonlyArray<string> | undefined;
         /** One more way the name is written, kept beside those already known. */
         readonly addSpelling?: string | undefined;
       },
@@ -788,6 +867,97 @@ export class PatientStore extends Context.Service<
       },
       ThreadNotLinkedError | PatientNotFoundError | InputError | PatientStoreError
     >;
+    /**
+     * Changes what one filed result says. The row is a draft again, its earlier values are kept
+     * as a revision, and the baselines of the test it had and the test it has are worked out
+     * again. `value` and `valueText` are replaced together. A change of nothing records nothing.
+     * With `threadId`, only a row of the thread's linked patient or of its own notes.
+     */
+    readonly correctLab: (input: {
+      readonly labId: string;
+      readonly threadId?: string | undefined;
+      readonly testAsWritten?: string | undefined;
+      readonly value?: number | null | undefined;
+      readonly valueText?: string | undefined;
+      readonly unit?: string | undefined;
+      readonly referenceRange?: string | undefined;
+      readonly flag?: LabFlag | null | undefined;
+      readonly collected?: string | undefined;
+    }) => Effect.Effect<
+      Lab,
+      LabNotFoundError | RowOutOfReachError | InputError | PatientStoreError
+    >;
+    /** Puts back what the latest correction replaced, its status included. */
+    readonly undoLabCorrection: (
+      labId: string,
+    ) => Effect.Effect<Lab, LabNotFoundError | NoLabCorrectionError | PatientStoreError>;
+    /**
+     * Removes a lab or plan filed by mistake from every list, count, baseline and chart, or puts
+     * it back. The row is kept, so nothing is lost. `threadId` limits it as in `correctLab`.
+     */
+    readonly setRemoved: (input: {
+      readonly row: "lab" | "plan";
+      readonly id: string;
+      readonly removed: boolean;
+      readonly threadId?: string | undefined;
+    }) => Effect.Effect<
+      void,
+      LabNotFoundError | PlanNotFoundError | RowOutOfReachError | PatientStoreError
+    >;
+    /**
+     * The doctor's confirmation of one draft result or plan, or its return to draft. A plan that
+     * is done or cancelled is left as it is. No agent tool calls it.
+     */
+    readonly setVerified: (input: {
+      readonly row: "lab" | "plan";
+      readonly id: string;
+      readonly verified: boolean;
+    }) => Effect.Effect<
+      void,
+      LabNotFoundError | PlanNotFoundError | NoteInInboxError | PatientStoreError
+    >;
+    /**
+     * Marks a plan done (on `doneOn`, else today) or cancelled, reopens it as what it was before,
+     * or changes its title or due date. With `threadId`, limited as in `correctLab`, and a
+     * confirmed plan whose title or due date changes is a draft again.
+     */
+    readonly updatePlan: (input: {
+      readonly planId: string;
+      readonly threadId?: string | undefined;
+      readonly title?: string | undefined;
+      readonly due?: string | undefined;
+      readonly status?: (typeof PLAN_MOVES)[number] | undefined;
+      readonly doneOn?: string | undefined;
+    }) => Effect.Effect<
+      Plan,
+      | PlanNotFoundError
+      | RowOutOfReachError
+      | PlanNotDoneError
+      | InvalidDateError
+      | BlankFieldError
+      | InvalidChoiceError
+      | PatientStoreError
+    >;
+    /**
+     * The reverse of `moveNoteToPatient`: the note leaves its patient for the Inbox with its
+     * labs and plans, which are drafts again and compared with nothing; the patient's other
+     * results get their baselines anew. Merged into the Inbox note its thread already has, if
+     * any. The thread's link to the patient is left alone.
+     */
+    readonly moveNoteToInbox: (input: {
+      readonly noteId: string;
+    }) => Effect.Effect<Note, NoteNotFoundError | NoteAlreadyInInboxError | PatientStoreError>;
+    /** `moveNoteToInbox` for the note a thread has for the patient it is linked to. */
+    readonly returnThreadNoteToInbox: (input: {
+      readonly threadId: string;
+    }) => Effect.Effect<
+      { readonly note: Note; readonly labs: ReadonlyArray<Lab> },
+      | ThreadHasNoPatientError
+      | ThreadNoteNotFoundError
+      | NoteNotFoundError
+      | NoteAlreadyInInboxError
+      | PatientStoreError
+    >;
     /** Adds the files the note does not have yet, by path, and returns all it has. */
     readonly addNoteFiles: (input: {
       readonly noteId: string;
@@ -911,8 +1081,8 @@ const make = Effect.gen(function* () {
     also_written_as AS "alsoWrittenAs"
   `;
 
-  const selectLabs = (where: Fragment) =>
-    sql<LabRow>`
+  const selectLabs = Effect.fn("PatientStore.selectLabs")(function* (where: Fragment) {
+    const rows = yield* sql<LabRow>`
     SELECT
       l.id AS "id",
       l.patient_id AS "patientId",
@@ -944,13 +1114,34 @@ const make = Effect.gen(function* () {
       ON b.patient_id = l.patient_id
       AND b.lab_test_id = l.lab_test_id
       AND b.is_baseline = 1
+      AND b.removed_at IS NULL
       AND b.id <> l.id
-    WHERE ${where}
+    WHERE l.removed_at IS NULL AND (${where})
     ORDER BY l.collected ASC, l.id ASC
-  `.pipe(
-      failedIn("selectLabs:query"),
-      Effect.map((rows) => rows.map(toLab)),
+  `.pipe(failedIn("selectLabs:query"));
+    const revisions = yield* sql<LabRevision & { readonly labId: string }>`
+      SELECT
+        r.lab_id AS "labId",
+        r.test_as_written AS "testAsWritten",
+        r.value AS "value",
+        r.value_text AS "valueText",
+        r.unit AS "unit",
+        r.reference_range AS "referenceRange",
+        r.flag AS "flag",
+        r.collected AS "collected",
+        r.status AS "status",
+        r.created_at AS "replacedAt"
+      FROM lab_revisions r
+      WHERE r.lab_id IN (SELECT l.id FROM labs l WHERE ${where})
+      ORDER BY r.rowid DESC
+    `.pipe(failedIn("selectLabs:revisions"));
+    return rows.map((row) =>
+      toLab(
+        row,
+        revisions.flatMap(({ labId, ...revision }) => (labId === row.id ? [revision] : [])),
+      ),
     );
+  });
 
   const planColumns = sql`
     pl.id AS "id",
@@ -959,6 +1150,7 @@ const make = Effect.gen(function* () {
     pl.due AS "due",
     pl.type AS "type",
     pl.status AS "status",
+    pl.done_on AS "doneOn",
     pl.source_note_id AS "sourceNoteId",
     pl.created_at AS "createdAt",
     pl.updated_at AS "updatedAt"
@@ -966,10 +1158,16 @@ const make = Effect.gen(function* () {
 
   // Needs you: a note `n` that asks the doctor something or holds a draft lab or plan.
   const draftLabsOfNote = sql`
-    (SELECT COUNT(*) FROM labs l WHERE l.source_note_id = n.id AND l.status = 'draft')
+    (
+      SELECT COUNT(*) FROM labs l
+      WHERE l.source_note_id = n.id AND l.status = 'draft' AND l.removed_at IS NULL
+    )
   `;
   const draftPlansOfNote = sql`
-    (SELECT COUNT(*) FROM plans pl WHERE pl.source_note_id = n.id AND pl.status = 'draft')
+    (
+      SELECT COUNT(*) FROM plans pl
+      WHERE pl.source_note_id = n.id AND pl.status = 'draft' AND pl.removed_at IS NULL
+    )
   `;
   const asksOrHoldsDrafts = sql`
     (TRIM(n.needs_you) <> '' OR ${draftLabsOfNote} > 0 OR ${draftPlansOfNote} > 0)
@@ -977,12 +1175,16 @@ const make = Effect.gen(function* () {
 
   // Upcoming: a plan not done or cancelled, of the Inbox or of a patient who is not archived.
   const stillAhead = sql`
-    pl.status IN ('draft', 'planned') AND COALESCE(p.status, '') <> 'archived'
+    pl.status IN ('draft', 'planned')
+    AND pl.removed_at IS NULL
+    AND COALESCE(p.status, '') <> 'archived'
   `;
 
   const selectPlans = (where: Fragment) =>
     sql<Plan>`
-      SELECT ${planColumns} FROM plans pl WHERE ${where} ORDER BY pl.due ASC, pl.id ASC
+      SELECT ${planColumns} FROM plans pl
+      WHERE pl.removed_at IS NULL AND (${where})
+      ORDER BY pl.due ASC, pl.id ASC
     `.pipe(failedIn("selectPlans:query"));
 
   // `patient_id = NULL` matches no row, so a filter that names no owner lists nothing.
@@ -1063,7 +1265,9 @@ const make = Effect.gen(function* () {
         t.test_id AS "testId"
       FROM labs l
       JOIN lab_tests t ON t.id = l.lab_test_id
-      WHERE l.patient_id = ${patientId} AND l.lab_test_id = ${labTestId}
+      WHERE l.patient_id = ${patientId}
+        AND l.lab_test_id = ${labTestId}
+        AND l.removed_at IS NULL
       ORDER BY l.collected ASC, l.id ASC
     `.pipe(failedIn("recomputeBaseline:query"));
     const baseline = rows.find((row) => row.value !== null);
@@ -1220,6 +1424,7 @@ const make = Effect.gen(function* () {
           AND value IS ${result.value}
           AND value_text = ${result.value_text}
           AND unit = ${result.unit}
+          AND removed_at IS NULL
         ORDER BY id ASC
         LIMIT 1
       `.pipe(failedIn("fileLabs:findSame"));
@@ -1264,7 +1469,10 @@ const make = Effect.gen(function* () {
       const title = plan.title.trim();
       const same = yield* sql<{ readonly id: string }>`
         SELECT id AS "id" FROM plans
-        WHERE source_note_id = ${sourceNoteId} AND title = ${title} AND due = ${plan.due}
+        WHERE source_note_id = ${sourceNoteId}
+          AND title = ${title}
+          AND due = ${plan.due}
+          AND removed_at IS NULL
         ORDER BY id ASC
         LIMIT 1
       `.pipe(failedIn("filePlans:findSame"));
@@ -1425,30 +1633,199 @@ const make = Effect.gen(function* () {
     return note?.id ?? (yield* new ThreadNoteNotFoundError({ patientId }));
   });
 
-  const verify = Effect.fn("PatientStore.verify")(function* (noteId: string, at: string) {
-    const { patientId } = yield* readNote(noteId);
-    if (patientId === null) return yield* new NoteInInboxError({ noteId });
-    const labs = yield* sql`
-      UPDATE labs SET status = 'verified', updated_at = ${at}
-      WHERE source_note_id = ${noteId} AND status = 'draft'
-      RETURNING id
-    `.pipe(failedIn("verifyNote:updateLabs"));
-    const plans = yield* sql`
-      UPDATE plans SET status = 'planned', updated_at = ${at}
-      WHERE source_note_id = ${noteId} AND status = 'draft'
-      RETURNING id
-    `.pipe(failedIn("verifyNote:updatePlans"));
+  const returnNote = Effect.fn("PatientStore.returnNote")(function* (noteId: string, at: string) {
+    const note = yield* readNote(noteId);
+    const { patientId } = note;
+    if (patientId === null) return yield* new NoteAlreadyInInboxError({ noteId });
+    // A thread keeps one note in the Inbox, so a second one is merged into the first.
+    const kept = note.threadId === null ? undefined : (yield* threadNoteOf(note.threadId, null))[0];
+    const keptId = kept?.id ?? noteId;
+    if (kept === undefined) {
+      yield* sql`
+        UPDATE notes SET patient_id = NULL, updated_at = ${at} WHERE id = ${noteId}
+      `.pipe(failedIn("moveNoteToInbox:updateNote"));
+    } else {
+      yield* sql`
+        UPDATE notes SET ${sql.update({
+          summary: joinText(kept.summary, note.summary),
+          needs_you: joinText(kept.needsYou, note.needsYou),
+          updated_at: at,
+        })}
+        WHERE id = ${keptId}
+      `.pipe(failedIn("moveNoteToInbox:mergeNote"));
+      yield* sql`
+        UPDATE note_files SET note_id = ${keptId}, updated_at = ${at} WHERE note_id = ${noteId}
+      `.pipe(failedIn("moveNoteToInbox:updateFiles"));
+    }
+    // Nothing in the Inbox is confirmed: whose it is has just become unknown again.
+    yield* sql`
+      UPDATE plans
+      SET
+        patient_id = NULL,
+        source_note_id = ${keptId},
+        status = CASE status WHEN 'planned' THEN 'draft' ELSE status END,
+        reopens_as = CASE reopens_as WHEN 'planned' THEN 'draft' ELSE reopens_as END,
+        updated_at = ${at}
+      WHERE source_note_id = ${noteId}
+    `.pipe(failedIn("moveNoteToInbox:updatePlans"));
+    const tests = yield* sql<{ readonly labTestId: string }>`
+      UPDATE labs
+      SET
+        patient_id = NULL,
+        source_note_id = ${keptId},
+        status = 'draft',
+        is_baseline = 0,
+        value_in_baseline_unit = NULL,
+        change_from_baseline = NULL,
+        change_percent = NULL,
+        updated_at = ${at}
+      WHERE source_note_id = ${noteId}
+      RETURNING lab_test_id AS "labTestId"
+    `.pipe(failedIn("moveNoteToInbox:updateLabs"));
+    yield* sql`
+      UPDATE lab_revisions SET status = 'draft'
+      WHERE lab_id IN (SELECT id FROM labs WHERE source_note_id = ${keptId})
+    `.pipe(failedIn("moveNoteToInbox:updateRevisions"));
+    if (kept !== undefined) {
+      yield* sql`DELETE FROM notes WHERE id = ${noteId}`.pipe(
+        failedIn("moveNoteToInbox:deleteNote"),
+      );
+    }
+    for (const labTestId of new Set(tests.map((lab) => lab.labTestId))) {
+      yield* recomputeBaseline(patientId, labTestId);
+    }
+    return yield* readNote(keptId);
+  });
+
+  interface StoredLab {
+    readonly id: string;
+    readonly patientId: string | null;
+    readonly labTestId: string;
+    readonly testAsWritten: string;
+    readonly value: number | null;
+    readonly valueText: string;
+    readonly unit: string;
+    readonly referenceRange: string;
+    readonly flag: LabFlag | null;
+    readonly collected: string;
+    readonly status: "draft" | "verified";
+    readonly sourceNoteId: string;
+    readonly removedAt: string | null;
+  }
+
+  // The row itself, removed or not: what a write starts from.
+  const readLabRow = Effect.fn("PatientStore.readLabRow")(function* (labId: string) {
+    const rows = yield* sql<StoredLab>`
+      SELECT
+        id AS "id",
+        patient_id AS "patientId",
+        lab_test_id AS "labTestId",
+        test_as_written AS "testAsWritten",
+        value AS "value",
+        value_text AS "valueText",
+        unit AS "unit",
+        reference_range AS "referenceRange",
+        flag AS "flag",
+        collected AS "collected",
+        status AS "status",
+        source_note_id AS "sourceNoteId",
+        removed_at AS "removedAt"
+      FROM labs
+      WHERE id = ${labId}
+    `.pipe(failedIn("readLabRow:query"));
+    return rows[0] ?? (yield* new LabNotFoundError({ labId }));
+  });
+
+  // A removed result is not there for anything but putting it back.
+  const readLiveLab = Effect.fn("PatientStore.readLiveLab")(function* (labId: string) {
+    const lab = yield* readLabRow(labId);
+    return lab.removedAt === null ? lab : yield* new LabNotFoundError({ labId });
+  });
+
+  const readPlanRow = Effect.fn("PatientStore.readPlanRow")(function* (planId: string) {
+    const rows = yield* sql<
+      Pick<Plan, "id" | "patientId" | "title" | "due" | "status" | "doneOn" | "sourceNoteId"> & {
+        readonly reopensAs: "draft" | "planned" | null;
+        readonly removedAt: string | null;
+      }
+    >`
+      SELECT
+        id AS "id",
+        patient_id AS "patientId",
+        title AS "title",
+        due AS "due",
+        status AS "status",
+        done_on AS "doneOn",
+        reopens_as AS "reopensAs",
+        source_note_id AS "sourceNoteId",
+        removed_at AS "removedAt"
+      FROM plans
+      WHERE id = ${planId}
+    `.pipe(failedIn("readPlanRow:query"));
+    return rows[0] ?? (yield* new PlanNotFoundError({ planId }));
+  });
+
+  const readLivePlan = Effect.fn("PatientStore.readLivePlan")(function* (planId: string) {
+    const plan = yield* readPlanRow(planId);
+    return plan.removedAt === null ? plan : yield* new PlanNotFoundError({ planId });
+  });
+
+  // An agent changes what is filed for its thread's patient, or what its thread's own notes
+  // filed, and nothing else. The doctor's controls pass no thread and reach every row.
+  const requireReach = Effect.fn("PatientStore.requireReach")(function* (
+    threadId: string | undefined,
+    row: "lab" | "plan",
+    owned: {
+      readonly id: string;
+      readonly patientId: string | null;
+      readonly sourceNoteId: string;
+    },
+  ) {
+    if (threadId === undefined) return;
+    const linked = yield* readThreadPatient(threadId);
+    if (owned.patientId !== null && Option.getOrUndefined(linked)?.id === owned.patientId) return;
+    const notes = yield* sql<{ readonly threadId: string | null }>`
+      SELECT thread_id AS "threadId" FROM notes WHERE id = ${owned.sourceNoteId}
+    `.pipe(failedIn("requireReach:query"));
+    if (notes[0]?.threadId === threadId) return;
+    return yield* new RowOutOfReachError({ row, id: owned.id });
+  });
+
+  // One result with its comparison, after a write in this transaction.
+  const readLab = Effect.fn("PatientStore.readLab")(function* (labId: string) {
+    const labs = yield* selectLabs(sql`l.id = ${labId}`);
+    return labs[0] ?? (yield* Effect.die(new LabNotFoundError({ labId })));
+  });
+
+  // The doctor confirming anything filed for a new patient confirms the patient too.
+  const activatePatient = Effect.fn("PatientStore.activatePatient")(function* (
+    patientId: string,
+    at: string,
+  ) {
     const patients = yield* sql`
       UPDATE patients SET status = 'active', updated_at = ${at}
       WHERE id = ${patientId} AND status = 'new'
       RETURNING id
     `.pipe(failedIn("verifyNote:updatePatient"));
-    if (labs.length + plans.length + patients.length > 0) yield* touchNote(noteId, at);
-    return {
-      labsVerified: labs.length,
-      plansPlanned: plans.length,
-      patientActivated: patients.length > 0,
-    };
+    return patients.length > 0;
+  });
+
+  const verify = Effect.fn("PatientStore.verify")(function* (noteId: string, at: string) {
+    const { patientId } = yield* readNote(noteId);
+    if (patientId === null) return yield* new NoteInInboxError({ noteId });
+    const labs = yield* sql`
+      UPDATE labs SET status = 'verified', updated_at = ${at}
+      WHERE source_note_id = ${noteId} AND status = 'draft' AND removed_at IS NULL
+      RETURNING id
+    `.pipe(failedIn("verifyNote:updateLabs"));
+    const plans = yield* sql`
+      UPDATE plans SET status = 'planned', updated_at = ${at}
+      WHERE source_note_id = ${noteId} AND status = 'draft' AND removed_at IS NULL
+      RETURNING id
+    `.pipe(failedIn("verifyNote:updatePlans"));
+    const patientActivated = yield* activatePatient(patientId, at);
+    if (labs.length + plans.length > 0 || patientActivated) yield* touchNote(noteId, at);
+    return { labsVerified: labs.length, plansPlanned: plans.length, patientActivated };
   });
 
   const searchPatients: PatientStore["Service"]["searchPatients"] = Effect.fn(
@@ -1580,9 +1957,14 @@ const make = Effect.gen(function* () {
 
     getPatientHome: Effect.fn("PatientStore.getPatientHome")(function* (patientId) {
       const patient = yield* readPatient(patientId);
-      const notes = yield* sql<Note>`
-        SELECT ${noteColumns} FROM notes WHERE patient_id = ${patient.id}
-        ORDER BY date DESC, id DESC
+      const notes = yield* sql<WaitingNote>`
+        SELECT
+          ${noteColumns},
+          ${draftLabsOfNote} AS "draftLabs",
+          ${draftPlansOfNote} AS "draftPlans"
+        FROM notes n
+        WHERE n.patient_id = ${patient.id}
+        ORDER BY n.date DESC, n.id DESC
       `.pipe(failedIn("getPatientHome:notes"));
       const threads = yield* sql<LinkedThread>`
         SELECT thread_id AS "threadId", updated_at AS "linkedAt"
@@ -1592,10 +1974,14 @@ const make = Effect.gen(function* () {
       `.pipe(failedIn("getPatientHome:threads"));
       const drafts = yield* sql<{ readonly labs: number; readonly plans: number }>`
         SELECT
-          (SELECT COUNT(*) FROM labs WHERE patient_id = ${patient.id} AND status = 'draft')
-            AS "labs",
-          (SELECT COUNT(*) FROM plans WHERE patient_id = ${patient.id} AND status = 'draft')
-            AS "plans"
+          (
+            SELECT COUNT(*) FROM labs
+            WHERE patient_id = ${patient.id} AND status = 'draft' AND removed_at IS NULL
+          ) AS "labs",
+          (
+            SELECT COUNT(*) FROM plans
+            WHERE patient_id = ${patient.id} AND status = 'draft' AND removed_at IS NULL
+          ) AS "plans"
       `.pipe(failedIn("getPatientHome:drafts"));
       return {
         patient,
@@ -1650,8 +2036,13 @@ const make = Effect.gen(function* () {
       const name = fields.name === undefined ? undefined : tidy(fields.name);
       return yield* Effect.gen(function* () {
         const patient = yield* readPatient(patientId);
+        const listed = fields.alsoWrittenAs?.reduce<ReadonlyArray<string>>(
+          (known, spelling) => addSpelling(known, name ?? patient.name, spelling),
+          [],
+        );
         const renamed =
-          name === undefined ? patient.alsoWrittenAs : spellingsAfterRename(patient, name);
+          listed ??
+          (name === undefined ? patient.alsoWrittenAs : spellingsAfterRename(patient, name));
         const spellings =
           fields.addSpelling === undefined
             ? renamed
@@ -1705,7 +2096,7 @@ const make = Effect.gen(function* () {
       const { patientId, sourceNoteId } = input;
       yield* requireText("sourceNoteId", sourceNoteId);
       const results = yield* Effect.forEach(input.results, (result, index) =>
-        checkLabResult(result, index, "results"),
+        checkLabResult(result, `results[${index}].`),
       );
       const at = yield* now;
       return yield* requireFilingTarget(patientId, sourceNoteId).pipe(
@@ -1854,7 +2245,8 @@ const make = Effect.gen(function* () {
       const at = yield* now;
       return yield* Effect.gen(function* () {
         const linked = yield* readThreadPatient(input.threadId);
-        if (Option.isNone(linked)) return yield* new ThreadHasNoPatientError();
+        if (Option.isNone(linked))
+          return yield* new ThreadHasNoPatientError({ before: "verifying" });
         return yield* verify(yield* requireThreadNote(input.threadId, linked.value.id), at);
       }).pipe(sql.withTransaction, Effect.catchTags(transactionFailure("verifyThreadNote")));
     }),
@@ -1864,7 +2256,7 @@ const make = Effect.gen(function* () {
       yield* requireText("threadId", threadId);
       yield* checkThreadNote(input);
       const labs = yield* Effect.forEach(input.labs ?? [], (result, index) =>
-        checkLabResult(result, index, "labs"),
+        checkLabResult(result, `labs[${index}].`),
       );
       const plans = input.plans ?? [];
       yield* Effect.forEach(plans, checkPlan);
@@ -1886,6 +2278,247 @@ const make = Effect.gen(function* () {
           files: yield* insertNoteFiles(note.id, files, at),
         };
       }).pipe(sql.withTransaction, Effect.catchTags(transactionFailure("fileFromThread")));
+    }),
+
+    correctLab: Effect.fn("PatientStore.correctLab")(function* ({ labId, threadId, ...fields }) {
+      const at = yield* now;
+      return yield* Effect.gen(function* () {
+        const lab = yield* readLiveLab(labId);
+        yield* requireReach(threadId, "lab", lab);
+        // The number and the text as written say one thing, so neither is replaced alone.
+        const replacesValue = fields.value !== undefined || fields.valueText !== undefined;
+        const checked = yield* checkLabResult(
+          {
+            testAsWritten: fields.testAsWritten ?? lab.testAsWritten,
+            value: replacesValue ? (fields.value ?? null) : lab.value,
+            valueText: replacesValue ? fields.valueText : lab.valueText,
+            unit: fields.unit ?? lab.unit,
+            referenceRange: fields.referenceRange ?? lab.referenceRange,
+            flag: fields.flag === undefined ? lab.flag : fields.flag,
+            collected: fields.collected ?? lab.collected,
+          },
+          "",
+        );
+        const before = {
+          lab_test_id: lab.labTestId,
+          test_as_written: lab.testAsWritten,
+          value: lab.value,
+          value_text: lab.valueText,
+          unit: lab.unit,
+          reference_range: lab.referenceRange,
+          flag: lab.flag,
+          collected: lab.collected,
+        };
+        const after = {
+          lab_test_id:
+            spellingKey(checked.test_as_written) === spellingKey(lab.testAsWritten)
+              ? lab.labTestId
+              : yield* catalogueTest(checked.test_as_written, "", at),
+          test_as_written: checked.test_as_written,
+          value: checked.value,
+          value_text: checked.value_text,
+          unit: checked.unit,
+          reference_range: checked.reference_range,
+          flag: checked.flag,
+          collected: checked.collected,
+        };
+        if (
+          Object.entries(after).every(([column, value]) =>
+            Object.is(value, before[column as keyof typeof before]),
+          )
+        ) {
+          return yield* readLab(labId);
+        }
+        yield* sql`
+          INSERT INTO lab_revisions ${sql.insert({
+            id: yield* newId,
+            lab_id: labId,
+            ...before,
+            status: lab.status,
+            created_at: at,
+          })}
+        `.pipe(failedIn("correctLab:insertRevision"));
+        yield* sql`
+          UPDATE labs SET ${sql.update({ ...after, status: "draft", updated_at: at })}
+          WHERE id = ${labId}
+        `.pipe(failedIn("correctLab:update"));
+        yield* touchNote(lab.sourceNoteId, at);
+        for (const labTestId of new Set([before.lab_test_id, after.lab_test_id])) {
+          yield* recomputeBaseline(lab.patientId, labTestId);
+        }
+        return yield* readLab(labId);
+      }).pipe(sql.withTransaction, Effect.catchTags(transactionFailure("correctLab")));
+    }),
+
+    undoLabCorrection: Effect.fn("PatientStore.undoLabCorrection")(function* (labId) {
+      const at = yield* now;
+      return yield* Effect.gen(function* () {
+        const lab = yield* readLiveLab(labId);
+        const revisions = yield* sql<{
+          readonly id: string;
+          readonly lab_test_id: string;
+          readonly test_as_written: string;
+          readonly value: number | null;
+          readonly value_text: string;
+          readonly unit: string;
+          readonly reference_range: string;
+          readonly flag: LabFlag | null;
+          readonly collected: string;
+          readonly status: "draft" | "verified";
+        }>`
+          SELECT
+            id, lab_test_id, test_as_written, value, value_text, unit, reference_range, flag,
+            collected, status
+          FROM lab_revisions
+          WHERE lab_id = ${labId}
+          ORDER BY rowid DESC
+          LIMIT 1
+        `.pipe(failedIn("undoLabCorrection:query"));
+        const last = revisions[0];
+        if (last === undefined) return yield* new NoLabCorrectionError({ labId });
+        const { id: revisionId, ...restored } = last;
+        yield* sql`
+          UPDATE labs SET ${sql.update({ ...restored, updated_at: at })} WHERE id = ${labId}
+        `.pipe(failedIn("undoLabCorrection:update"));
+        yield* sql`DELETE FROM lab_revisions WHERE id = ${revisionId}`.pipe(
+          failedIn("undoLabCorrection:deleteRevision"),
+        );
+        yield* touchNote(lab.sourceNoteId, at);
+        for (const labTestId of new Set([lab.labTestId, restored.lab_test_id])) {
+          yield* recomputeBaseline(lab.patientId, labTestId);
+        }
+        return yield* readLab(labId);
+      }).pipe(sql.withTransaction, Effect.catchTags(transactionFailure("undoLabCorrection")));
+    }),
+
+    setRemoved: Effect.fn("PatientStore.setRemoved")(function* ({ row, id, removed, threadId }) {
+      const at = yield* now;
+      const removedAt = removed ? at : null;
+      yield* Effect.gen(function* () {
+        if (row === "lab") {
+          const lab = yield* readLabRow(id);
+          yield* requireReach(threadId, "lab", lab);
+          if ((lab.removedAt !== null) === removed) return;
+          yield* sql`
+            UPDATE labs
+            SET
+              removed_at = ${removedAt},
+              is_baseline = 0,
+              value_in_baseline_unit = NULL,
+              change_from_baseline = NULL,
+              change_percent = NULL,
+              updated_at = ${at}
+            WHERE id = ${id}
+          `.pipe(failedIn("setRemoved:updateLab"));
+          yield* recomputeBaseline(lab.patientId, lab.labTestId);
+          yield* touchNote(lab.sourceNoteId, at);
+          return;
+        }
+        const plan = yield* readPlanRow(id);
+        yield* requireReach(threadId, "plan", plan);
+        if ((plan.removedAt !== null) === removed) return;
+        yield* sql`
+          UPDATE plans SET removed_at = ${removedAt}, updated_at = ${at} WHERE id = ${id}
+        `.pipe(failedIn("setRemoved:updatePlan"));
+        yield* touchNote(plan.sourceNoteId, at);
+      }).pipe(sql.withTransaction, Effect.catchTags(transactionFailure("setRemoved")));
+    }),
+
+    setVerified: Effect.fn("PatientStore.setVerified")(function* ({ row, id, verified }) {
+      const at = yield* now;
+      yield* Effect.gen(function* () {
+        const { patientId, sourceNoteId } =
+          row === "lab" ? yield* readLiveLab(id) : yield* readLivePlan(id);
+        if (patientId === null) return yield* new NoteInInboxError({ noteId: sourceNoteId });
+        const changed =
+          row === "lab"
+            ? yield* sql`
+                UPDATE labs
+                SET status = ${verified ? "verified" : "draft"}, updated_at = ${at}
+                WHERE id = ${id} AND status = ${verified ? "draft" : "verified"}
+                RETURNING id
+              `.pipe(failedIn("setVerified:updateLab"))
+            : yield* sql`
+                UPDATE plans
+                SET status = ${verified ? "planned" : "draft"}, updated_at = ${at}
+                WHERE id = ${id} AND status = ${verified ? "draft" : "planned"}
+                RETURNING id
+              `.pipe(failedIn("setVerified:updatePlan"));
+        if (changed.length === 0) return;
+        if (verified) yield* activatePatient(patientId, at);
+        yield* touchNote(sourceNoteId, at);
+      }).pipe(sql.withTransaction, Effect.catchTags(transactionFailure("setVerified")));
+    }),
+
+    updatePlan: Effect.fn("PatientStore.updatePlan")(function* ({ planId, threadId, ...fields }) {
+      if (fields.title !== undefined) yield* requireText("title", fields.title);
+      if (fields.due !== undefined) yield* requireIsoDate("due", fields.due);
+      if (fields.doneOn !== undefined) yield* requireIsoDate("doneOn", fields.doneOn);
+      if (fields.status !== undefined) yield* requireChoice("status", fields.status, PLAN_MOVES);
+      const at = yield* now;
+      const day = yield* today;
+      return yield* Effect.gen(function* () {
+        const plan = yield* readLivePlan(planId);
+        yield* requireReach(threadId, "plan", plan);
+        const wasOpen = plan.status === "draft" || plan.status === "planned";
+        const moved =
+          fields.status === "open"
+            ? wasOpen
+              ? plan.status
+              : (plan.reopensAs ?? "planned")
+            : (fields.status ?? plan.status);
+        if (fields.doneOn !== undefined && moved !== "done") {
+          return yield* new PlanNotDoneError({ planId });
+        }
+        const title = fields.title === undefined ? plan.title : fields.title.trim();
+        const due = fields.due ?? plan.due;
+        yield* sql`
+          UPDATE plans SET ${sql.update({
+            title,
+            due,
+            // An agent's change to what the doctor confirmed waits for the doctor again.
+            status:
+              threadId !== undefined &&
+              moved === "planned" &&
+              (title !== plan.title || due !== plan.due)
+                ? "draft"
+                : moved,
+            done_on: moved === "done" ? (fields.doneOn ?? plan.doneOn ?? day) : null,
+            reopens_as:
+              moved === "done" || moved === "cancelled"
+                ? wasOpen
+                  ? plan.status
+                  : plan.reopensAs
+                : null,
+            updated_at: at,
+          })}
+          WHERE id = ${planId}
+        `.pipe(failedIn("updatePlan:update"));
+        yield* touchNote(plan.sourceNoteId, at);
+        const rows = yield* selectPlans(sql`pl.id = ${planId}`);
+        return rows[0] ?? (yield* Effect.die(new PlanNotFoundError({ planId })));
+      }).pipe(sql.withTransaction, Effect.catchTags(transactionFailure("updatePlan")));
+    }),
+
+    moveNoteToInbox: Effect.fn("PatientStore.moveNoteToInbox")(function* (input) {
+      const at = yield* now;
+      return yield* returnNote(input.noteId, at).pipe(
+        sql.withTransaction,
+        Effect.catchTags(transactionFailure("moveNoteToInbox")),
+      );
+    }),
+
+    returnThreadNoteToInbox: Effect.fn("PatientStore.returnThreadNoteToInbox")(function* (input) {
+      const at = yield* now;
+      return yield* Effect.gen(function* () {
+        const linked = yield* readThreadPatient(input.threadId);
+        if (Option.isNone(linked)) {
+          return yield* new ThreadHasNoPatientError({ before: "returning its note" });
+        }
+        const noteId = yield* requireThreadNote(input.threadId, linked.value.id);
+        const note = yield* returnNote(noteId, at);
+        return { note, labs: yield* selectLabs(sql`l.source_note_id = ${note.id}`) };
+      }).pipe(sql.withTransaction, Effect.catchTags(transactionFailure("returnThreadNoteToInbox")));
     }),
 
     addNoteFiles: Effect.fn("PatientStore.addNoteFiles")(function* (input) {

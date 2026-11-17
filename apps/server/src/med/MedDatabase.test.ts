@@ -24,6 +24,7 @@ it.layer(NodeServices.layer)("MedDatabase", (it) => {
       const path = yield* Path.Path;
 
       assert.deepStrictEqual(yield* tableNames, [
+        "lab_revisions",
         "lab_tests",
         "labs",
         "note_files",
