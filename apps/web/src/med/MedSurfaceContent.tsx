@@ -5,7 +5,7 @@
  */
 import { useAtom, useAtomSet } from "@effect/atom-react";
 import type { ScopedThreadRef } from "@t3tools/contracts";
-import type { MedLab, MedPatientRecord } from "@t3tools/contracts/med";
+import type { MedLab, MedPatientRecord, MedPlan } from "@t3tools/contracts/med";
 import { ChevronRightIcon } from "lucide-react";
 import { type ReactNode, useRef } from "react";
 
@@ -29,6 +29,7 @@ import { useRightPanelStore } from "../rightPanelStore";
 import {
   patientRecordAtom,
   selectedLabTestAtom,
+  useMedMayChange,
   useMedQuery,
   useThreadPatientState,
   useToday,
@@ -69,10 +70,13 @@ function Section({
   title,
   aside,
   nested = false,
+  menus = false,
   children,
 }: {
   readonly title: string;
   readonly aside?: ReactNode;
+  /** The rows end with a menu of actions, so the heading's right column stops before it. */
+  readonly menus?: boolean;
   /** Under a group's own heading, so one level further down. */
   readonly nested?: boolean;
   readonly children: ReactNode;
@@ -80,7 +84,7 @@ function Section({
   const Heading = nested ? "h4" : "h3";
   return (
     <section className="flex flex-col gap-1.5">
-      <MedPage.Lead>
+      <MedPage.Lead ends={menus ? "menu" : "chevron"}>
         <Heading className="m-0 font-medium text-xs">{title}</Heading>
         {aside === undefined ? null : <span className="tabular-nums">{aside}</span>}
       </MedPage.Lead>
@@ -425,6 +429,8 @@ function Labs({ record, today }: { readonly record: MedPatientRecord; readonly t
 
 function Plans({ record, today }: { readonly record: MedPatientRecord; readonly today: string }) {
   const { open, closed } = plansForPanel(record.plans);
+  const mayChange = useMedMayChange();
+  const actionsOf = (plan: MedPlan) => (mayChange ? <PlanRowActions plan={plan} /> : undefined);
   if (record.plans.length === 0) {
     return (
       <>
@@ -438,7 +444,7 @@ function Plans({ record, today }: { readonly record: MedPatientRecord; readonly 
   return (
     <>
       <PatientHeading patient={record.patient} today={today} />
-      <Section title="Open" aside="Due">
+      <Section title="Open" aside="Due" menus={mayChange}>
         {open.length === 0 ? (
           <MedPage.Note>Nothing is open.</MedPage.Note>
         ) : (
@@ -449,14 +455,14 @@ function Plans({ record, today }: { readonly record: MedPatientRecord; readonly 
                 plan={plan}
                 today={today}
                 showStatus
-                actions={<PlanRowActions plan={plan} />}
+                actions={actionsOf(plan)}
               />
             ))}
           </MedPage.List>
         )}
       </Section>
       {closed.length === 0 ? null : (
-        <Section title="Done or cancelled" aside="Due">
+        <Section title="Done or cancelled" aside="Due" menus={mayChange}>
           <MedPage.List aria-label="Done or cancelled plans">
             {closed.map((plan) => (
               <MedPlanRow
@@ -464,7 +470,7 @@ function Plans({ record, today }: { readonly record: MedPatientRecord; readonly 
                 plan={plan}
                 today={today}
                 showStatus
-                actions={<PlanRowActions plan={plan} />}
+                actions={actionsOf(plan)}
               />
             ))}
           </MedPage.List>

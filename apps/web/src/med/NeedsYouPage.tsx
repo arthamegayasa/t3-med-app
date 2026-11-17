@@ -1,5 +1,5 @@
 /** T3 Med: per patient, the notes that ask the doctor something or hold drafts to check. */
-import { needsYouAtom, useMedQuery, useToday } from "./medData";
+import { needsYouAtom, useMedMayChange, useMedQuery, useToday } from "./medData";
 import { draftsLabel, formatDay } from "./medLogic";
 import { MedLink } from "./MedLink";
 import { VerifyNoteButton } from "./MedNoteActions";
@@ -8,6 +8,7 @@ import { MedPage } from "./MedPage";
 export function NeedsYouPage() {
   const query = useMedQuery(needsYouAtom);
   const today = useToday();
+  const mayChange = useMedMayChange();
   return (
     <MedPage.Root title="Needs you">
       <MedPage.Query query={query}>
@@ -20,7 +21,7 @@ export function NeedsYouPage() {
           ) : (
             patients.map(({ patient, draftLabs, draftPlans, notes }) => (
               <section key={patient.id} className="flex flex-col gap-1">
-                <MedPage.Lead>
+                <MedPage.Lead ends={mayChange ? "chevron-button" : "chevron"}>
                   <span className="flex min-w-0 items-baseline gap-2">
                     <MedLink
                       to="/patients/$patientId"
@@ -40,6 +41,7 @@ export function NeedsYouPage() {
                       <MedPage.ThreadRow
                         key={note.id}
                         threadId={note.threadId}
+                        actionsEnd={mayChange ? "button" : undefined}
                         actions={<VerifyNoteButton note={note} />}
                       >
                         <span className="flex min-w-0 flex-1 flex-col">

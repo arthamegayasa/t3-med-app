@@ -147,17 +147,19 @@ function LinkedThreadRow({
   threadId,
   day,
   today,
+  actionsEnd,
 }: {
   readonly threadId: string;
   readonly day: string;
   readonly today: string;
+  readonly actionsEnd: "menu" | undefined;
 }) {
   const environmentId = useMedEnvironmentId();
   const thread = useQuietThreadShell(
     environmentId === null ? null : scopeThreadRef(environmentId, ThreadId.make(threadId)),
   );
   return (
-    <MedPage.ThreadRow threadId={threadId}>
+    <MedPage.ThreadRow threadId={threadId} actionsEnd={actionsEnd}>
       <MedPage.Primary className="max-w-[45%] shrink-0">
         {thread?.title ?? "Untitled chat"}
       </MedPage.Primary>
@@ -170,6 +172,7 @@ function LinkedThreadRow({
 export function PatientHomePage({ patientId }: { readonly patientId: string }) {
   const query = useMedQuery(patientHomeAtom(patientId));
   const today = useToday();
+  const mayChange = useMedMayChange();
   if (query.failure?._tag === "MedPatientNotFoundError") {
     return (
       <MedPage.Root title="Patient" underPatients>
@@ -197,7 +200,7 @@ export function PatientHomePage({ patientId }: { readonly patientId: string }) {
                 <PatientControls patient={patient} />
               </div>
               <section className="flex flex-col gap-1 pt-2">
-                <MedPage.Lead>
+                <MedPage.Lead ends={mayChange ? "chevron-menu" : "chevron"}>
                   <span>Earlier chats</span>
                   <span className="tabular-nums">{chats.length}</span>
                 </MedPage.Lead>
@@ -214,11 +217,13 @@ export function PatientHomePage({ patientId }: { readonly patientId: string }) {
                           threadId={chat.threadId}
                           day={chat.day}
                           today={today}
+                          actionsEnd={mayChange ? "menu" : undefined}
                         />
                       ) : (
                         <MedPage.ThreadRow
                           key={chat.note.id}
                           threadId={chat.note.threadId}
+                          actionsEnd={mayChange ? "menu" : undefined}
                           actions={<NoteRowActions note={chat.note} patientName={patient.name} />}
                         >
                           <MedPage.Primary className="max-w-[45%] shrink-0">
@@ -243,7 +248,7 @@ export function PatientHomePage({ patientId }: { readonly patientId: string }) {
               </section>
               {upcomingPlans.length === 0 ? null : (
                 <section className="flex flex-col gap-1 pt-2">
-                  <MedPage.Lead>
+                  <MedPage.Lead ends={mayChange ? "menu" : "chevron"}>
                     <span>Plans</span>
                     <span>Due</span>
                   </MedPage.Lead>
@@ -253,7 +258,7 @@ export function PatientHomePage({ patientId }: { readonly patientId: string }) {
                         key={plan.id}
                         plan={plan}
                         today={today}
-                        actions={<PlanRowActions plan={plan} />}
+                        actions={mayChange ? <PlanRowActions plan={plan} /> : undefined}
                       />
                     ))}
                   </MedPage.List>
