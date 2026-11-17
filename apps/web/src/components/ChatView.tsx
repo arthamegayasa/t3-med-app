@@ -353,6 +353,7 @@ import { observeResize } from "~/lib/observeResize";
 import { ThreadVisitWatermark } from "./chat/ThreadVisitWatermark";
 import { ChatTerminalDrawers } from "./chat/ChatTerminalDrawers";
 import { ChatRightPanel } from "./chat/ChatRightPanel";
+import { T3MED } from "../med/t3med";
 import { useDraftEnvironmentRouting } from "./chat/useDraftEnvironmentRouting";
 import { branchMismatchBannerItem, extensionStatusBannerItem } from "./chat/ThreadActivityBanners";
 import { ThreadNow } from "./chat/ThreadNow";
@@ -1725,6 +1726,7 @@ export default function ChatView(props: ChatViewProps) {
           reportedModelSelection,
         );
   const showComposerContextStrip =
+    !T3MED &&
     !embedded &&
     shouldShowComposerContextStrip({
       isDraftHeroState,

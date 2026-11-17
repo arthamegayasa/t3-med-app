@@ -14,10 +14,16 @@ const PLAN_TYPE_LABEL = {
   other: "Other",
 } as const satisfies Record<MedPlan["type"], string>;
 
+const CLOSED_STATUS = {
+  done: { label: "Done", variant: "success" },
+  cancelled: { label: "Cancelled", variant: "outline" },
+} as const;
+
 export function MedPlanRow({
   plan,
   today,
   patient,
+  showStatus = false,
 }: {
   readonly plan: MedPlan;
   readonly today: string;
@@ -26,8 +32,12 @@ export function MedPlanRow({
    * Without it the row opens nothing, as on the patient's own page.
    */
   readonly patient?: ReactNode;
+  /** Says `Planned` too, on a list that mixes every status. A draft is always marked. */
+  readonly showStatus?: boolean;
 }) {
-  const overdue = overdueLabel(plan.due, today);
+  const closed = plan.status === "done" || plan.status === "cancelled";
+  // A plan that is done or cancelled is no longer late.
+  const overdue = closed ? null : overdueLabel(plan.due, today);
   const cells = (
     <>
       <span className="flex min-w-0 flex-1 flex-col">
@@ -41,7 +51,17 @@ export function MedPlanRow({
         <Badge variant="outline" size="sm">
           Draft
         </Badge>
-      ) : null}
+      ) : plan.status === "planned" ? (
+        showStatus ? (
+          <Badge variant="info" size="sm">
+            Planned
+          </Badge>
+        ) : null
+      ) : (
+        <Badge variant={CLOSED_STATUS[plan.status].variant} size="sm">
+          {CLOSED_STATUS[plan.status].label}
+        </Badge>
+      )}
       {overdue === null ? null : (
         <Badge variant="warning" size="sm">
           {overdue}

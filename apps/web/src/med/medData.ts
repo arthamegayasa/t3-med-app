@@ -81,6 +81,21 @@ export const patientHomeAtom = Atom.family((patientId: string) =>
   ),
 );
 
+/** All that is filed for one patient: what the right panel's patient surfaces draw. */
+export const patientRecordAtom = Atom.family((patientId: string) =>
+  medQuery(`patient-record:${patientId}`, (client) =>
+    client.patients.record({ headers: {}, params: { patientId } }),
+  ),
+);
+
+// The test the Labs surface shows for a patient, kept while its tab is closed or behind another.
+export const selectedLabTestAtom = Atom.family((patientId: string) =>
+  Atom.make<string | null>(null).pipe(
+    Atom.keepAlive,
+    Atom.withLabel(`med:selected-lab-test:${patientId}`),
+  ),
+);
+
 const threadPatientAtom = Atom.family((threadId: string) =>
   medQuery(`thread-patient:${threadId}`, (client) =>
     client.patients.threadPatient({ headers: {}, params: { threadId } }),
@@ -115,15 +130,15 @@ const selectThreadPatient = (
 
 /**
  * The patient a thread is linked to, or null while unknown or when it has none. A thread of
- * another environment has none: its id is not asked about at all.
+ * another environment has none, and neither has a draft: nothing is asked about either.
  */
 export function useThreadPatient(
-  environmentId: EnvironmentId,
-  threadId: string,
+  environmentId: EnvironmentId | null,
+  threadId: string | null,
 ): MedThreadPatient["patient"] {
   const medEnvironmentId = useMedEnvironmentId();
   return useEnvironmentQuerySelector(
-    medEnvironmentId !== null && medEnvironmentId === environmentId
+    threadId !== null && medEnvironmentId !== null && medEnvironmentId === environmentId
       ? threadPatientAtom(threadId)
       : null,
     selectThreadPatient,

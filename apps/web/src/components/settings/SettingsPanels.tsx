@@ -108,6 +108,7 @@ import { AdvancedSettings } from "./AdvancedSettings";
 import { PullRequestLinksOpenInAppSetting } from "./IntegrationsSettings";
 import { StorageCleanupSections } from "./StorageSettings";
 import { UpdateTrackSwitchDialog } from "./UpdateTrackSwitchDialog";
+import { T3MED } from "../../med/t3med";
 import { environmentIdsKey } from "~/state/environmentAtomList";
 import { environmentSessionStatesAtom } from "~/state/session";
 import { canUpdateServer } from "../ServerUpdateAction";
@@ -2079,7 +2080,7 @@ export function AboutSettingsPanel() {
             }
           />
         ) : null}
-        {isElectron || HOSTED_APP_CHANNEL ? (
+        {(isElectron || HOSTED_APP_CHANNEL) && !T3MED ? (
           <AboutVersionSection />
         ) : (
           <>

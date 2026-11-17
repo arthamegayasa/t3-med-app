@@ -1,7 +1,9 @@
 import type { ClientSettings } from "@t3tools/contracts";
 
+import { showsThreadDetailsItem } from "../../med/t3med";
+
 // Ids are stored in client settings, so never rename one.
-export const THREAD_DETAILS_ITEMS = [
+const ALL_THREAD_DETAILS_ITEMS = [
   { id: "environment", label: "Environment and worktree", defaultVisible: true },
   { id: "openIn", label: "Open in editor", defaultVisible: true },
   { id: "scripts", label: "Project scripts", defaultVisible: true },
@@ -15,6 +17,9 @@ export const THREAD_DETAILS_ITEMS = [
   { id: "usage", label: "Usage limits", defaultVisible: false },
   { id: "context", label: "Context window", defaultVisible: false },
 ] as const;
+export const THREAD_DETAILS_ITEMS = ALL_THREAD_DETAILS_ITEMS.filter((item) =>
+  showsThreadDetailsItem(item.id),
+);
 
 export type ThreadDetailsItemId = (typeof THREAD_DETAILS_ITEMS)[number]["id"];
 export type ThreadDetailsVisibility = Readonly<Record<ThreadDetailsItemId, boolean>>;

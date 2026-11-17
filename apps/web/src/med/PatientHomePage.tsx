@@ -17,7 +17,7 @@ import { MedPlanRow } from "./MedPlanRow";
 
 const STATUS_LABEL = { new: "New", active: "Active", archived: "Archived" } as const;
 
-function PatientFacts({
+export function PatientFacts({
   patient,
   today,
 }: {

@@ -14,6 +14,7 @@ import SideChatPane from "./SideChatPane";
 import type { ComposerImageAttachment, DraftId } from "../../composerDraftStore";
 import type { ShortcutMatchContext } from "../../keybindings";
 import type { SideChatParentPanel } from "../../lib/sideChatPane";
+import { MedSurfaceContent } from "../../med/MedSurfaceContent";
 import { type RightPanelSurface, useRightPanelStore } from "../../rightPanelStore";
 import {
   PersistentThreadTerminalPanel,
@@ -234,5 +235,7 @@ export function RightPanelSurfaceContent(props: {
         </Suspense>
       );
     }
+    default:
+      return <MedSurfaceContent surface={surface} threadRef={threadRef} />;
   }
 }

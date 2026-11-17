@@ -104,6 +104,8 @@ import { resolvePullRequestState } from "./pullRequest/pullRequestPresentation";
 import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
 import { observeResize } from "~/lib/observeResize";
 import { surfaceShortcutKey } from "~/lib/surfaceShortcutKey";
+import { MED_SURFACE_TITLE } from "~/med/medSurfaces";
+import { MedSurfaceIcon, useMedSurfaceActions } from "~/med/MedSurfaceLauncher";
 
 export interface RightPanelTabsProps {
   mode: PreviewPanelMode;
@@ -336,7 +338,7 @@ function RightPanelEmptyState(props: {
 }) {
   const [highlight, setHighlight] = useState(-1);
 
-  const actions = [
+  const actions = useMedSurfaceActions([
     {
       label: "Browser",
       icon: Globe2,
@@ -407,7 +409,7 @@ function RightPanelEmptyState(props: {
           },
         ]
       : []),
-  ] as const;
+  ]);
 
   type SurfaceAction = (typeof actions)[number];
 
@@ -604,6 +606,8 @@ function surfaceTitle(
         return "Browser";
       }
     }
+    default:
+      return MED_SURFACE_TITLE[surface.kind];
   }
 }
 
@@ -692,6 +696,8 @@ function SurfaceIcon({
       ) : (
         <Smartphone className="size-3 shrink-0" />
       );
+    default:
+      return <MedSurfaceIcon kind={surface.kind} />;
   }
 }
 
@@ -1090,7 +1096,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
     });
   };
 
-  const addSurfaceActions = [
+  const addSurfaceActions = useMedSurfaceActions([
     {
       label: "Browser",
       icon: Globe2,
@@ -1159,7 +1165,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
           },
         ]
       : []),
-  ] as const;
+  ]);
 
   const handleAddSurfaceMenuKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
     const action = surfaceShortcutActionForKey(addSurfaceActions, event.nativeEvent);

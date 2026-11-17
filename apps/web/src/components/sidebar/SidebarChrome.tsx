@@ -15,6 +15,7 @@ import { primaryServerKeybindingsAtom } from "../../state/server";
 import { cn } from "../../lib/utils";
 import { usePullRequestsSupported } from "../../state/environments";
 import { T3Wordmark } from "../T3Wordmark";
+import { BRAND_WORD, T3MED } from "../../med/t3med";
 import {
   resolveEnvironmentIdentificationPillLabel,
   resolveSidebarStageBackdropVariant,
@@ -165,7 +166,7 @@ function HistoryNavigationButton({
 function SidebarBrand({ onBackdrop }: { onBackdrop: boolean }) {
   return (
     <Link
-      aria-label="T3 Code home"
+      aria-label={`T3 ${BRAND_WORD} home`}
       className={cn(
         "relative z-10 ml-[var(--workspace-titlebar-content-left)] hidden h-7 w-fit min-w-0 shrink-0 items-center overflow-hidden rounded-md outline-hidden ring-ring focus-visible:ring-2 focus-visible:ring-inset md:flex",
         onBackdrop ? "text-white" : "text-foreground",
@@ -187,7 +188,7 @@ function SidebarBrandMark({ onBackdrop }: { onBackdrop: boolean }) {
           onBackdrop ? "text-white/70" : "text-muted-foreground",
         )}
       >
-        Code
+        {BRAND_WORD}
       </span>
     </span>
   );
@@ -271,7 +272,7 @@ const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
             label="Settings"
             onClick={handleSettingsClick}
           />
-          {pullRequestsSupported ? (
+          {pullRequestsSupported && !T3MED ? (
             <SidebarUtilityItem
               icon={<PullRequestGlyph.pullRequest />}
               label="Pull requests"
@@ -286,7 +287,7 @@ const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
         </>
       )}
       <SidebarThreadUndoNotice />
-      <SidebarUpdatePill />
+      {T3MED ? null : <SidebarUpdatePill />}
     </SidebarMenu>
   );
 });
@@ -295,7 +296,7 @@ export const SidebarChromeFooter = memo(function SidebarChromeFooter() {
   return (
     <SidebarFooter>
       <SidebarProviderUpdatePill />
-      <SidebarUpdateArchitectureWarning />
+      {T3MED ? null : <SidebarUpdateArchitectureWarning />}
       <SidebarUtilityMenu />
     </SidebarFooter>
   );
