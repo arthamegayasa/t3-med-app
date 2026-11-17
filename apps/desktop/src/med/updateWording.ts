@@ -8,7 +8,7 @@ import { MED_PRODUCT_NAME } from "./identity.ts";
 
 const UPSTREAM_PRODUCT_NAME = "T3 Code";
 
-const medUpdateWording = (text: string): string =>
+export const medUpdateWording = (text: string): string =>
   text.replaceAll(UPSTREAM_PRODUCT_NAME, MED_PRODUCT_NAME);
 
 const reworded = (text: string | undefined): string | undefined =>

@@ -45,6 +45,7 @@ import {
 } from "./releaseNotes.ts";
 import { desktopUpdateChannelOf } from "@t3tools/shared/cliRelease";
 import { compareSemverVersions } from "@t3tools/shared/semver";
+import { medTakesMockFeed } from "../med/updates.ts";
 import {
   createInitialDesktopUpdateState,
   reduceDesktopUpdateStateOnCheckFailure,
@@ -1272,7 +1273,7 @@ export const make = Effect.gen(function* () {
         });
       }
 
-      if (mockUpdates) {
+      if (medTakesMockFeed(mockUpdates, appUpdateYmlConfig)) {
         yield* electronUpdater.setFeedURL({
           provider: "generic",
           url: `http://localhost:${config.mockUpdateServerPort}`,
@@ -1346,7 +1347,7 @@ export const make = Effect.gen(function* () {
       if (Option.isSome(channelBlockedReason(nextChannel))) {
         return yield* new DesktopUpdateChannelManagedError({
           channel: nextChannel,
-          policyMessage: policy.message ?? "Your administrator manages T3 Code updates.",
+          policyMessage: policy.message ?? "Your administrator manages T3 Med updates.",
         });
       }
       // A background check holds the updater only briefly, so wait it out instead of refusing.

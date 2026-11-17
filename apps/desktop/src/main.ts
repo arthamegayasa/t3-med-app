@@ -82,6 +82,7 @@ import * as DesktopWindow from "./window/DesktopWindow.ts";
 import * as DesktopWslBackend from "./wsl/DesktopWslBackend.ts";
 import * as DesktopWslEnvironment from "./wsl/DesktopWslEnvironment.ts";
 import * as DesktopWslServerTree from "./wsl/DesktopWslServerTree.ts";
+import { layerMedSettings, layerMedUpdatePolicy, layerMedUpdates } from "./med/updates.ts";
 
 if (process.argv.includes("--version")) {
   try {
@@ -160,7 +161,7 @@ const layerDesktopFoundation = Layer.mergeAll(
   DesktopState.layer,
   DesktopShutdown.layer,
   DesktopLegacyLocalStorage.layer,
-  DesktopAppSettings.layer,
+  layerMedSettings(DesktopAppSettings.layer),
   DesktopClientSettings.layer,
   DesktopConnectionCatalogStore.layer.pipe(Layer.provideMerge(DesktopSavedEnvironments.layer)),
   DesktopAssets.layer,
@@ -228,8 +229,8 @@ const layerDesktopApplication = Layer.mergeAll(
 ).pipe(
   Layer.provideMerge(layerDesktopSnapShot),
   Layer.provideMerge(
-    DesktopUpdates.layer.pipe(
-      Layer.provide(DesktopUpdatePolicy.layer),
+    layerMedUpdates(DesktopUpdates.layer).pipe(
+      Layer.provide(layerMedUpdatePolicy(DesktopUpdatePolicy.layer)),
       // The same layer as the foundation's, so the policy is still read once.
       Layer.provide(DesktopManagedPolicy.layer),
     ),
