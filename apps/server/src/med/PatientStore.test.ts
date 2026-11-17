@@ -3148,6 +3148,233 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("PatientStore", (
     }).pipe(Effect.provide(layerStore)),
   );
 
+  it.effect("verifies exactly the rows the doctor was shown, and returns exactly those", () =>
+    Effect.gen(function* () {
+      const store = yield* PatientStore.PatientStore;
+      const patient = yield* store.createPatient({ name: "Wayan" });
+      const other = yield* store.createPatient({ name: "Made" });
+      const threadId = "thread-1";
+      const lab = (testAsWritten: string, value: number) => ({
+        testAsWritten,
+        value,
+        unit: "mg/dL",
+        collected: "2026-01-10",
+      });
+      const filed = yield* fileLinked(store, {
+        threadId,
+        patientId: patient.id,
+        title: "Labs",
+        labs: [lab("LDL", 120), lab("HDL", 40), lab("Triglycerides", 150)],
+        plans: [
+          { title: "Clinic visit", due: "2026-11-25", type: "follow_up" },
+          { title: "EEG", due: "2026-11-27", type: "procedure" },
+        ],
+      });
+      const elsewhere = yield* fileLinked(store, {
+        threadId: "thread-2",
+        patientId: other.id,
+        title: "Labs",
+        labs: [lab("LDL", 99)],
+      });
+      const noteId = filed.note.id;
+      const [ldl, hdl, tg] = filed.labs.map((row) => row.id);
+      const [visit, eeg] = filed.plans.map((row) => row.id);
+
+      // The page lists a note's drafts, so what is verified is what was on screen.
+      const waiting = (yield* store.listNeedsYou()).patients.find(
+        (entry) => entry.patient.id === patient.id,
+      )!.notes[0]!;
+      assert.deepStrictEqual(
+        [
+          waiting.draftLabRows.map((row) => [row.id, row.valueText, row.unit, row.collected]),
+          waiting.draftPlanRows.map((row) => [row.id, row.title, row.due]),
+        ],
+        [
+          [
+            [ldl, "120", "mg/dL", "2026-01-10"],
+            [hdl, "40", "mg/dL", "2026-01-10"],
+            [tg, "150", "mg/dL", "2026-01-10"],
+          ],
+          [
+            [visit, "Clinic visit", "2026-11-25"],
+            [eeg, "EEG", "2026-11-27"],
+          ],
+        ],
+      );
+      assert.deepStrictEqual(
+        (yield* store.getPatientHome(patient.id)).notes[0]!.draftLabRows.map((row) => row.id),
+        [ldl, hdl, tg],
+      );
+
+      // One was verified on its own, and an agent files a fourth while the page is open.
+      yield* store.setLabVerified({ labId: ldl!, verified: true });
+      const fourth = (yield* store.fileFromThread({
+        threadId,
+        patientId: patient.id,
+        labs: [lab("HbA1c", 9)],
+      })).labs[0]!.id;
+
+      const verified = yield* store.verifyNote(noteId, {
+        labIds: [ldl!, hdl!, tg!, elsewhere.labs[0]!.id, "no-such-lab"],
+        planIds: [visit!],
+      });
+      assert.deepStrictEqual(verified, {
+        labsVerified: 2,
+        plansPlanned: 1,
+        patientActivated: false,
+        labIds: [hdl!, tg!],
+        planIds: [visit!],
+      });
+      const statuses = Effect.gen(function* () {
+        const labs = yield* store.listLabs({ patientId: patient.id });
+        const plans = yield* store.listPlans({ patientId: patient.id });
+        const status = (rows: ReadonlyArray<{ id: string; status: string }>, id: string) =>
+          rows.find((row) => row.id === id)?.status;
+        return [
+          ...[ldl!, hdl!, tg!, fourth].map((id) => status(labs, id)),
+          ...[visit!, eeg!].map((id) => status(plans, id)),
+        ];
+      });
+      assert.deepStrictEqual(yield* statuses, [
+        "verified",
+        "verified",
+        "verified",
+        "draft",
+        "planned",
+        "draft",
+      ]);
+      // A row of another note is not verified by naming it.
+      assert.strictEqual((yield* store.listLabs({ patientId: other.id }))[0]!.status, "draft");
+
+      // Undo returns the rows that call verified, and leaves the one verified before it.
+      yield* store.returnNoteRowsToDraft(noteId, {
+        labIds: [...verified.labIds, ldl!].filter((id) => id !== ldl),
+        planIds: verified.planIds,
+      });
+      assert.deepStrictEqual(yield* statuses, [
+        "verified",
+        "draft",
+        "draft",
+        "draft",
+        "draft",
+        "draft",
+      ]);
+      assert.strictEqual(
+        yield* failureTag(store.verifyNote("no-such-note", { labIds: [], planIds: [] })),
+        "NoteNotFoundError",
+      );
+    }).pipe(Effect.provide(layerStore)),
+  );
+
+  it.effect("stops a question waiting once the doctor handled it, and keeps its text", () =>
+    Effect.gen(function* () {
+      const store = yield* PatientStore.PatientStore;
+      const patient = yield* store.createPatient({ name: "Wayan" });
+      const threadId = "thread-1";
+      const asked = yield* fileLinked(store, {
+        threadId,
+        patientId: patient.id,
+        title: "Visit",
+        needsYou: "Which lab ran this?",
+      });
+      const noteId = asked.note.id;
+      const seen = Effect.gen(function* () {
+        const home = yield* store.getPatientHome(patient.id);
+        return {
+          waiting: (yield* store.getCounts()).needsYou,
+          listed: (yield* store.listNeedsYou()).patients.length,
+          text: home.notes[0]!.needsYou,
+          handled: home.notes[0]!.needsYouHandledAt !== null,
+        };
+      });
+      const text = "Which lab ran this?";
+      assert.deepStrictEqual(yield* seen, { waiting: 1, listed: 1, text, handled: false });
+
+      yield* store.setQuestionHandled({ noteId, handled: true });
+      assert.deepStrictEqual(yield* seen, { waiting: 0, listed: 0, text, handled: true });
+      yield* store.setQuestionHandled({ noteId, handled: false });
+      assert.deepStrictEqual(yield* seen, { waiting: 1, listed: 1, text, handled: false });
+
+      // A retry that asks the same thing does not wake a handled question; a new one does.
+      yield* store.setQuestionHandled({ noteId, handled: true });
+      yield* store.fileFromThread({ threadId, patientId: patient.id, needsYou: text });
+      assert.deepStrictEqual(yield* seen, { waiting: 0, listed: 0, text, handled: true });
+      yield* store.fileFromThread({ threadId, patientId: patient.id, needsYou: "Fasting?" });
+      assert.deepStrictEqual(yield* seen, {
+        waiting: 1,
+        listed: 1,
+        text: `${text}\nFasting?`,
+        handled: false,
+      });
+
+      // A note with drafts still waits for those when its question is handled.
+      yield* store.setQuestionHandled({ noteId, handled: true });
+      yield* store.fileFromThread({
+        threadId,
+        patientId: patient.id,
+        plans: [{ title: "Clinic visit", due: "2026-11-25", type: "follow_up" }],
+      });
+      assert.deepInclude(yield* seen, { waiting: 1, listed: 1, handled: true });
+      assert.strictEqual(
+        yield* failureTag(store.setQuestionHandled({ noteId: "no-such-note", handled: true })),
+        "NoteNotFoundError",
+      );
+    }).pipe(Effect.provide(layerStore)),
+  );
+
+  it.effect("lists what was removed for one patient, with when, until it is put back", () =>
+    Effect.gen(function* () {
+      const store = yield* PatientStore.PatientStore;
+      const wayan = yield* store.createPatient({ name: "Wayan" });
+      const made = yield* store.createPatient({ name: "Made" });
+      const message = {
+        title: "Visit",
+        labs: [
+          { testAsWritten: "LDL", value: 120, unit: "mg/dL", collected: "2026-01-10" },
+          { testAsWritten: "LDL", value: 100, unit: "mg/dL", collected: "2026-02-10" },
+        ],
+        plans: [{ title: "Clinic visit", due: "2026-11-25", type: "follow_up" }],
+      } as const;
+      const ofWayan = yield* fileLinked(store, {
+        ...message,
+        threadId: "thread-1",
+        patientId: wayan.id,
+      });
+      const ofMade = yield* fileLinked(store, {
+        ...message,
+        threadId: "thread-2",
+        patientId: made.id,
+      });
+      const removed = (patientId: string) =>
+        store.listRemoved(patientId).pipe(
+          Effect.map((list) => ({
+            labs: list.labs.map((row) => [row.id, row.valueText, row.collected, row.removedAt]),
+            plans: list.plans.map((row) => [row.id, row.title, row.due, row.removedAt]),
+          })),
+        );
+      assert.deepStrictEqual(yield* removed(wayan.id), { labs: [], plans: [] });
+
+      const lab = yield* store.setLabRemoved({ labId: ofWayan.labs[0]!.id, removed: true });
+      const plan = yield* store.setPlanRemoved({ planId: ofWayan.plans[0]!.id, removed: true });
+      yield* store.setLabRemoved({ labId: ofMade.labs[1]!.id, removed: true });
+      assert.deepStrictEqual(yield* removed(wayan.id), {
+        labs: [[ofWayan.labs[0]!.id, "120", "2026-01-10", lab.updatedAt]],
+        plans: [[ofWayan.plans[0]!.id, "Clinic visit", "2026-11-25", plan.updatedAt]],
+      });
+      // Still out of every list.
+      assert.lengthOf(yield* store.listLabs({ patientId: wayan.id }), 1);
+
+      yield* store.setLabRemoved({ labId: ofWayan.labs[0]!.id, removed: false });
+      yield* store.setPlanRemoved({ planId: ofWayan.plans[0]!.id, removed: false });
+      assert.deepStrictEqual(yield* removed(wayan.id), { labs: [], plans: [] });
+      assert.lengthOf((yield* removed(made.id)).labs, 1);
+      assert.strictEqual(
+        yield* failureTag(store.listRemoved("no-such-patient")),
+        "PatientNotFoundError",
+      );
+    }).pipe(Effect.provide(layerStore)),
+  );
+
   it.effect("links a thread to one patient and reads the link back", () =>
     Effect.gen(function* () {
       const store = yield* PatientStore.PatientStore;
