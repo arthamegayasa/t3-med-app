@@ -1,5 +1,5 @@
 /**
- * T3 Med: what the patient pages read over `/api/med`. Fork-owned, and imported as
+ * T3 Med: what the patient pages read and change over `/api/med`. Fork-owned, and imported as
  * `@t3tools/contracts/med` so upstream's barrel, RPC contract and `EnvironmentHttpApi` are
  * not edited. The routes sign in like upstream's own, through `EnvironmentAuthenticatedAuth`.
  */
@@ -21,6 +21,7 @@ import {
 export const urnKey = (urn: string): string => urn.toUpperCase().replace(/[^\p{L}\p{N}]/gu, "");
 
 const MedPatientStatus = Schema.Literals(["new", "active", "archived"]);
+const MedPatientSex = Schema.Literals(["female", "male"]);
 
 export const MedPatientSummary = Schema.Struct({
   id: Schema.String,
@@ -60,16 +61,18 @@ export const MedPlan = Schema.Struct({
   due: Schema.String,
   type: Schema.Literals(["follow_up", "lab", "imaging", "procedure", "other"]),
   status: Schema.Literals(["draft", "planned", "done", "cancelled"]),
+  /** The day a done plan was done. */
+  doneOn: Schema.NullOr(Schema.String),
 });
 export type MedPlan = typeof MedPlan.Type;
 
 export const MedPatientHome = Schema.Struct({
   patient: Schema.Struct({
     ...MedPatientSummary.fields,
-    sex: Schema.NullOr(Schema.Literals(["female", "male"])),
+    sex: Schema.NullOr(MedPatientSex),
     dateOfBirth: Schema.NullOr(Schema.String),
   }),
-  notes: Schema.Array(MedNote),
+  notes: Schema.Array(MedWaitingNote),
   /** Every thread linked to the patient, whether or not it filed a note for them. */
   threads: Schema.Array(Schema.Struct({ threadId: Schema.String, linkedAt: Schema.String })),
   draftLabs: Schema.Number,
@@ -77,6 +80,23 @@ export const MedPatientHome = Schema.Struct({
   upcomingPlans: Schema.Array(MedPlan),
 });
 export type MedPatientHome = typeof MedPatientHome.Type;
+
+const MedLabFlag = Schema.Literals(["low", "normal", "high"]);
+const MedLabStatus = Schema.Literals(["draft", "verified"]);
+
+/** What a result said before a correction replaced it. */
+export const MedLabRevision = Schema.Struct({
+  testAsWritten: Schema.String,
+  value: Schema.NullOr(Schema.Number),
+  valueText: Schema.String,
+  unit: Schema.String,
+  referenceRange: Schema.String,
+  flag: Schema.NullOr(MedLabFlag),
+  collected: Schema.String,
+  status: MedLabStatus,
+  replacedAt: Schema.String,
+});
+export type MedLabRevision = typeof MedLabRevision.Type;
 
 export const MedLab = Schema.Struct({
   id: Schema.String,
@@ -90,9 +110,9 @@ export const MedLab = Schema.Struct({
   valueText: Schema.String,
   unit: Schema.String,
   referenceRange: Schema.String,
-  flag: Schema.NullOr(Schema.Literals(["low", "normal", "high"])),
+  flag: Schema.NullOr(MedLabFlag),
   collected: Schema.String,
-  status: Schema.Literals(["draft", "verified"]),
+  status: MedLabStatus,
   isBaseline: Schema.Boolean,
   /** The store's comparison with the baseline. The client shows these and computes none. */
   valueInBaselineUnit: Schema.NullOr(Schema.Number),
@@ -110,17 +130,22 @@ export const MedLab = Schema.Struct({
     ]),
   ),
   noteId: Schema.String,
+  /** Earlier values, the latest correction first; empty for a result never corrected. */
+  revisions: Schema.Array(MedLabRevision),
 });
 export type MedLab = typeof MedLab.Type;
 
 /** All that is filed for one patient: labs oldest first, plans soonest first, notes latest first. */
+export const MedPatientDetails = Schema.Struct({
+  ...MedPatientSummary.fields,
+  sex: Schema.NullOr(MedPatientSex),
+  dateOfBirth: Schema.NullOr(Schema.String),
+  diagnoses: Schema.String,
+});
+export type MedPatientDetails = typeof MedPatientDetails.Type;
+
 export const MedPatientRecord = Schema.Struct({
-  patient: Schema.Struct({
-    ...MedPatientSummary.fields,
-    sex: Schema.NullOr(Schema.Literals(["female", "male"])),
-    dateOfBirth: Schema.NullOr(Schema.String),
-    diagnoses: Schema.String,
-  }),
+  patient: MedPatientDetails,
   labs: Schema.Array(MedLab),
   plans: Schema.Array(MedPlan),
   notes: Schema.Array(MedNote),
@@ -174,6 +199,86 @@ export class MedPatientNotFoundError extends Schema.TaggedError<MedPatientNotFou
   }
 }
 
+/** What the doctor changes of a patient; a field left out stays as it is. */
+export const MedPatientEdit = Schema.Struct({
+  name: Schema.optionalKey(Schema.String),
+  urn: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  sex: Schema.optionalKey(Schema.NullOr(MedPatientSex)),
+  dateOfBirth: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  diagnoses: Schema.optionalKey(Schema.String),
+  /** The whole list of other spellings, replacing the one the patient has. */
+  alsoWrittenAs: Schema.optionalKey(Schema.Array(Schema.String)),
+  /** `archived` archives; `active` or `new` brings the patient back. */
+  status: Schema.optionalKey(MedPatientStatus),
+});
+export type MedPatientEdit = typeof MedPatientEdit.Type;
+
+/** What a correction changes of one result. `value` and `valueText` are replaced together. */
+export const MedLabCorrection = Schema.Struct({
+  testAsWritten: Schema.optionalKey(Schema.String),
+  value: Schema.optionalKey(Schema.NullOr(Schema.Number)),
+  valueText: Schema.optionalKey(Schema.String),
+  unit: Schema.optionalKey(Schema.String),
+  referenceRange: Schema.optionalKey(Schema.String),
+  flag: Schema.optionalKey(Schema.NullOr(MedLabFlag)),
+  collected: Schema.optionalKey(Schema.String),
+});
+export type MedLabCorrection = typeof MedLabCorrection.Type;
+
+/** `open` reopens a plan that is done or cancelled; `doneOn` is the day a plan was done. */
+export const MedPlanChange = Schema.Struct({
+  title: Schema.optionalKey(Schema.String),
+  due: Schema.optionalKey(Schema.String),
+  status: Schema.optionalKey(Schema.Literals(["done", "cancelled", "open"])),
+  doneOn: Schema.optionalKey(Schema.String),
+});
+export type MedPlanChange = typeof MedPlanChange.Type;
+
+export const MedRemoved = Schema.Struct({ removed: Schema.Boolean });
+export const MedVerified = Schema.Struct({ verified: Schema.Boolean });
+
+export const MedNoteVerified = Schema.Struct({
+  labsVerified: Schema.Number,
+  plansPlanned: Schema.Number,
+  patientActivated: Schema.Boolean,
+});
+export type MedNoteVerified = typeof MedNoteVerified.Type;
+
+/** The note as it is in the Inbox: another id than the one moved when it was merged into one. */
+export const MedNoteMoved = Schema.Struct({ noteId: Schema.String });
+
+export class MedRowNotFoundError extends Schema.TaggedError<MedRowNotFoundError>()(
+  "MedRowNotFoundError",
+  { row: Schema.Literals(["lab", "plan", "note"]), id: Schema.String },
+  { httpApiStatus: 404 },
+) {
+  override get message(): string {
+    return `This ${this.row === "lab" ? "result" : this.row} is no longer in T3 Med.`;
+  }
+}
+
+/** A change the store refused; `reason` names the field or the row, never a value. */
+export class MedRefusedError extends Schema.TaggedError<MedRefusedError>()(
+  "MedRefusedError",
+  { reason: Schema.String },
+  { httpApiStatus: 422 },
+) {
+  override get message(): string {
+    return this.reason;
+  }
+}
+
+/** The URN belongs to another patient, named here for the doctor and in no log. */
+export class MedUrnTakenError extends Schema.TaggedError<MedUrnTakenError>()(
+  "MedUrnTakenError",
+  { patientId: Schema.String, patientName: Schema.String },
+  { httpApiStatus: 409 },
+) {
+  override get message(): string {
+    return "Another patient already has this URN.";
+  }
+}
+
 const BearerHeaders = Schema.Struct({
   authorization: Schema.optionalKey(Schema.String),
   dpop: Schema.optionalKey(Schema.String),
@@ -182,8 +287,13 @@ const ReadErrors = [EnvironmentScopeRequiredError, EnvironmentInternalError] as 
 const PatientErrors = [MedPatientNotFoundError, ...ReadErrors] as const;
 const PatientParams = Schema.Struct({ patientId: Schema.String });
 const ThreadParams = Schema.Struct({ threadId: Schema.String });
+const LabParams = Schema.Struct({ labId: Schema.String });
+const PlanParams = Schema.Struct({ planId: Schema.String });
+const NoteParams = Schema.Struct({ noteId: Schema.String });
+const ChangeErrors = [MedRowNotFoundError, MedRefusedError, ...ReadErrors] as const;
 
-// Reads only. A thread is linked to a patient by the agent tools, on evidence, and by nothing here.
+// A thread is linked to a patient by the agent tools, on evidence, and by nothing here: no
+// route writes under `/api/med/threads`, and no write below touches a thread's link.
 class MedPatientsHttpApi extends HttpApiGroup.make("patients")
   .add(
     // The whole directory: a search in the URL would put a patient's name in the request trace.
@@ -236,6 +346,93 @@ class MedPatientsHttpApi extends HttpApiGroup.make("patients")
       params: ThreadParams,
       success: MedThreadPatient,
       error: ReadErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.patch("updatePatient", "/api/med/patients/:patientId", {
+      headers: BearerHeaders,
+      params: PatientParams,
+      payload: MedPatientEdit,
+      success: MedPatientDetails,
+      error: [MedPatientNotFoundError, MedUrnTakenError, MedRefusedError, ...ReadErrors],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.patch("correctLab", "/api/med/labs/:labId", {
+      headers: BearerHeaders,
+      params: LabParams,
+      payload: MedLabCorrection,
+      success: MedLab,
+      error: ChangeErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("undoLabCorrection", "/api/med/labs/:labId/undo-correction", {
+      headers: BearerHeaders,
+      params: LabParams,
+      success: MedLab,
+      error: ChangeErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.put("setLabRemoved", "/api/med/labs/:labId/removed", {
+      headers: BearerHeaders,
+      params: LabParams,
+      payload: MedRemoved,
+      success: MedRemoved,
+      error: ChangeErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.put("setLabVerified", "/api/med/labs/:labId/verified", {
+      headers: BearerHeaders,
+      params: LabParams,
+      payload: MedVerified,
+      success: MedVerified,
+      error: ChangeErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.patch("updatePlan", "/api/med/plans/:planId", {
+      headers: BearerHeaders,
+      params: PlanParams,
+      payload: MedPlanChange,
+      success: MedPlan,
+      error: ChangeErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.put("setPlanRemoved", "/api/med/plans/:planId/removed", {
+      headers: BearerHeaders,
+      params: PlanParams,
+      payload: MedRemoved,
+      success: MedRemoved,
+      error: ChangeErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.put("setPlanVerified", "/api/med/plans/:planId/verified", {
+      headers: BearerHeaders,
+      params: PlanParams,
+      payload: MedVerified,
+      success: MedVerified,
+      error: ChangeErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("verifyNote", "/api/med/notes/:noteId/verify", {
+      headers: BearerHeaders,
+      params: NoteParams,
+      success: MedNoteVerified,
+      error: ChangeErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("moveNoteToInbox", "/api/med/notes/:noteId/inbox", {
+      headers: BearerHeaders,
+      params: NoteParams,
+      success: MedNoteMoved,
+      error: ChangeErrors,
     }).middleware(EnvironmentAuthenticatedAuth),
   ) {}
 

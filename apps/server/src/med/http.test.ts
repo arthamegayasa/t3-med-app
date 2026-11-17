@@ -8,12 +8,15 @@ import {
   type AuthEnvironmentScope,
 } from "@t3tools/contracts";
 import { MedHttpApi } from "@t3tools/contracts/med";
+import * as Cause from "effect/Cause";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Tracer from "effect/Tracer";
 import { Etag, HttpPlatform, HttpRouter } from "effect/http";
 import * as HttpApi from "effect/http-api/HttpApi";
 import * as TestClock from "effect/testing/TestClock";
@@ -41,6 +44,7 @@ type Store = PatientStore.PatientStore["Service"];
 const serve = Effect.fn("test.serveMedRoutes")(function* (
   store: Store,
   scopes: ReadonlyArray<AuthEnvironmentScope> | null,
+  tracer?: Tracer.Tracer,
 ) {
   const { handler, dispose } = HttpRouter.toWebHandler(
     MedHttp.layer.pipe(
@@ -61,6 +65,7 @@ const serve = Effect.fn("test.serveMedRoutes")(function* (
       Layer.provide(HttpPlatform.layer),
       Layer.provide(Etag.layerWeak),
       Layer.provide(NodeServices.layer),
+      Layer.provide(tracer === undefined ? Layer.empty : Layer.succeed(Tracer.Tracer, tracer)),
     ),
     { disableLogger: true },
   );
@@ -88,6 +93,8 @@ const serve = Effect.fn("test.serveMedRoutes")(function* (
     });
   return call;
 });
+
+const BOTH_SCOPES = [AuthOrchestrationReadScope, AuthOrchestrationOperateScope];
 
 const seed = Effect.fn("test.seedPatients")(function* (store: Store) {
   const wayan = yield* store.createPatient({
@@ -136,6 +143,19 @@ const READ_ROUTES = [
   "/api/med/threads/thread-1/patient",
 ];
 
+const WRITE_ROUTES = [
+  ["PATCH", "/api/med/patients/some-patient", { diagnoses: "Migraine" }],
+  ["PATCH", "/api/med/labs/some-lab", { unit: "mg/dL" }],
+  ["POST", "/api/med/labs/some-lab/undo-correction", undefined],
+  ["PUT", "/api/med/labs/some-lab/verified", { verified: true }],
+  ["PUT", "/api/med/labs/some-lab/removed", { removed: true }],
+  ["PATCH", "/api/med/plans/some-plan", { status: "done" }],
+  ["PUT", "/api/med/plans/some-plan/verified", { verified: true }],
+  ["PUT", "/api/med/plans/some-plan/removed", { removed: true }],
+  ["POST", "/api/med/notes/some-note/verify", undefined],
+  ["POST", "/api/med/notes/some-note/inbox", undefined],
+] as const;
+
 it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("med HTTP routes", (it) => {
   it.effect("answers no route without a credential, and no route the session's scopes miss", () =>
     Effect.gen(function* () {
@@ -172,10 +192,30 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("med HTTP routes"
       assert.deepStrictEqual((yield* reader("/api/med/threads/thread-9/patient")).body, {
         patient: null,
       });
+
+      // A change needs the operate scope on top of what a read needs, and a credential first.
+      const statuses = Effect.fn("test.writeStatuses")(function* (
+        scopes: ReadonlyArray<AuthEnvironmentScope> | null,
+      ) {
+        const call = yield* serve(store, scopes);
+        const answers = yield* Effect.forEach(WRITE_ROUTES, ([method, path, body]) =>
+          call(path, { method, body }),
+        );
+        assert.deepStrictEqual(
+          answers.map((answer) => answer.cacheControl),
+          WRITE_ROUTES.map(() => "no-store"),
+        );
+        return [...new Set(answers.map((answer) => answer.status))];
+      });
+      assert.deepStrictEqual(yield* statuses(null), [401]);
+      assert.deepStrictEqual(yield* statuses([]), [403]);
+      assert.deepStrictEqual(yield* statuses([AuthOrchestrationReadScope]), [403]);
+      assert.deepStrictEqual(yield* statuses([AuthOrchestrationOperateScope]), [403]);
+      assert.deepStrictEqual(yield* statuses(BOTH_SCOPES), [404]);
     }).pipe(Effect.provide(layerStore)),
   );
 
-  it.effect("has no route that links a thread to a patient, or changes anything", () =>
+  it.effect("has no route that links a thread to a patient, whatever else it changes", () =>
     Effect.gen(function* () {
       const store = yield* PatientStore.PatientStore;
       const { wayan, made } = yield* seed(store);
@@ -192,10 +232,27 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("med HTTP routes"
         "GET /api/med/patients/:patientId/record",
         "GET /api/med/threads/:threadId/patient",
         "GET /api/med/upcoming",
+        "PATCH /api/med/labs/:labId",
+        "PATCH /api/med/patients/:patientId",
+        "PATCH /api/med/plans/:planId",
+        "POST /api/med/labs/:labId/undo-correction",
+        "POST /api/med/notes/:noteId/inbox",
+        "POST /api/med/notes/:noteId/verify",
+        "PUT /api/med/labs/:labId/removed",
+        "PUT /api/med/labs/:labId/verified",
+        "PUT /api/med/plans/:planId/removed",
+        "PUT /api/med/plans/:planId/verified",
       ]);
+      // Every route that changes something is listed with the others that are tried below.
+      assert.deepStrictEqual(
+        routes.filter((route) => !route.startsWith("GET ")).toSorted(),
+        WRITE_ROUTES.map(
+          ([method, path]) => `${method} ${path.replace(/some-(\w+)/, ":$1Id")}`,
+        ).toSorted(),
+      );
 
       // The request the patient pages once sent, and its neighbours, from a session that may do all.
-      const call = yield* serve(store, [AuthOrchestrationReadScope, AuthOrchestrationOperateScope]);
+      const call = yield* serve(store, BOTH_SCOPES);
       for (const threadId of ["thread-1", "thread-9"]) {
         for (const method of ["POST", "PUT", "PATCH", "DELETE"]) {
           const response = yield* call(`/api/med/threads/${threadId}/patient`, {
@@ -213,6 +270,352 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("med HTTP routes"
         [yield* linked("thread-1"), yield* linked("thread-9")],
         [wayan.id, null],
       );
+
+      // Nor does any change the routes do make: a note sent back to the Inbox leaves its
+      // thread linked, and a thread no agent linked stays unlinked.
+      const lab = (yield* store.listLabs({ patientId: wayan.id }))[0];
+      const plan = (yield* store.listPlans({ patientId: wayan.id }))[0];
+      const note = lab?.sourceNoteId ?? "";
+      const real = (path: string) =>
+        path
+          .replace("some-patient", wayan.id)
+          .replace("some-lab", lab?.id ?? "")
+          .replace("some-plan", plan?.id ?? "")
+          .replace("some-note", note);
+      for (const [method, path, body] of WRITE_ROUTES) {
+        const response = yield* call(real(path), { method, body });
+        // The one refusal: nothing was corrected, so there is no correction to undo.
+        assert.deepStrictEqual(
+          [path, response.status],
+          [path, path.endsWith("undo-correction") ? 422 : 200],
+        );
+      }
+      assert.strictEqual((yield* store.listNeedsYou()).inbox.length, 2);
+      assert.deepStrictEqual(
+        [yield* linked("thread-1"), yield* linked("thread-2"), yield* linked("thread-9")],
+        [wayan.id, null, null],
+      );
+    }).pipe(Effect.provide(layerStore)),
+  );
+
+  it.effect("corrects, verifies, removes and restores a result, with what it said before", () =>
+    Effect.gen(function* () {
+      const store = yield* PatientStore.PatientStore;
+      const { wayan, note } = yield* seed(store);
+      const call = yield* serve(store, BOTH_SCOPES);
+      const lab = (yield* store.listLabs({ patientId: wayan.id }))[0]!;
+      const path = `/api/med/labs/${lab.id}`;
+      const stored = store
+        .listLabs({ patientId: wayan.id })
+        .pipe(Effect.map((labs) => labs.map((row) => [row.valueText, row.status])));
+
+      const corrected = yield* call(path, {
+        method: "PATCH",
+        body: { value: 87, valueText: "87", flag: "normal" },
+      });
+      assert.strictEqual(corrected.status, 200);
+      assert.deepInclude(corrected.body, {
+        id: lab.id,
+        testName: "LDL cholesterol",
+        value: 87,
+        valueText: "87",
+        flag: "normal",
+        status: "draft",
+        noteId: note.id,
+      });
+      const revision = {
+        testAsWritten: "LDL",
+        value: 78,
+        valueText: "78",
+        unit: "mg/dL",
+        referenceRange: "",
+        flag: null,
+        collected: "2026-11-06",
+        status: "draft",
+      };
+      assert.deepInclude(corrected.body.revisions[0], revision);
+      const record = (yield* call(`/api/med/patients/${wayan.id}/record`)).body;
+      assert.deepInclude(record.labs[0].revisions[0], revision);
+
+      const verified = yield* call(`${path}/verified`, { method: "PUT", body: { verified: true } });
+      assert.deepStrictEqual([verified.status, verified.body], [200, { verified: true }]);
+      assert.deepStrictEqual(yield* stored, [["87", "verified"]]);
+      assert.strictEqual((yield* store.getPatient(wayan.id)).status, "active");
+      yield* call(`${path}/verified`, { method: "PUT", body: { verified: false } });
+      assert.deepStrictEqual(yield* stored, [["87", "draft"]]);
+
+      const removed = yield* call(`${path}/removed`, { method: "PUT", body: { removed: true } });
+      assert.deepStrictEqual([removed.status, removed.body], [200, { removed: true }]);
+      assert.deepStrictEqual(yield* stored, []);
+      assert.strictEqual(
+        (yield* call(path, { method: "PATCH", body: { unit: "mg/dl" } })).status,
+        404,
+      );
+      yield* call(`${path}/removed`, { method: "PUT", body: { removed: false } });
+      assert.deepStrictEqual(yield* stored, [["87", "draft"]]);
+
+      const undone = yield* call(`${path}/undo-correction`, { method: "POST", body: undefined });
+      assert.deepInclude(undone.body, { value: 78, valueText: "78", flag: null, revisions: [] });
+      const nothingToUndo = yield* call(`${path}/undo-correction`, {
+        method: "POST",
+        body: undefined,
+      });
+      assert.deepStrictEqual(
+        [nothingToUndo.status, nothingToUndo.body],
+        [
+          422,
+          {
+            _tag: "MedRefusedError",
+            reason: `Lab result ${lab.id} has no correction to undo.`,
+          },
+        ],
+      );
+
+      // A refusal names the field, and a value of the wrong kind never reaches the store.
+      const badDate = yield* call(path, { method: "PATCH", body: { collected: "6 Nov" } });
+      assert.deepStrictEqual(
+        [badDate.status, badDate.body.reason],
+        [422, "collected must be a calendar date written as YYYY-MM-DD."],
+      );
+      assert.strictEqual(
+        (yield* call(path, { method: "PATCH", body: { value: "high" } })).status,
+        400,
+      );
+      const missing = yield* call("/api/med/labs/no-such-lab", {
+        method: "PATCH",
+        body: { unit: "mg/dL" },
+      });
+      assert.deepStrictEqual(
+        [missing.status, missing.body],
+        [404, { _tag: "MedRowNotFoundError", row: "lab", id: "no-such-lab" }],
+      );
+      assert.deepStrictEqual(yield* stored, [["78", "draft"]]);
+    }).pipe(Effect.provide(layerStore)),
+  );
+
+  it.effect("closes, reopens, changes and verifies a plan, and a whole note", () =>
+    Effect.gen(function* () {
+      const store = yield* PatientStore.PatientStore;
+      const { wayan, note, inboxNote } = yield* seed(store);
+      const call = yield* serve(store, BOTH_SCOPES);
+      const plan = (yield* store.listPlans({ patientId: wayan.id }))[0]!;
+      const path = `/api/med/plans/${plan.id}`;
+      const change = (body: unknown) => call(path, { method: "PATCH", body });
+
+      const done = yield* change({ status: "done", doneOn: "2026-11-13" });
+      assert.deepStrictEqual(
+        [done.status, done.body],
+        [
+          200,
+          {
+            id: plan.id,
+            patientId: wayan.id,
+            title: "Clinic visit",
+            due: "2026-11-14",
+            type: "follow_up",
+            status: "done",
+            doneOn: "2026-11-13",
+          },
+        ],
+      );
+      assert.deepInclude((yield* change({ status: "open" })).body, {
+        status: "draft",
+        doneOn: null,
+      });
+      assert.deepInclude(
+        (yield* change({ title: "Clinic visit and MRI", due: "2026-11-21" })).body,
+        { title: "Clinic visit and MRI", due: "2026-11-21", status: "draft" },
+      );
+      const notDone = yield* change({ doneOn: "2026-11-13" });
+      assert.deepStrictEqual(
+        [notDone.status, notDone.body.reason],
+        [
+          422,
+          `doneOn is the day a plan was done; plan ${plan.id} is not done, so send it with status done.`,
+        ],
+      );
+      assert.strictEqual((yield* change({ status: "planned" })).status, 400);
+
+      const verified = yield* call(`${path}/verified`, { method: "PUT", body: { verified: true } });
+      assert.deepStrictEqual([verified.status, verified.body], [200, { verified: true }]);
+      assert.strictEqual((yield* store.listPlans({ patientId: wayan.id }))[0]?.status, "planned");
+
+      yield* call(`${path}/removed`, { method: "PUT", body: { removed: true } });
+      assert.deepStrictEqual((yield* call(`/api/med/patients/${wayan.id}`)).body.upcomingPlans, []);
+      yield* call(`${path}/removed`, { method: "PUT", body: { removed: false } });
+      assert.lengthOf((yield* call(`/api/med/patients/${wayan.id}`)).body.upcomingPlans, 1);
+
+      // The patient's page says how many drafts each note still holds, which is what it offers to verify.
+      assert.deepInclude((yield* call(`/api/med/patients/${wayan.id}`)).body.notes[0], {
+        id: note.id,
+        draftLabs: 1,
+        draftPlans: 0,
+      });
+      const whole = yield* call(`/api/med/notes/${note.id}/verify`, {
+        method: "POST",
+        body: undefined,
+      });
+      assert.deepStrictEqual(
+        [whole.status, whole.body],
+        [200, { labsVerified: 1, plansPlanned: 0, patientActivated: false }],
+      );
+      const inInbox = yield* call(`/api/med/notes/${inboxNote.id}/verify`, {
+        method: "POST",
+        body: undefined,
+      });
+      assert.deepStrictEqual(
+        [inInbox.status, inInbox.body.reason],
+        [422, `Note ${inboxNote.id} is in the Inbox; move it to a patient before verifying it.`],
+      );
+
+      const moved = yield* call(`/api/med/notes/${note.id}/inbox`, {
+        method: "POST",
+        body: undefined,
+      });
+      assert.deepStrictEqual([moved.status, moved.body], [200, { noteId: note.id }]);
+      assert.deepStrictEqual(
+        (yield* store.listLabs({ inbox: true })).map((lab) => [lab.valueText, lab.status]),
+        [["78", "draft"]],
+      );
+      const again = yield* call(`/api/med/notes/${note.id}/inbox`, {
+        method: "POST",
+        body: undefined,
+      });
+      assert.deepStrictEqual(
+        [again.status, again.body.reason],
+        [422, `Note ${note.id} is already in the Inbox.`],
+      );
+      const missing = yield* call("/api/med/notes/no-such-note/inbox", {
+        method: "POST",
+        body: undefined,
+      });
+      assert.deepStrictEqual(
+        [missing.status, missing.body],
+        [404, { _tag: "MedRowNotFoundError", row: "note", id: "no-such-note" }],
+      );
+    }).pipe(Effect.provide(layerStore)),
+  );
+
+  it.effect("edits a patient's details, archives and brings back, and keeps URNs apart", () =>
+    Effect.gen(function* () {
+      const store = yield* PatientStore.PatientStore;
+      const { wayan, made } = yield* seed(store);
+      const call = yield* serve(store, BOTH_SCOPES);
+      const edit = (patientId: string, body: unknown) =>
+        call(`/api/med/patients/${patientId}`, { method: "PATCH", body });
+
+      const edited = yield* edit(wayan.id, {
+        name: "I Wayan Sudarma, S.H.",
+        urn: "00-45-67-90",
+        sex: null,
+        dateOfBirth: "1968-03-03",
+        diagnoses: "Ischemic stroke\nHypertension",
+        alsoWrittenAs: ["Pak Wayan"],
+      });
+      assert.strictEqual(edited.status, 200);
+      assert.deepInclude(edited.body, {
+        id: wayan.id,
+        name: "I Wayan Sudarma, S.H.",
+        urn: "00-45-67-90",
+        sex: null,
+        dateOfBirth: "1968-03-03",
+        diagnoses: "Ischemic stroke\nHypertension",
+        alsoWrittenAs: ["Pak Wayan"],
+        status: "new",
+      });
+
+      assert.strictEqual((yield* edit(wayan.id, { status: "archived" })).body.status, "archived");
+      assert.strictEqual((yield* call("/api/med/counts")).body.patients, 2);
+      assert.strictEqual((yield* edit(wayan.id, { status: "new" })).body.status, "new");
+      assert.strictEqual((yield* call("/api/med/counts")).body.patients, 3);
+
+      const taken = yield* edit(made.id, { urn: "00 45 67 90" });
+      assert.deepStrictEqual(
+        [taken.status, taken.body],
+        [
+          409,
+          {
+            _tag: "MedUrnTakenError",
+            patientId: wayan.id,
+            patientName: "I Wayan Sudarma, S.H.",
+          },
+        ],
+      );
+      const badDate = yield* edit(made.id, { dateOfBirth: "1968" });
+      assert.deepStrictEqual(
+        [badDate.status, badDate.body.reason],
+        [422, "dateOfBirth must be a calendar date written as YYYY-MM-DD."],
+      );
+      assert.strictEqual(
+        (yield* edit(made.id, { name: " " })).body.reason,
+        "name must not be blank.",
+      );
+      assert.strictEqual((yield* edit(made.id, { status: "gone" })).status, 400);
+      assert.strictEqual((yield* edit("no-such-patient", { name: "Nobody" })).status, 404);
+      assert.deepInclude(yield* store.getPatient(made.id), { name: "Ni Made Ayu", urn: null });
+    }).pipe(Effect.provide(layerStore)),
+  );
+
+  it.effect("keeps what a change carries, and whose URN was taken, out of every span", () =>
+    Effect.gen(function* () {
+      const store = yield* PatientStore.PatientStore;
+      const { wayan, made } = yield* seed(store);
+      const spans: Array<Tracer.NativeSpan> = [];
+      const call = yield* serve(
+        store,
+        BOTH_SCOPES,
+        Tracer.make({
+          span: (options) => {
+            const span = new Tracer.NativeSpan(options);
+            spans.push(span);
+            return span;
+          },
+        }),
+      );
+      const secret = "Sekarwangi";
+      const lab = (yield* store.listLabs({ patientId: wayan.id }))[0]!;
+      const plan = (yield* store.listPlans({ patientId: wayan.id }))[0]!;
+
+      yield* call(`/api/med/patients/${wayan.id}`, {
+        method: "PATCH",
+        body: { name: `Ni Luh ${secret}`, urn: "00-55-66-77", diagnoses: `${secret}: migraine` },
+      });
+      const taken = yield* call(`/api/med/patients/${made.id}`, {
+        method: "PATCH",
+        body: { urn: "00-55-66-77" },
+      });
+      assert.strictEqual(taken.body.patientName, `Ni Luh ${secret}`);
+      yield* call(`/api/med/labs/${lab.id}`, {
+        method: "PATCH",
+        body: { value: 87, valueText: `87 (${secret})` },
+      });
+      yield* call(`/api/med/labs/${lab.id}`, {
+        method: "PATCH",
+        body: { collected: `when ${secret} came` },
+      });
+      yield* call(`/api/med/labs/${lab.id}`, { method: "PATCH", body: { value: secret } });
+      yield* call(`/api/med/plans/${plan.id}`, {
+        method: "PATCH",
+        body: { title: `Visit of ${secret}`, doneOn: `the day ${secret} came` },
+      });
+
+      const recorded = JSON.stringify(
+        spans.map((span) => ({
+          name: span.name,
+          attributes: Object.fromEntries(span.attributes),
+          events: span.events,
+          exit:
+            span.status._tag === "Ended" && Exit.isFailure(span.status.exit)
+              ? Cause.pretty(span.status.exit.cause)
+              : "",
+        })),
+      );
+      const names = spans.map((span) => span.name);
+      assert.include(names, "PatientStore.updatePatient");
+      assert.include(names, "PatientStore.correctLab");
+      assert.include(names, "med.patients.updatePlan");
+      assert.notInclude(recorded, secret);
+      assert.notInclude(recorded, "00-55-66-77");
     }).pipe(Effect.provide(layerStore)),
   );
 
@@ -246,6 +649,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("med HTTP routes"
           due: "2026-11-14",
           type: "follow_up",
           status: "draft",
+          doneOn: null,
         };
         const madeLinkedAt = (yield* store.getPatientHome(made.id)).threads[0]?.linkedAt;
         assert.isTrue(madeLinkedAt !== undefined && madeLinkedAt > note.updatedAt);
@@ -276,7 +680,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("med HTTP routes"
         // Diagnoses and the store's own columns are not in this route's schema, so they stay home.
         assert.deepStrictEqual((yield* get(`/api/med/patients/${wayan.id}`)).body, {
           patient: { ...wayanSummary, sex: "male", dateOfBirth: "1968-03-02" },
-          notes: [waitingNote],
+          notes: [{ ...waitingNote, draftLabs: 1, draftPlans: 1 }],
           threads: [{ threadId: "thread-1", linkedAt: note.updatedAt }],
           draftLabs: 1,
           draftPlans: 1,
