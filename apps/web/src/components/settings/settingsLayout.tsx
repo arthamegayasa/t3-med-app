@@ -1,4 +1,5 @@
 import { SettingsGroup } from "./SettingsGroup";
+import { hidesSettingsTarget } from "../../med/medHidden";
 import { AuthSettingsWriteScope } from "@t3tools/contracts";
 import { usePrimaryEnvironmentId, usePrimaryEnvironment } from "../../state/environments";
 import { useEnvironmentScope, useEnvironmentsWithScope } from "../../state/session";
@@ -224,6 +225,7 @@ export function SettingsSection({
   children: ReactNode;
 }) {
   const targetRef = useSettingsSearchTarget<HTMLElement>(sectionProps.id);
+  if (hidesSettingsTarget(sectionProps.id)) return null;
 
   return (
     <section
@@ -497,6 +499,7 @@ export function SettingsRow({
       />
     ) : null;
   const renderedStatus = status;
+  if (hidesSettingsTarget(rowProps.id)) return null;
 
   return (
     <div
