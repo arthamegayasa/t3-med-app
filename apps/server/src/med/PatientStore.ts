@@ -2,7 +2,7 @@
  * T3 Med: patients and what agents file for them. Every row an agent writes is a draft until the doctor
  * verifies it, and a note with no patient sits in the Inbox.
  */
-import { urnKey } from "@t3tools/contracts/med";
+import { urnKey, writtenNumberReadings } from "@t3tools/contracts/med";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
@@ -421,6 +421,18 @@ export class InvalidLabValueError extends Schema.TaggedError<InvalidLabValueErro
 ) {
   override get message(): string {
     return `${this.field} must be a finite number, or null with the result as written in valueText.`;
+  }
+}
+
+/** The message names the fields and never what was sent: it is written to the trace. */
+export class LabValueMismatchError extends Schema.TaggedError<LabValueMismatchError>()(
+  "LabValueMismatchError",
+  { reason: Schema.Literals(["text_is_a_number", "text_is_not_the_number"]) },
+) {
+  override get message(): string {
+    return this.reason === "text_is_a_number"
+      ? "valueText reads as a number, so send that number in value with it: value and valueText change together."
+      : "value and valueText must say one thing: valueText has to read as value in Indonesian or English notation (2,6 or 2.6), and value has to be null for a result that is not a number.";
   }
 }
 
@@ -870,8 +882,8 @@ export class PatientStore extends Context.Service<
     /**
      * Changes what one filed result says. The row is a draft again, its earlier values are kept
      * as a revision, and the baselines of the test it had and the test it has are worked out
-     * again. `value` and `valueText` are replaced together. A change of nothing records nothing.
-     * With `threadId`, only a row of the thread's linked patient or of its own notes.
+     * again. `value` and `valueText` are replaced together and must agree. A change of nothing
+     * records nothing. With `threadId`, only a row of the thread's patient or of its own notes.
      */
     readonly correctLab: (input: {
       readonly labId: string;
@@ -885,7 +897,7 @@ export class PatientStore extends Context.Service<
       readonly collected?: string | undefined;
     }) => Effect.Effect<
       Lab,
-      LabNotFoundError | RowOutOfReachError | InputError | PatientStoreError
+      LabNotFoundError | RowOutOfReachError | LabValueMismatchError | InputError | PatientStoreError
     >;
     /** Puts back what the latest correction replaced, its status included. */
     readonly undoLabCorrection: (
@@ -2281,6 +2293,17 @@ const make = Effect.gen(function* () {
     }),
 
     correctLab: Effect.fn("PatientStore.correctLab")(function* ({ labId, threadId, ...fields }) {
+      // A text sent alone would erase the number, and a pair that disagrees stores two results.
+      if (fields.valueText !== undefined && fields.valueText.trim() !== "") {
+        const readings = writtenNumberReadings(fields.valueText);
+        const value = fields.value ?? null;
+        if (value === null && readings.length > 0) {
+          return yield* new LabValueMismatchError({ reason: "text_is_a_number" });
+        }
+        if (value !== null && !readings.includes(value)) {
+          return yield* new LabValueMismatchError({ reason: "text_is_not_the_number" });
+        }
+      }
       const at = yield* now;
       return yield* Effect.gen(function* () {
         const lab = yield* readLiveLab(labId);

@@ -2,14 +2,15 @@
  * T3 Med: what the doctor's controls send. Each form is compared with the row it edits, so a
  * change carries only what changed and an unchanged form sends nothing.
  */
-import type {
-  MedLab,
-  MedLabCorrection,
-  MedLabRevision,
-  MedPatientDetails,
-  MedPatientEdit,
-  MedPlan,
-  MedPlanChange,
+import {
+  type MedLab,
+  type MedLabCorrection,
+  type MedLabRevision,
+  type MedPatientDetails,
+  type MedPatientEdit,
+  type MedPlan,
+  type MedPlanChange,
+  writtenNumberReadings,
 } from "@t3tools/contracts/med";
 
 import { formatDay } from "./medLogic";
@@ -67,16 +68,14 @@ export function labFormOf(lab: MedLab): LabForm {
   };
 }
 
-const PLAIN_NUMBER = /^-?\d+(\.\d+)?$/;
-
 /**
- * The form after the result as written was retyped. Digits with a decimal point are the
- * number too; any other text leaves the number for the doctor, because `2,6` and `1,234` do
- * not say which mark the comma is.
+ * The form after the result as written was retyped. The number is what the text says when it
+ * reads one way (`2,6`, `80`), and emptied when it reads two ways (`9.800`) or is no number
+ * (`negative`): the number the text had before is never left beside a text that changed.
  */
 export function followWritten(form: LabForm, valueText: string): LabForm {
-  const written = valueText.trim();
-  return { ...form, valueText, number: PLAIN_NUMBER.test(written) ? written : form.number };
+  const readings = writtenNumberReadings(valueText);
+  return { ...form, valueText, number: readings.length === 1 ? String(readings[0]) : "" };
 }
 
 export function labCorrectionOf(lab: MedLab, form: LabForm): FormOutcome<MedLabCorrection> {
@@ -89,6 +88,21 @@ export function labCorrectionOf(lab: MedLab, form: LabForm): FormOutcome<MedLabC
   }
   const valueText = form.valueText.trim();
   if (valueText === "") return { problem: "Write the result as the sheet has it." };
+  // The store's rule, said before it is sent: the two fields say one thing.
+  const readings = writtenNumberReadings(valueText);
+  if (value === null && readings.length > 0) {
+    return {
+      problem: `${valueText} reads as ${readings.join(" or ")}. Enter the number used for comparison.`,
+    };
+  }
+  if (value !== null && !readings.includes(value)) {
+    return {
+      problem:
+        readings.length === 0
+          ? "The result as written is not a number, so leave the number used for comparison empty."
+          : "The result as written and the number used for comparison do not agree.",
+    };
+  }
   if (form.collected === "") return { problem: "Choose the day the sample was collected." };
   const unit = form.unit.trim();
   const flag = form.flag === "" ? null : form.flag;

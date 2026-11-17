@@ -146,7 +146,7 @@ function CorrectLabDialog({
           </DialogHeader>
           <DialogPanel>
             <div className="flex flex-col gap-1.5">
-              <Label htmlFor={`${id}-test`}>Test</Label>
+              <Label htmlFor={`${id}-test`}>Test as written</Label>
               <Input
                 id={`${id}-test`}
                 value={form.testAsWritten}
@@ -160,6 +160,7 @@ function CorrectLabDialog({
                 <Input
                   id={`${id}-written`}
                   value={form.valueText}
+                  aria-describedby={`${id}-written-note`}
                   onChange={(event) => setForm(followWritten(form, event.target.value))}
                   autoComplete="off"
                 />
@@ -174,8 +175,11 @@ function CorrectLabDialog({
                 />
               </div>
             </div>
+            <p id={`${id}-written-note`} className="m-0 text-muted-foreground text-xs">
+              The result as written is what tables show, exactly as the sheet has it.
+            </p>
             <div className="flex flex-col gap-1.5">
-              <Label htmlFor={`${id}-number`}>Number</Label>
+              <Label htmlFor={`${id}-number`}>Number used for comparison</Label>
               <Input
                 id={`${id}-number`}
                 inputMode="decimal"
@@ -185,8 +189,8 @@ function CorrectLabDialog({
                 autoComplete="off"
               />
               <p id={`${id}-number-note`} className="m-0 text-muted-foreground text-xs">
-                Used for the chart and the change from baseline. Leave empty for a result that is
-                not a number.
+                What the chart and the change from baseline use. It follows the result as written
+                when that reads one way, and stays empty for a result that is not a number.
               </p>
             </div>
             <div className="grid grid-cols-2 gap-3">

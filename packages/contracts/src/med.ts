@@ -20,6 +20,38 @@ import {
  */
 export const urnKey = (urn: string): string => urn.toUpperCase().replace(/[^\p{L}\p{N}]/gu, "");
 
+const WRITTEN_NUMBER = /^[+-]?\d+(?:[.,]\d+)*$/;
+const GROUPED_HEAD = /^[+-]?[1-9]\d{0,2}$/;
+
+const readWrittenNumber = (written: string, thousands: string, decimal: string) => {
+  const [whole = "", ...fractions] = written.split(decimal);
+  const [head = "", ...groups] = whole.split(thousands);
+  const grouped = groups.length > 0;
+  if (
+    fractions.length > 1 ||
+    fractions.some((fraction) => fraction.includes(thousands)) ||
+    groups.some((group) => group.length !== 3) ||
+    (grouped && !GROUPED_HEAD.test(head))
+  ) {
+    return [];
+  }
+  return [Number(`${head}${groups.join("")}${fractions.length === 0 ? "" : `.${fractions[0]}`}`)];
+};
+
+/**
+ * Every number a result as written can stand for: read the English way (`1,234.5`) and the
+ * Indonesian way (`1.234,5`). `9.800` has two readings, `2,6` one, `negative` and `<0,5` none.
+ * The store checks a correction with it and the correction form fills its number from it, so
+ * both must read a text the same way.
+ */
+export const writtenNumberReadings = (text: string): ReadonlyArray<number> => {
+  const written = text.trim();
+  if (!WRITTEN_NUMBER.test(written)) return [];
+  return [
+    ...new Set([...readWrittenNumber(written, ",", "."), ...readWrittenNumber(written, ".", ",")]),
+  ];
+};
+
 const MedPatientStatus = Schema.Literals(["new", "active", "archived"]);
 const MedPatientSex = Schema.Literals(["female", "male"]);
 

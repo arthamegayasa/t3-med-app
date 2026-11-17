@@ -68,17 +68,42 @@ describe("labCorrectionOf", () => {
     });
   });
 
-  it("follows a plainly written number, and never guesses at any other text", () => {
+  it("fills the number from a text that reads one way, and never keeps the old number", () => {
     expect(followWritten(form, "80").number).toBe("80");
     expect(followWritten(form, "-0.5").number).toBe("-0.5");
-    // A comma is a decimal mark on one sheet and a thousands mark on another: the doctor says.
-    expect(followWritten(form, "2,6").number).toBe("8");
-    expect(followWritten(form, "negative").number).toBe("8");
-    expect(labCorrectionOf(lab, { ...form, valueText: "2,6", number: "2.6" })).toEqual({
+    expect(followWritten(form, "2,6").number).toBe("2.6");
+    expect(followWritten(form, "1.234,5").number).toBe("1234.5");
+    // Two readings or none: the number is emptied, never left saying what the text said before.
+    expect(followWritten(form, "9.800").number).toBe("");
+    expect(followWritten(form, "negative").number).toBe("");
+    expect(labCorrectionOf(lab, followWritten(form, "2,6"))).toEqual({
       change: { value: 2.6, valueText: "2,6" },
     });
-    expect(labCorrectionOf(lab, { ...form, valueText: "negative", number: "" })).toEqual({
+    expect(labCorrectionOf(lab, followWritten(form, "negative"))).toEqual({
       change: { value: null, valueText: "negative" },
+    });
+  });
+
+  it("asks for the number when the text reads two ways, and refuses a pair that disagrees", () => {
+    const ambiguous = followWritten(form, "9.800");
+    expect(labCorrectionOf(lab, ambiguous)).toEqual({
+      problem: "9.800 reads as 9.8 or 9800. Enter the number used for comparison.",
+    });
+    expect(labCorrectionOf(lab, { ...ambiguous, number: "9800" })).toEqual({
+      change: { value: 9800, valueText: "9.800" },
+    });
+    expect(labCorrectionOf(lab, { ...form, valueText: "165", number: "" })).toEqual({
+      problem: "165 reads as 165. Enter the number used for comparison.",
+    });
+    // The number typed alone, or kept beside a text that no longer says it.
+    const disagree = {
+      problem: "The result as written and the number used for comparison do not agree.",
+    };
+    expect(labCorrectionOf(lab, { ...form, number: "80" })).toEqual(disagree);
+    expect(labCorrectionOf(lab, { ...form, valueText: "2,6", number: "8" })).toEqual(disagree);
+    expect(labCorrectionOf(lab, { ...form, valueText: "negative", number: "8" })).toEqual({
+      problem:
+        "The result as written is not a number, so leave the number used for comparison empty.",
     });
   });
 

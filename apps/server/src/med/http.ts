@@ -188,6 +188,7 @@ const layerHandlers = HttpApiBuilder.group(
               PatientStoreError: failStore,
               LabNotFoundError: failMissingLab,
               RowOutOfReachError: dieOutOfReach,
+              LabValueMismatchError: refuse,
               InvalidDateError: refuse,
               BlankFieldError: refuse,
               InvalidChoiceError: refuse,

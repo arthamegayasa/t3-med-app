@@ -770,7 +770,14 @@ it("corrects a result from its row, and keeps the form open on what the server r
   // The form opens on what the result says, and the number follows a plainly written one.
   await expect.element(dialog.getByLabelText("Result as written")).toHaveValue("162");
   await userEvent.fill(dialog.getByLabelText("Result as written"), "152");
-  await expect.element(dialog.getByLabelText("Number")).toHaveValue("152");
+  await expect.element(dialog.getByLabelText("Number used for comparison")).toHaveValue("152");
+  await expect.element(dialog.getByLabelText("Test as written")).toHaveValue("LDL");
+  // Retyped as a word, the old number is not left behind; a comma is read the Indonesian way.
+  await userEvent.fill(dialog.getByLabelText("Result as written"), "negative");
+  await expect.element(dialog.getByLabelText("Number used for comparison")).toHaveValue("");
+  await userEvent.fill(dialog.getByLabelText("Result as written"), "15,2");
+  await expect.element(dialog.getByLabelText("Number used for comparison")).toHaveValue("15.2");
+  await userEvent.fill(dialog.getByLabelText("Result as written"), "152");
 
   await dialog.getByRole("button", { name: "Save correction" }).click();
   await expect.element(dialog.getByRole("alert")).toHaveTextContent("unit must not be blank.");
