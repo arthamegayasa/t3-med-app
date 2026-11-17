@@ -665,16 +665,17 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("patient tools", 
       }
       expect(yield* call("patient_record", { patientId })).toMatchObject({ notes: [] });
 
+      // An outside client is not offered the tools at all: to it they do not exist.
       const outside = scope(undefined);
-      const refused = { code: "thread_credential_required" };
-      expect(yield* call("patient_find", { name: "wayan" }, outside)).toMatchObject(refused);
-      expect(yield* call("patient_review", {}, outside)).toMatchObject(refused);
-      expect(
-        yield* call("patient_create", { name: "Made", urn: "00-77-88-99" }, outside),
-      ).toMatchObject(refused);
-      expect(
-        yield* call("patient_file", { patientId: "inbox", title: "Visit" }, outside),
-      ).toMatchObject(refused);
+      const hidden: ReadonlyArray<readonly [keyof Tools & string, Record<string, unknown>]> = [
+        ["patient_find", { name: "wayan" }],
+        ["patient_review", {}],
+        ["patient_create", { name: "Made", urn: "00-77-88-99" }],
+        ["patient_file", { patientId: "inbox", title: "Visit" }],
+      ];
+      for (const [name, params] of hidden) {
+        expect(yield* invalidParams(name, params, outside), name).toBe(`Tool '${name}' not found`);
+      }
     }).pipe(Effect.provide(layerPatientTools)),
   );
 

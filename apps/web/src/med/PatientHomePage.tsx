@@ -45,6 +45,8 @@ function useMedProjectRef(): ScopedProjectRef | null {
   return resolveDefaultProjectRef(
     projects.filter((project) => project.environmentId === environmentId),
     projectOrder,
+    // No last-used project: a patient chat starts in the first project, by the sidebar order.
+    null,
   );
 }
 

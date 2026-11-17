@@ -1,6 +1,6 @@
 import { OrchestratorMcpFailure } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
-import { Tool, Toolkit } from "effect/ai";
+import { McpSchema, Tool, Toolkit } from "effect/ai";
 
 import * as PatientStore from "../../../med/PatientStore.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
@@ -120,7 +120,8 @@ const PatientFindTool = Tool.make("patient_find", {
 })
   .annotate(Tool.Strict, true)
   .annotate(Tool.Destructive, false)
-  .annotate(Tool.OpenWorld, false);
+  .annotate(Tool.OpenWorld, false)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 const patientFields = {
   sex: Schema.optional(sex),
@@ -137,7 +138,8 @@ const PatientCreateTool = Tool.make("patient_create", {
 })
   .annotate(Tool.Strict, true)
   .annotate(Tool.Destructive, false)
-  .annotate(Tool.OpenWorld, false);
+  .annotate(Tool.OpenWorld, false)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 const PatientUpdateTool = Tool.make("patient_update", {
   ...writing,
@@ -153,7 +155,8 @@ const PatientUpdateTool = Tool.make("patient_update", {
   success: Schema.Struct(patient),
 })
   .annotate(Tool.Strict, true)
-  .annotate(Tool.OpenWorld, false);
+  .annotate(Tool.OpenWorld, false)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 const PatientFileTool = Tool.make("patient_file", {
   ...writing,
@@ -211,7 +214,8 @@ const PatientFileTool = Tool.make("patient_file", {
 })
   .annotate(Tool.Strict, true)
   .annotate(Tool.Destructive, false)
-  .annotate(Tool.OpenWorld, false);
+  .annotate(Tool.OpenWorld, false)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 const PatientRecordTool = Tool.make("patient_record", {
   ...reading,
@@ -228,7 +232,8 @@ const PatientRecordTool = Tool.make("patient_record", {
   .annotate(Tool.Strict, true)
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false)
-  .annotate(Tool.OpenWorld, false);
+  .annotate(Tool.OpenWorld, false)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 const PatientReviewTool = Tool.make("patient_review", {
   ...reading,
@@ -249,7 +254,8 @@ const PatientReviewTool = Tool.make("patient_review", {
   .annotate(Tool.Strict, true)
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false)
-  .annotate(Tool.OpenWorld, false);
+  .annotate(Tool.OpenWorld, false)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 const PatientUpcomingTool = Tool.make("patient_upcoming", {
   ...reading,
@@ -272,7 +278,8 @@ const PatientUpcomingTool = Tool.make("patient_upcoming", {
   .annotate(Tool.Strict, true)
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false)
-  .annotate(Tool.OpenWorld, false);
+  .annotate(Tool.OpenWorld, false)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 const PatientVerifyTool = Tool.make("patient_verify", {
   ...writing,
@@ -285,7 +292,8 @@ const PatientVerifyTool = Tool.make("patient_verify", {
   }),
 })
   .annotate(Tool.Strict, true)
-  .annotate(Tool.OpenWorld, false);
+  .annotate(Tool.OpenWorld, false)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 const PatientMoveNoteTool = Tool.make("patient_move_note", {
   ...writing,
@@ -300,7 +308,8 @@ const PatientMoveNoteTool = Tool.make("patient_move_note", {
   }),
 })
   .annotate(Tool.Strict, true)
-  .annotate(Tool.OpenWorld, false);
+  .annotate(Tool.OpenWorld, false)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 export const PatientToolkit = Toolkit.make(
   PatientFindTool,
