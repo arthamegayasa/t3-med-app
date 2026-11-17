@@ -6,6 +6,8 @@ import {
   getDesktopUpdateReleaseUrl,
 } from "./desktopUpdate.logic";
 import { toastManager } from "./ui/toast";
+import { announceMedUpdateReady } from "../med/medUpdateAnnounce";
+import { T3MED } from "../med/t3med";
 
 type DesktopUpdateShell = Pick<DesktopBridge, "openExternal">;
 
@@ -48,6 +50,7 @@ export function showDesktopUpdateDownloadedToast(
   shell: DesktopUpdateShell,
   state: DesktopUpdateState,
 ): void {
+  if (T3MED) return void announceMedUpdateReady(getDesktopUpdateDownloadedVersion(state));
   const releaseUrl = getDesktopUpdateReleaseUrl(getDesktopUpdateDownloadedVersion(state));
   toastManager.add({
     type: "success",

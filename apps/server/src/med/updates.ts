@@ -12,7 +12,7 @@ import { ServerSelfUpdate } from "../cloud/selfUpdate.ts";
 
 // Typed `string` so the code after each refusal stays live: an empty text gives upstream's update back.
 export const MED_UPDATE_REFUSAL: string =
-  "T3 Med is not updated by this command. The desktop app updates itself from T3 Med's own releases: it offers a new version in its sidebar, and Help > Check for Updates... looks for one. The browser version (start-t3-med.cmd) runs from the source checkout and is updated by pulling and rebuilding it (docs/t3-med/FORK.md, Updates). Nothing was downloaded or changed.";
+  'T3 Med is not updated by this command. The desktop app updates itself from T3 Med\'s own releases: it downloads a new version by itself and then offers "Restart to update" in its sidebar, and Settings > About > Check for Updates looks for one at once. The browser version (start-t3-med.cmd) runs from the source checkout and is updated by pulling and rebuilding it (docs/t3-med/FORK.md, Updates). Nothing was downloaded or changed.';
 
 const refuse = () => Effect.fail(new ServerSelfUpdateError({ reason: MED_UPDATE_REFUSAL }));
 

@@ -38,6 +38,7 @@ import {
   HOSTED_APP_CHANNEL_LABEL,
 } from "../../branding";
 import { AboutVersionTitle } from "../../med/MedAboutVersionTitle";
+import { MED_INSTALL_LABEL, medUpdateRowText } from "../../med/medUpdateWording";
 import { CliCommandSettingsRow } from "./CliCommandSettingsRow";
 import { MobileAppSettingsRow } from "./MobileAppSettingsRow";
 import {
@@ -299,7 +300,7 @@ function AboutVersionSection() {
       ? !canCheckForUpdate(updateState)
       : isDesktopUpdateButtonDisabled(updateState);
 
-  const actionLabel: Record<string, string> = { download: "Download", install: "Install" };
+  const actionLabel: Record<string, string> = { download: "Download", install: MED_INSTALL_LABEL };
   const statusLabel: Record<string, string> = {
     checking: "Checking…",
     downloading: "Downloading…",
@@ -310,7 +311,7 @@ function AboutVersionSection() {
     actionLabel[action] ?? statusLabel[updateState?.status ?? ""] ?? "Check for Updates";
   const description =
     action === "download" || action === "install"
-      ? "Update available."
+      ? medUpdateRowText(updateState, "Update available.")
       : (getDesktopUpdateDisabledReason(updateState, updatesDenial) ??
         "Current version of the application.");
 

@@ -16,6 +16,7 @@ import { cn } from "../../lib/utils";
 import { usePullRequestsSupported } from "../../state/environments";
 import { T3Wordmark } from "../T3Wordmark";
 import { BRAND_WORD, T3MED } from "../../med/t3med";
+import { MedUpdateReady } from "../../med/MedUpdateReady";
 import {
   resolveEnvironmentIdentificationPillLabel,
   resolveSidebarStageBackdropVariant,
@@ -297,6 +298,7 @@ export const SidebarChromeFooter = memo(function SidebarChromeFooter() {
     <SidebarFooter>
       {T3MED ? null : <SidebarProviderUpdatePill />}
       {T3MED ? null : <SidebarUpdateArchitectureWarning />}
+      <MedUpdateReady />
       <SidebarUtilityMenu />
     </SidebarFooter>
   );

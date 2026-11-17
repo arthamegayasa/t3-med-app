@@ -42,7 +42,9 @@ it.live("t3 update refuses, and says how T3 Med is updated", () =>
     );
     assert.strictEqual(error.message, MED_UPDATE_REFUSAL);
     // It says how each of the two ways of running T3 Med is updated.
-    assert.include(MED_UPDATE_REFUSAL, "Help > Check for Updates...");
+    // The window hides the menu bar on Windows, so the check a doctor can reach is in Settings.
+    assert.include(MED_UPDATE_REFUSAL, "Settings > About > Check for Updates");
+    assert.notInclude(MED_UPDATE_REFUSAL, "Help >");
     assert.include(MED_UPDATE_REFUSAL, "start-t3-med.cmd");
     assert.include(MED_UPDATE_REFUSAL, "Nothing was downloaded or changed.");
     // Refused before anything is looked up or written: the home stays empty.

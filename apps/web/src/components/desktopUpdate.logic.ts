@@ -2,6 +2,12 @@ import type { DesktopUpdateActionResult, DesktopUpdateState } from "@t3tools/con
 import { MED_RELEASE_REPOSITORY, MED_RELEASE_TAG_PREFIX } from "@t3tools/shared/medRelease";
 
 import { APP_BASE_NAME } from "../branding";
+import {
+  medRestartQuestion,
+  medUpdateButtonTooltip,
+  medUpdateWording,
+} from "../med/medUpdateWording";
+import { T3MED } from "../med/t3med";
 
 export type DesktopUpdateButtonAction = "download" | "install" | "none";
 
@@ -104,6 +110,7 @@ export function getDesktopUpdateButtonTooltip(state: DesktopUpdateState): string
   ) {
     return `Download failed for ${state.availableVersion}. Click to retry.`;
   }
+  if (T3MED) return medUpdateButtonTooltip(state);
   if (state.status === "available") {
     return `Update ${state.availableVersion ?? "available"} ready to download`;
   }
@@ -131,6 +138,7 @@ export function getDesktopUpdateInstallConfirmationMessage(
   state: Pick<DesktopUpdateState, "availableVersion" | "downloadedVersion">,
 ): string {
   const version = state.downloadedVersion ?? state.availableVersion;
+  if (T3MED) return medRestartQuestion(version);
   return `Install update${version ? ` ${version}` : ""} and restart ${APP_BASE_NAME}?\n\nAny running tasks will be interrupted. Make sure you're ready before continuing.`;
 }
 
@@ -157,7 +165,7 @@ export function getDesktopUpdateDisabledReason(
   state: Pick<DesktopUpdateState, "enabled" | "status" | "message"> | null,
   managedDenial?: string,
 ): string | null {
-  if (managedDenial !== undefined) return managedDenial;
+  if (managedDenial !== undefined) return medUpdateWording(managedDenial);
   if (!state || (state.enabled && state.status !== "disabled")) return null;
   return state.message?.trim() || "Automatic updates are not available in this build.";
 }

@@ -15,6 +15,8 @@ const sources = import.meta.glob<string>(
     "../components/chat/useSystemComposerBanners.tsx",
     "../components/ProviderUpdatesAction.tsx",
     "../components/desktopUpdate.logic.ts",
+    "../components/desktopUpdate.toast.tsx",
+    "../components/sidebar/UpdateEverythingDialog.tsx",
   ],
   { query: "?raw", import: "default" },
 );
@@ -32,12 +34,24 @@ describe("the desktop app's own update", () => {
     expect(chrome).not.toContain("{T3MED ? null : <SidebarUpdatePill />}");
   });
 
+  it("is offered by one labelled button once it is downloaded, and announced once", async () => {
+    const chrome = await source("../components/sidebar/SidebarChrome.tsx");
+    expect(chrome).toMatch(/^\s*<MedUpdateReady \/>$/m);
+    // Upstream's toast follows a click on Download; T3 Med's follows the download itself.
+    const toast = await source("../components/desktopUpdate.toast.tsx");
+    expect(toast).toContain(
+      "if (T3MED) return void announceMedUpdateReady(getDesktopUpdateDownloadedVersion(state));",
+    );
+  });
+
   it("is offered by the Version row of Settings > About", async () => {
     const panels = await source("../components/settings/SettingsPanels.tsx");
     expect(panels).toMatch(/\{isElectron \|\| HOSTED_APP_CHANNEL \? \(\s*<AboutVersionSection \/>/);
     // The row's title is the fork's: T3 Med's version and the upstream release under it.
     expect(panels).toContain('import { AboutVersionTitle } from "../../med/MedAboutVersionTitle";');
     expect(hidesSettingsTarget("app-version")).toBe(false);
+    expect(panels).toContain('{ download: "Download", install: MED_INSTALL_LABEL };');
+    expect(panels).toContain('? medUpdateRowText(updateState, "Update available.")');
   });
 
   it("links a release to the fork's repository and tag, with no upstream fallback", async () => {
@@ -61,6 +75,16 @@ describe("what stays hidden", () => {
     expect(chrome).toContain("{T3MED ? null : <SidebarProviderUpdatePill />}");
     const action = await source("../components/ProviderUpdatesAction.tsx");
     expect(action).toContain("if (T3MED || (machines.length === 0 && !isPending))");
+  });
+
+  it("never adds another machine's server to the app's update", async () => {
+    const everything = await source("../components/sidebar/useUpdateEverything.ts");
+    expect(everything).toContain(
+      "collectServerUpdateTargets(T3MED ? [] : machines, targetVersion)",
+    );
+    // Unreachable with no server and no provider to add, and named T3 Med all the same.
+    const dialog = await source("../components/sidebar/UpdateEverythingDialog.tsx");
+    expect(dialog).not.toContain("T3 Code");
   });
 
   it("offers no update of a server, this machine's or another's", async () => {

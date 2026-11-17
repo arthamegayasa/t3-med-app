@@ -54,7 +54,7 @@ describe("an update's release links", () => {
       availableVersion: "2026.11.2",
       downloadedVersion: "2026.11.2",
     });
-    expect(message).toContain("Install update 2026.11.2 and restart T3 Med?");
+    expect(message).toContain("Restart T3 Med to update to 2026.11.2?");
     expect(message).not.toContain("T3 Code");
   });
 });
