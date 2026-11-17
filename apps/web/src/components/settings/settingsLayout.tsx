@@ -1,5 +1,6 @@
 import { SettingsGroup } from "./SettingsGroup";
-import { hidesSettingsTarget } from "../../med/medHidden";
+import { hidesSettingsSection, hidesSettingsTarget, patientSettingText } from "../../med/medHidden";
+import { T3MED } from "../../med/t3med";
 import { AuthSettingsWriteScope } from "@t3tools/contracts";
 import { usePrimaryEnvironmentId, usePrimaryEnvironment } from "../../state/environments";
 import { useEnvironmentScope, useEnvironmentsWithScope } from "../../state/session";
@@ -225,7 +226,7 @@ export function SettingsSection({
   children: ReactNode;
 }) {
   const targetRef = useSettingsSearchTarget<HTMLElement>(sectionProps.id);
-  if (hidesSettingsTarget(sectionProps.id)) return null;
+  if (hidesSettingsSection(sectionProps.id, title)) return null;
 
   return (
     <section
@@ -482,7 +483,7 @@ export function SettingsRow({
             ? { state: "environment", summary: "Set on the environment" }
             : { state: "default", summary: "Built-in default" };
   const renderedInheritance =
-    context && serverScoped && settingKeys.length > 0 ? (
+    context && serverScoped && settingKeys.length > 0 && !T3MED ? (
       <SettingInheritance
         state={inheritance.state}
         summary={inheritance.summary}
@@ -536,7 +537,7 @@ export function SettingsRow({
           </div>
           {description ? (
             <p className="max-w-2xl text-pretty text-xs leading-normal text-muted-foreground">
-              {description}
+              {patientSettingText(rowProps.id, description)}
             </p>
           ) : null}
           {renderedStatus ? (

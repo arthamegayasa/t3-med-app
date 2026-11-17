@@ -77,6 +77,7 @@ import {
   settleCustomModelSave,
 } from "./customModelSaves.logic";
 import { getProviderRestartNotice } from "../ProviderUpdateLaunchNotification.logic";
+import { readOnlyOrPatient, showsVersionNotice } from "../../med/medHidden";
 import { T3MED } from "../../med/t3med";
 import {
   getProviderVersionAdvisoryPresentation,
@@ -798,7 +799,7 @@ export function ProviderInstanceCard({
     liveProvider?.compatibilityAdvisory,
     enabled,
   );
-  const updateCommand = versionAdvisory?.updateCommand ?? null;
+  const updateCommand = T3MED ? null : (versionAdvisory?.updateCommand ?? null);
   const updateState = liveProvider?.updateState;
   const updateProgress = isUpdating
     ? ((updateState?.status === "queued" || updateState?.status === "running"
@@ -816,7 +817,7 @@ export function ProviderInstanceCard({
     compatibility.status !== "supported" &&
     compatibility.status !== "unknown";
   const VersionAdvisoryIcon = hasCompatibilityWarning ? AlertTriangleIcon : ArrowUpCircleIcon;
-  const onRunVersionAction = readOnly
+  const onRunVersionAction = readOnlyOrPatient(readOnly)
     ? undefined
     : versionAdvisory?.targetVersion
       ? onInstallRecommended
@@ -1156,7 +1157,7 @@ export function ProviderInstanceCard({
                   {versionLabel}
                 </code>
               ) : null}
-              {T3MED ? null : versionAdvisoryNode}
+              {showsVersionNotice(hasCompatibilityWarning) ? versionAdvisoryNode : null}
             </span>
             <span className="mt-0.5 flex items-start gap-1.5 text-xs leading-normal text-muted-foreground/80">
               {statusDotNode && !updateProgress ? (
@@ -1218,7 +1219,7 @@ export function ProviderInstanceCard({
         </Badge>
       ) : null}
       {versionCodeNode}
-      {T3MED ? null : versionAdvisoryNode}
+      {showsVersionNotice(hasCompatibilityWarning) ? versionAdvisoryNode : null}
       <span
         inert={readOnly}
         aria-disabled={readOnly || undefined}

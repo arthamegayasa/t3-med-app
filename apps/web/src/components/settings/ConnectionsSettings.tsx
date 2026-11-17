@@ -27,6 +27,7 @@ import {
 import * as Cause from "effect/Cause";
 
 import { isLocalEnvironmentDisabled } from "../../localEnvironment";
+import { AuthorizedClientsHeaderAction } from "../../med/MedAuthorizedClientsAction";
 import { T3MED } from "../../med/t3med";
 import {
   applyWslEnableSelection,
@@ -132,7 +133,6 @@ import {
 } from "./ConnectionsSettings.logic";
 import {
   AdvertisedEndpointListRow,
-  AuthorizedClientsHeaderAction,
   NetworkAccessDescription,
   PairingClientsList,
 } from "./AuthorizedClientsSettings";
@@ -160,6 +160,7 @@ const BACKEND_VALUE_WSL_OFF = "backend:wsl-off";
 // Subscribes on its own so desktop download progress does not re-render the page.
 function LocalVersionStatusLabel() {
   const updateState = useDesktopUpdateState();
+  if (T3MED) return null;
   return (
     <span className="text-xs text-muted-foreground">
       {resolveLocalVersionStatusLabel(updateState)}
@@ -1288,17 +1289,17 @@ function ConnectionsSettingsContent({
                 }
               />
             ) : null}
-            {canManageLocalBackend && desktopBridge ? (
+            {canManageLocalBackend && desktopBridge && !T3MED ? (
               <>
                 {renderNetworkAccessRow()}
                 {renderEndpointRows()}
                 {renderTailscaleRow()}
                 {renderWslRow()}
               </>
-            ) : canManageLocalBackend ? (
+            ) : canManageLocalBackend && !T3MED ? (
               renderDisabledNetworkAccessRow()
             ) : null}
-            {canReadRelay || canManageRelay ? (
+            {(canReadRelay || canManageRelay) && !T3MED ? (
               <CloudLinkRow
                 environmentId={accessEnvironmentId}
                 canReadRelay={canReadRelay}

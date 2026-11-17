@@ -12,7 +12,7 @@ import * as ElectronMenu from "../electron/ElectronMenu.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as DesktopUpdates from "../updates/DesktopUpdates.ts";
 import * as DesktopWindow from "./DesktopWindow.ts";
-import { MED_HIDES_UPDATE_MENU } from "../med/identity.ts";
+import { MED_HIDES_DEVELOPER_MENU, MED_HIDES_UPDATE_MENU } from "../med/identity.ts";
 
 export class DesktopApplicationMenuActionError extends Schema.TaggedError<DesktopApplicationMenuActionError>()(
   "DesktopApplicationMenuActionError",
@@ -285,11 +285,13 @@ export const make = Effect.gen(function* () {
           { label: "Reload", accelerator: "CmdOrCtrl+R", click: mainContentsClick("reload") },
           {
             label: "Force Reload",
+            visible: !MED_HIDES_DEVELOPER_MENU,
             accelerator: "Shift+CmdOrCtrl+R",
             click: mainContentsClick("forceReload"),
           },
           {
             label: "Toggle Developer Tools",
+            visible: !MED_HIDES_DEVELOPER_MENU,
             accelerator: environment.platform === "darwin" ? "Alt+Command+I" : "Ctrl+Shift+I",
             click: mainContentsClick("toggleDevTools"),
           },

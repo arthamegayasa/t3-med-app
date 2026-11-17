@@ -283,6 +283,7 @@ import * as AgentSessionScanner from "./project/AgentSessionScanner.ts";
 import * as AgentSessionImporter from "./project/AgentSessionImporter.ts";
 import * as UsageLimitSources from "./usage/UsageLimitSources.ts";
 import { requestUrl } from "./requestUrl.ts";
+import { refuseFeedbackUpload } from "./med/exports.ts";
 
 const CONFIG_DISCOVERY_TIMEOUT = Duration.seconds(5);
 const isProviderUploadFeedbackError = Schema.is(ProviderUploadFeedbackError);
@@ -2541,6 +2542,7 @@ export const layerWsRpc = (
           /* Request instrumentation already owns the span; keep this helper in that context. */
           Effect.fnUntraced(
             function* (input) {
+              yield* refuseFeedbackUpload(input.threadId);
               const projection = yield* threadManagement.getThreadRecords(input.threadId, [
                 "providerThreads",
               ]);

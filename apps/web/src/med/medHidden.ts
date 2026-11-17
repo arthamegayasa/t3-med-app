@@ -19,6 +19,9 @@ const HIDDEN_SETTINGS_PATHS: ReadonlySet<string> = new Set([
   "/settings/source-control",
   "/settings/worktrees",
   "/settings/connections",
+  // Prompts that run by themselves, and a machine's processes, logs and telemetry export.
+  "/settings/scheduled-tasks",
+  "/settings/diagnostics",
 ]);
 
 // Search entries left out while the section they point at stays, for what else it holds.
@@ -28,6 +31,16 @@ const HIDDEN_SETTINGS_SEARCH_ONLY: ReadonlySet<string> = new Set([
   // Their rows are left out where `SettingsPanels.tsx` would render them.
   "update-track",
   "cli-command",
+  // Sharing & access: their rows are left out where `ConnectionsSettings.tsx` would render them.
+  "network-access",
+  "tailscale-https",
+  "t3-connect",
+  "connect-device-approval",
+  "hold-webhooks-while-offline",
+  "publish-agent-activity",
+  "environment-icon",
+  // Maintenance: found under a section that is hidden by its own id.
+  "storage-delete-now",
 ]);
 
 // Single rows and sections of pages that stay, by the anchor id upstream's search gives them.
@@ -54,8 +67,20 @@ const HIDDEN_SETTINGS_TARGETS: ReadonlySet<string> = new Set([
   "linked-environments-beta",
   "simlock-hosts",
   "worktree-fast-checkout",
-  // Maintenance
+  // Beta (upstream's Labs): a guest link shows a patient chat to someone outside
+  "guest-links",
+  // Maintenance: only Keep awake and Continue threads after restarts stay
   "git-fetch-interval",
+  "provider-update-checks",
+  "background-activity",
+  "storage-artifacts",
+  "storage-cleanup",
+  "storage-worktrees",
+  "diagnostics-section",
+  "diagnostics",
+  // Providers: where usage is read from, and models that write commit messages
+  "usage-providers",
+  "text-generators",
   // Sharing & access
   "wsl-backend",
   "local-environment",
@@ -71,6 +96,15 @@ const isHiddenSettingsPath = (pathname: string): boolean =>
 /** Whether a Settings row or section with this anchor id is left out. */
 export const hidesSettingsTarget = (id: string | undefined): boolean =>
   T3MED && id !== undefined && HIDDEN_SETTINGS_TARGETS.has(id);
+
+// A provider's binary and home paths, launch arguments and environment variables. Upstream
+// gives these sections a title and no id, and offers no "advanced" fold to put them behind.
+const HIDDEN_SETTINGS_SECTION_TITLES: ReadonlySet<string> = new Set(["Runtime", "Environment"]);
+
+/** Whether a Settings section is left out, by its anchor id or, lacking one, by its title. */
+export const hidesSettingsSection = (id: string | undefined, title: string): boolean =>
+  hidesSettingsTarget(id) ||
+  (T3MED && id === undefined && HIDDEN_SETTINGS_SECTION_TITLES.has(title));
 
 /** The Settings navigation without the hidden pages, and without a group they emptied. */
 export function patientSettingsNavGroups<Group extends { readonly paths: ReadonlyArray<string> }>(
@@ -235,6 +269,23 @@ export function patientPaletteActions<
   });
 }
 
+/**
+ * A provider card's version notice. An update is never offered, so a notice that only says a
+ * newer CLI exists is left out; one that warns the installed CLI is not supported is shown.
+ */
+export const showsVersionNotice = (warnsOfCompatibility: boolean): boolean =>
+  !T3MED || warnsOfCompatibility;
+
+/** Whether the card's update button is off: as for a read-only session, and always here. */
+export const readOnlyOrPatient = (readOnly: boolean | undefined): boolean =>
+  T3MED || readOnly === true;
+
+const NO_PALETTE_PROJECTS: ReadonlyArray<never> = [];
+
+/** The projects the palette's search can find: none, so the workspace's name finds no group. */
+export const patientPaletteProjects = <Item>(projects: ReadonlyArray<Item>): ReadonlyArray<Item> =>
+  T3MED ? NO_PALETTE_PROJECTS : projects;
+
 /** A thread as a sidebar row shows it: without its Git branch and worktree. */
 export const patientCheckout = <
   Thread extends { readonly branch: string | null; readonly worktreePath: string | null },
@@ -258,8 +309,109 @@ const PATIENT_WORDING: Readonly<Record<string, string>> = {
   "Default model for new threads. Projects can override it.": "Default model for new threads.",
   "Default permissions for new threads. Projects can override them.":
     "Default permissions for new threads.",
+  // Settings rows that name Source control, other machines, the terminal or diffs.
+  "For thread titles and other generated text. Source control has its own setting. Text generators from Providers also appear here.":
+    "For thread titles and other generated text.",
+  "Automatically resume interrupted threads after an update, crash, or machine restart on the selected environments.":
+    "Automatically resume interrupted threads after an update, crash, or machine restart.",
+  "Used by everyone who dictates on this environment.":
+    "Used by everyone who dictates on this computer.",
+  "Everything outside code blocks and the terminal.": "Everything outside code blocks.",
+  "Code blocks, diffs, and file previews.": "Code blocks and file previews.",
+  "Code blocks, diffs, file previews, and the terminal.": "Code blocks and file previews.",
+  "Wrap long lines in code blocks, diffs, and file previews by default.":
+    "Wrap long lines in code blocks and file previews by default.",
+  "Set the prompt, code, and terminal fonts separately instead of one monospace font.":
+    "Set the prompt and code fonts separately instead of one monospace font.",
+  // The Usage page's machine filter, and the composer's `@` menu without files.
+  "All environments": "This computer",
+  "No matching files or folders.": "No matching threads or models.",
+};
+
+// A row whose description upstream writes as markup, by the row's anchor id.
+const PATIENT_ROW_TEXT: Readonly<Record<string, string>> = {
+  "working-shelf":
+    "Fold working and monitoring threads into a Working section. They return to the top of the inbox when they need you.",
 };
 
 /** Upstream's wording, or the patient workspace's for the few sentences that name a project. */
 export const patientWording = (upstream: string): string =>
   T3MED ? (PATIENT_WORDING[upstream] ?? upstream) : upstream;
+
+/** A Settings row's description as it is shown: `SettingsRow` passes every one through here. */
+export function patientSettingText<Text>(id: string | undefined, upstream: Text): Text | string {
+  if (!T3MED) return upstream;
+  const byRow = id === undefined ? undefined : PATIENT_ROW_TEXT[id];
+  if (byRow !== undefined) return byRow;
+  return typeof upstream === "string" ? patientWording(upstream) : upstream;
+}
+
+// Conditions that are never true here: no terminal and no browser preview can take the focus.
+const NEVER_TRUE_CONDITIONS: ReadonlySet<string> = new Set([
+  "!terminalFocus",
+  "!previewFocus",
+  "!terminalOpen",
+  "!previewOpen",
+]);
+
+/**
+ * A shortcut's condition as Settings > Keybindings labels it, without the parts that only say
+ * "not in the terminal" or "not in the browser". The rule itself is unchanged. An expression
+ * that is not a plain list of `&&` terms is shown as it is.
+ */
+export function patientWhenLabel(expression: string): string {
+  if (!T3MED || /[()|]/.test(expression)) return expression;
+  return expression
+    .split("&&")
+    .map((term) => term.trim())
+    .filter((term) => !NEVER_TRUE_CONDITIONS.has(term))
+    .join(" && ");
+}
+
+// Provider commands a patient chat offers: only the two that manage the conversation itself.
+// A provider's own list changes with its CLI and can send a thread elsewhere (`/feedback`).
+const KEPT_PROVIDER_SLASH_COMMANDS: ReadonlySet<string> = new Set(["compact", "clear"]);
+
+interface ComposerItemLike {
+  readonly type: string;
+  readonly command?: unknown;
+}
+
+const providerCommandName = (item: ComposerItemLike): string | null =>
+  typeof item.command === "object" && item.command !== null && "name" in item.command
+    ? String(item.command.name)
+    : null;
+
+/**
+ * What the composer's `/`, `@` and `#` menus list: no workspace file or folder, no other
+ * machine, no pull request, and of a provider's slash commands only the kept ones. Threads,
+ * models, skills and the app's own commands stay.
+ */
+export function patientComposerItems<Item extends ComposerItemLike>(
+  items: Array<Item>,
+): Array<Item> {
+  if (!T3MED) return items;
+  return items.filter((item) => {
+    if (item.type === "path" || item.type === "environment" || item.type === "pull-request") {
+      return false;
+    }
+    if (item.type !== "provider-slash-command") return true;
+    return KEPT_PROVIDER_SLASH_COMMANDS.has(providerCommandName(item) ?? "");
+  });
+}
+
+// Codex's access tier for security research: no meaning beside a patient.
+const HIDDEN_MODEL_OPTIONS: ReadonlySet<string> = new Set(["cyberAccessProgram"]);
+
+/** A model's capabilities without the options a patient chat has no use for. */
+export function patientModelCapabilities<
+  Descriptor extends { readonly id: string },
+  Capabilities extends { readonly optionDescriptors?: ReadonlyArray<Descriptor> | undefined },
+>(capabilities: Capabilities): Capabilities {
+  const descriptors = capabilities.optionDescriptors;
+  if (!T3MED || descriptors === undefined) return capabilities;
+  const kept = descriptors.filter((descriptor) => !HIDDEN_MODEL_OPTIONS.has(descriptor.id));
+  return kept.length === descriptors.length
+    ? capabilities
+    : { ...capabilities, optionDescriptors: kept };
+}

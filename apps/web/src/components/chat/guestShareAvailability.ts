@@ -3,6 +3,7 @@ import { Atom } from "effect/reactivity";
 
 import { environmentPresentations } from "~/state/presentation";
 import { serverEnvironment } from "~/state/server";
+import { T3MED } from "~/med/t3med";
 
 /**
  * Whether this environment offers "Share with guest": the user may create links there, and its
@@ -13,6 +14,7 @@ export const canShareWithGuestAtom = Atom.family((environmentId: EnvironmentId) 
   Atom.make((get) => {
     const serverConfig = get(environmentPresentations.serverConfigsAtom).get(environmentId);
     return (
+      !T3MED &&
       get(serverEnvironment.createGuestShare.permissionAtom(environmentId)) &&
       serverConfig?.settings.guestSharingEnabled === true &&
       managedCapabilityDenial(serverConfig.managedPolicy, "connect") === undefined

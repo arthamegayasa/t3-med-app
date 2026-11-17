@@ -76,7 +76,11 @@ import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsL
 import { keybindingSearchAnchorId, searchableSetting } from "./settingsSearch";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { patientKeybindingCommands, patientKeybindings } from "../../med/medHidden";
+import {
+  patientKeybindingCommands,
+  patientKeybindings,
+  patientWhenLabel,
+} from "../../med/medHidden";
 import { APP_BASE_NAME } from "../../branding";
 
 function KeybindingPill({ value }: { value: string }) {
@@ -891,7 +895,7 @@ function WhenClauseControl({
         }
         aria-label={`Edit when clause for ${label}`}
       >
-        <span className="truncate font-mono">{expression || "Always"}</span>
+        <span className="truncate font-mono">{patientWhenLabel(expression) || "Always"}</span>
         <ChevronDownIcon className="size-3.5 shrink-0 opacity-60" />
       </PopoverTrigger>
       <PopoverContent align="start" sideOffset={6}>

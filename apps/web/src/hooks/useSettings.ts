@@ -62,6 +62,7 @@ import {
 } from "~/state/session";
 import { environmentIdsKey } from "~/state/environmentAtomList";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
+import { patientClientSettings } from "~/med/medStoredState";
 
 const CLIENT_SETTINGS_PERSISTENCE_ERROR_SCOPE = "[CLIENT_SETTINGS]";
 
@@ -287,7 +288,7 @@ function splitPatch(patch: UnifiedSettingsPatch): {
 }
 
 export function getClientSettings(): ClientSettings {
-  return getClientSettingsSnapshot();
+  return patientClientSettings(getClientSettingsSnapshot());
 }
 
 export function isClientSettingsHydrated(): boolean {
@@ -324,7 +325,7 @@ export function useClientSettings<T = ClientSettings>(
 ): T {
   return useSyncExternalStoreWithSelector(
     subscribeClientSettings,
-    getClientSettingsSnapshot,
+    getClientSettings,
     getDefaultClientSettings,
     selector ?? (selectWholeClientSettings as (settings: ClientSettings) => T),
     Equal.equals,

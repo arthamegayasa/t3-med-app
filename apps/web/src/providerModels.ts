@@ -9,6 +9,7 @@ import {
   type ServerProviderModel,
 } from "@t3tools/contracts";
 import { createModelCapabilities, resolveSelectableModel } from "@t3tools/shared/model";
+import { patientModelCapabilities } from "./med/medHidden";
 
 const EMPTY_CAPABILITIES: ModelCapabilities = createModelCapabilities({
   optionDescriptors: [],
@@ -92,7 +93,7 @@ export function getProviderModelCapabilities(
 ): ModelCapabilities {
   const slug = resolveSelectableModel(provider, model, models);
   const selectedModel = models.find((candidate) => candidate.slug === slug);
-  const caps = selectedModel?.capabilities ?? EMPTY_CAPABILITIES;
+  const caps = patientModelCapabilities(selectedModel?.capabilities ?? EMPTY_CAPABILITIES);
   if (includePlanAgent) {
     return caps;
   }

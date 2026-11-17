@@ -1,5 +1,5 @@
 /** T3 Med: what the patient pages decide before they draw, kept free of React. */
-import { urnKey } from "@t3tools/contracts/med";
+import { type MedThreadPatientLink, urnKey } from "@t3tools/contracts/med";
 
 const DAY_MS = 86_400_000;
 
@@ -147,4 +147,30 @@ export function draftsLabel(draftLabs: number, draftPlans: number): string | nul
     ...(draftPlans > 0 ? [counted(draftPlans, "draft plan")] : []),
   ];
   return parts.length === 0 ? null : parts.join(", ");
+}
+
+/** A thread's patient link as a thread row shows it, by thread id. */
+export type ThreadPatientIndex = ReadonlyMap<string, MedThreadPatientLink>;
+
+const sameLink = (left: MedThreadPatientLink, right: MedThreadPatientLink): boolean =>
+  left.patientId === right.patientId && left.name === right.name && left.urn === right.urn;
+
+/**
+ * The links of one answer by thread id. An entry that says what `previous` said is `previous`'s
+ * own object, and an answer that changes nothing is `previous` itself, so only the rows whose
+ * patient changed draw again.
+ */
+export function indexThreadPatients(
+  links: ReadonlyArray<MedThreadPatientLink>,
+  previous: ThreadPatientIndex,
+): ThreadPatientIndex {
+  const next = new Map<string, MedThreadPatientLink>();
+  let changed = links.length !== previous.size;
+  for (const link of links) {
+    const before = previous.get(link.threadId);
+    const kept = before !== undefined && sameLink(before, link) ? before : link;
+    if (kept !== before) changed = true;
+    next.set(link.threadId, kept);
+  }
+  return changed ? next : previous;
 }

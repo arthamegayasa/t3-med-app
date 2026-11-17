@@ -15,7 +15,11 @@ import {
   AuthOrchestrationReadScope,
   type EnvironmentId,
 } from "@t3tools/contracts";
-import { MedHttpApi, type MedThreadPatient } from "@t3tools/contracts/med";
+import {
+  MedHttpApi,
+  type MedThreadPatient,
+  type MedThreadPatientLink,
+} from "@t3tools/contracts/med";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as HttpApiClient from "effect/http-api/HttpApiClient";
@@ -31,9 +35,11 @@ import {
   useEnvironmentQuery,
   useEnvironmentQuerySelector,
 } from "../state/query";
+import { useAtomValue } from "@effect/atom-react";
 import { useEnvironmentScope } from "../state/session";
 import { environmentThreadShells } from "../state/threads";
-import { localIsoDate } from "./medLogic";
+import { indexThreadPatients, localIsoDate, type ThreadPatientIndex } from "./medLogic";
+import { T3MED } from "./t3med";
 
 const medRuntime = Atom.runtime(PrimaryEnvironmentHttpLayer.layer);
 
@@ -118,6 +124,56 @@ const threadPatientAtom = Atom.family((threadId: string) =>
     client.patients.threadPatient({ headers: {}, params: { threadId } }),
   ),
 );
+
+// Every thread's patient in one answer: the sidebar draws a row per thread and must not ask
+// once per row. Read again like every other patient query, so a link an agent makes shows when
+// its turn ends.
+const threadPatientLinksAtom = medQuery("thread-patients", (client) =>
+  client.patients.threadPatients({ headers: {} }),
+);
+
+const NO_THREAD_PATIENTS: ThreadPatientIndex = new Map();
+const noThreadPatientsAtom = Atom.make(NO_THREAD_PATIENTS);
+
+// Kept between answers so a row whose patient did not change is handed the same object.
+let lastThreadPatients = NO_THREAD_PATIENTS;
+const threadPatientIndexAtom = Atom.make((get) => {
+  const links = AsyncResult.getOrElse(get(threadPatientLinksAtom), () => null)?.links;
+  // No answer names no patient: a row never shows a name the server did not just give.
+  lastThreadPatients =
+    links === undefined ? NO_THREAD_PATIENTS : indexThreadPatients(links, lastThreadPatients);
+  return lastThreadPatients;
+}).pipe(Atom.withLabel("med:thread-patient-index"));
+
+// One selector per thread, so a row follows its own entry and no other row's.
+const threadPatientSelectors = new Map<
+  string,
+  (index: ThreadPatientIndex) => MedThreadPatientLink | null
+>();
+const selectThreadPatientLink = (threadId: string) => {
+  let select = threadPatientSelectors.get(threadId);
+  if (select === undefined) {
+    select = (index) => index.get(threadId) ?? null;
+    threadPatientSelectors.set(threadId, select);
+  }
+  return select;
+};
+
+/**
+ * The patient a thread row shows, from the one read every row shares. Null for a thread with
+ * none, for a thread of another environment, and until the read answers.
+ */
+export function useThreadPatientLink(
+  environmentId: EnvironmentId | null,
+  threadId: string,
+): MedThreadPatientLink | null {
+  const medEnvironmentId = useMedEnvironmentId();
+  const asked = T3MED && medEnvironmentId !== null && medEnvironmentId === environmentId;
+  return useAtomValue(
+    asked ? threadPatientIndexAtom : noThreadPatientsAtom,
+    selectThreadPatientLink(threadId),
+  );
+}
 
 /**
  * The environment patient data belongs to: the primary one, once this session may read there.

@@ -125,6 +125,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { MiddleTruncate } from "../ui/middle-truncate";
 import { useThreadHasUnsentDraft } from "../../composerDraftStore";
 import { patientCheckout } from "../../med/medHidden";
+import { MedSidebarPatientUrn, usePatientRow } from "../../med/MedSidebarPatient";
 import { T3MED } from "../../med/t3med";
 
 // The fields thread rows show. Provider status pushes refresh `checkedAt`,
@@ -292,6 +293,7 @@ function SidebarThreadTooltip({
             <div className="min-w-0 truncate text-foreground/75">{projectDisplayName}</div>
           </div>
         ) : null}
+        <MedSidebarPatientUrn thread={thread} />
         {environmentLabel && !T3MED ? (
           <div className="flex min-w-0 items-center gap-2">
             <EnvironmentMachineIcon
@@ -651,7 +653,8 @@ function ThreadRenameInput(props: {
   );
 }
 
-const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowProps) {
+const SidebarThreadRow = memo(function SidebarThreadRow(rowProps: SidebarThreadRowProps) {
+  const props = usePatientRow(rowProps);
   const {
     isRenaming,
     onCancelRename,
@@ -1646,7 +1649,7 @@ const scrollHighlightedResultIntoView = (node: HTMLLIElement | null) => {
   node?.scrollIntoView({ block: "nearest" });
 };
 
-export const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props: {
+export const SidebarSearchResultRow = memo(function SidebarSearchResultRow(resultProps: {
   isSettled: boolean;
   thread: SidebarThreadSummary;
   project: EnvironmentProject | null;
@@ -1665,6 +1668,7 @@ export const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props
   onSelect: () => void;
   onFileDropThreads: (threadRef: ScopedThreadRef, files: File[]) => void;
 }) {
+  const props = usePatientRow(resultProps);
   const thread =
     useThreadShell(scopeThreadRef(props.thread.environmentId, props.thread.id)) ?? props.thread;
   const accessibility = resolveSidebarRowAccessibility({

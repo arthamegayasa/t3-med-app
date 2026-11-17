@@ -99,6 +99,8 @@ vi.mock(import("../environments/primary/httpLayer"), async (importOriginal) => {
 });
 
 import { RightPanelTabs } from "../components/RightPanelTabs";
+import { SidebarSearchResultRow } from "../components/sidebar/SidebarThreadRow";
+import { makeThreadFixture } from "../test-fixtures";
 import { selectThreadRightPanelState, useRightPanelStore } from "../rightPanelStore";
 import { refreshMedData } from "./medData";
 import { MedSidebarNav } from "./MedSidebarNav";
@@ -1158,4 +1160,73 @@ it("edits a patient from their page, says whose URN is taken, and archives with 
     ["PATCH /api/med/patients/p-edit", { archived: true }],
     ["PATCH /api/med/patients/p-edit", { archived: false }],
   ]);
+});
+
+function threadRow(environmentId: EnvironmentId, id: string, title: string) {
+  return (
+    <SidebarSearchResultRow
+      isSettled={false}
+      thread={makeThreadFixture({ environmentId, id: ThreadId.make(id), title })}
+      project={null}
+      // What the sidebar hands every row in T3 Med: no project is named.
+      projectDisplayName={null}
+      environmentLabel={null}
+      environmentMachine="server"
+      providerEntryByInstanceId={new Map()}
+      isHighlighted={false}
+      isRouteActive={false}
+      resultId={`result-${id}`}
+      searchMatch={null}
+      searchQuery=""
+      onHighlight={() => {}}
+      onSelect={() => {}}
+      onFileDropThreads={() => {}}
+    />
+  );
+}
+
+it("names each thread's patient on its sidebar row from one read, with the URN in its hover card", async () => {
+  setup({
+    primaryEnvironmentId: PRIMARY,
+    mayRead: true,
+    responses: {
+      "/api/med/thread-patients": {
+        links: [
+          { threadId: "row-made", patientId: "p1", name: "Ni Made Suartini", urn: "00-12-34-56" },
+          { threadId: "row-wayan", patientId: "p2", name: "I Wayan Sudarma", urn: null },
+          // A thread of another machine can carry the same id; its row asks about no one.
+          { threadId: "row-elsewhere", patientId: "p9", name: "Wrong", urn: "99" },
+        ],
+      },
+    },
+  });
+  await using screen = await render(
+    inApp(
+      <ul role="listbox">
+        {threadRow(PRIMARY, "row-made", "LDL follow-up")}
+        {threadRow(PRIMARY, "row-wayan", "EEG result")}
+        {threadRow(PRIMARY, "row-unlinked", "A question about dosing")}
+        {threadRow(OTHER, "row-elsewhere", "Another machine")}
+      </ul>,
+    ),
+  );
+
+  // A row's accessible name carries the patient where upstream's carried the project.
+  const row = (title: string) => screen.getByRole("option", { name: new RegExp(title) });
+  await expect
+    .element(screen.getByRole("option", { name: /LDL follow-up.*Ni Made Suartini/ }))
+    .toBeVisible();
+  await expect
+    .element(screen.getByRole("option", { name: /EEG result.*I Wayan Sudarma/ }))
+    .toBeVisible();
+  // A chat with no patient, and one of another machine, name nobody.
+  for (const title of ["A question about dosing", "Another machine"]) {
+    expect(row(title).element().getAttribute("aria-label")).not.toMatch(/Suartini|Sudarma|Wrong/);
+  }
+  // Four rows, one request.
+  expect(state.requests).toEqual(["GET /api/med/thread-patients"]);
+
+  await userEvent.hover(row("LDL follow-up"));
+  await expect.element(page.getByText("URN 00-12-34-56")).toBeVisible();
+  await expect.element(page.getByText("Ni Made Suartini", { exact: true })).toBeVisible();
 });

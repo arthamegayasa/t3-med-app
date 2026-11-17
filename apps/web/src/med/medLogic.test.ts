@@ -7,6 +7,7 @@ import {
   filterPatients,
   formatDay,
   formatLastChat,
+  indexThreadPatients,
   isOverdue,
   localIsoDate,
   newChatPrompt,
@@ -169,5 +170,34 @@ describe("what waits, in a line", () => {
     [3, 2, "3 draft labs, 2 draft plans"],
   ])("counts %i labs and %i plans", (labs, plans, label) => {
     expect(draftsLabel(labs, plans)).toBe(label);
+  });
+});
+
+describe("indexThreadPatients", () => {
+  const made = { threadId: "t1", patientId: "p1", name: "Ni Made Suartini", urn: "00-12-34-56" };
+  const wayan = { threadId: "t2", patientId: "p2", name: "I Wayan Sudarma", urn: null };
+
+  it("finds a thread's patient by the thread's id", () => {
+    const index = indexThreadPatients([made, wayan], new Map());
+    expect(index.get("t1")).toEqual(made);
+    expect(index.get("t2")?.urn).toBeNull();
+    expect(index.get("t3")).toBeUndefined();
+  });
+
+  it("hands back the same objects when an answer changes nothing, so no row draws again", () => {
+    const first = indexThreadPatients([made, wayan], new Map());
+    expect(indexThreadPatients([{ ...made }, { ...wayan }], first)).toBe(first);
+  });
+
+  it("replaces only the entry that changed, and drops a thread that is no longer linked", () => {
+    const first = indexThreadPatients([made, wayan], new Map());
+    // The agent relinked the second thread; the first row keeps its object.
+    const relinked = indexThreadPatients([{ ...made }, { ...wayan, patientId: "p3" }], first);
+    expect(relinked).not.toBe(first);
+    expect(relinked.get("t1")).toBe(first.get("t1"));
+    expect(relinked.get("t2")?.patientId).toBe("p3");
+    const renamed = indexThreadPatients([{ ...made, name: "Ni Made Suartini, Sp.N" }], relinked);
+    expect([...renamed.keys()]).toEqual(["t1"]);
+    expect(renamed.get("t1")?.name).toBe("Ni Made Suartini, Sp.N");
   });
 });
