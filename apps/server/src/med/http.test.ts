@@ -137,6 +137,7 @@ const READ_ROUTES = [
   "/api/med/patients",
   "/api/med/patients/some-patient",
   "/api/med/patients/some-patient/record",
+  "/api/med/patients/some-patient/removed",
   "/api/med/needs-you",
   "/api/med/upcoming",
   "/api/med/counts",
@@ -146,13 +147,15 @@ const READ_ROUTES = [
 const WRITE_ROUTES = [
   ["PATCH", "/api/med/patients/some-patient", { diagnoses: "Migraine" }],
   ["PATCH", "/api/med/labs/some-lab", { unit: "mg/dL" }],
-  ["POST", "/api/med/labs/some-lab/undo-correction", undefined],
+  ["POST", "/api/med/labs/some-lab/undo-correction", {}],
   ["PUT", "/api/med/labs/some-lab/verified", { verified: true }],
   ["PUT", "/api/med/labs/some-lab/removed", { removed: true }],
   ["PATCH", "/api/med/plans/some-plan", { status: "done" }],
   ["PUT", "/api/med/plans/some-plan/verified", { verified: true }],
   ["PUT", "/api/med/plans/some-plan/removed", { removed: true }],
-  ["POST", "/api/med/notes/some-note/verify", undefined],
+  ["POST", "/api/med/notes/some-note/verify", { labIds: [], planIds: [] }],
+  ["POST", "/api/med/notes/some-note/unverify", { labIds: [], planIds: [] }],
+  ["PUT", "/api/med/notes/some-note/question-handled", { handled: true }],
   ["POST", "/api/med/notes/some-note/inbox", undefined],
 ] as const;
 
@@ -230,6 +233,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("med HTTP routes"
         "GET /api/med/patients",
         "GET /api/med/patients/:patientId",
         "GET /api/med/patients/:patientId/record",
+        "GET /api/med/patients/:patientId/removed",
         "GET /api/med/threads/:threadId/patient",
         "GET /api/med/upcoming",
         "PATCH /api/med/labs/:labId",
@@ -237,9 +241,11 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("med HTTP routes"
         "PATCH /api/med/plans/:planId",
         "POST /api/med/labs/:labId/undo-correction",
         "POST /api/med/notes/:noteId/inbox",
+        "POST /api/med/notes/:noteId/unverify",
         "POST /api/med/notes/:noteId/verify",
         "PUT /api/med/labs/:labId/removed",
         "PUT /api/med/labs/:labId/verified",
+        "PUT /api/med/notes/:noteId/question-handled",
         "PUT /api/med/plans/:planId/removed",
         "PUT /api/med/plans/:planId/verified",
       ]);
@@ -324,6 +330,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("med HTTP routes"
         noteId: note.id,
       });
       const revision = {
+        correctedBy: "doctor",
         testAsWritten: "LDL",
         value: 78,
         valueText: "78",
@@ -338,28 +345,66 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("med HTTP routes"
       assert.deepInclude(record.labs[0].revisions[0], revision);
 
       const verified = yield* call(`${path}/verified`, { method: "PUT", body: { verified: true } });
-      assert.deepStrictEqual([verified.status, verified.body], [200, { verified: true }]);
+      assert.deepStrictEqual(
+        [verified.status, verified.body.verified, typeof verified.body.updatedAt],
+        [200, true, "string"],
+      );
       assert.deepStrictEqual(yield* stored, [["87", "verified"]]);
       assert.strictEqual((yield* store.getPatient(wayan.id)).status, "active");
       yield* call(`${path}/verified`, { method: "PUT", body: { verified: false } });
       assert.deepStrictEqual(yield* stored, [["87", "draft"]]);
 
       const removed = yield* call(`${path}/removed`, { method: "PUT", body: { removed: true } });
-      assert.deepStrictEqual([removed.status, removed.body], [200, { removed: true }]);
+      assert.deepStrictEqual([removed.status, removed.body.removed], [200, true]);
       assert.deepStrictEqual(yield* stored, []);
       assert.strictEqual(
         (yield* call(path, { method: "PATCH", body: { unit: "mg/dl" } })).status,
         404,
       );
-      yield* call(`${path}/removed`, { method: "PUT", body: { removed: false } });
+      // The list that puts a removed row back names it as the Labs surface does.
+      assert.deepStrictEqual((yield* call(`/api/med/patients/${wayan.id}/removed`)).body, {
+        labs: [
+          {
+            id: lab.id,
+            testName: "LDL cholesterol",
+            valueText: "87",
+            unit: "mg/dL",
+            collected: "2026-11-06",
+            removedAt: removed.body.updatedAt,
+          },
+        ],
+        plans: [],
+      });
+      assert.strictEqual((yield* call("/api/med/patients/nobody/removed")).status, 404);
+      yield* call(`${path}/removed`, {
+        method: "PUT",
+        body: { removed: false, ifUpdatedAt: removed.body.updatedAt },
+      });
       assert.deepStrictEqual(yield* stored, [["87", "draft"]]);
 
-      const undone = yield* call(`${path}/undo-correction`, { method: "POST", body: undefined });
-      assert.deepInclude(undone.body, { value: 78, valueText: "78", flag: null, revisions: [] });
-      const nothingToUndo = yield* call(`${path}/undo-correction`, {
-        method: "POST",
-        body: undefined,
+      // An undo that names a row as it no longer is, or a correction that is not the latest,
+      // is answered as a conflict and changes nothing.
+      const late = { _tag: "MedChangedSinceError", row: "lab", id: lab.id };
+      const lateRemoval = yield* call(`${path}/removed`, {
+        method: "PUT",
+        body: { removed: true, ifUpdatedAt: "2026-01-01T00:00:00.000Z" },
       });
+      assert.deepStrictEqual([lateRemoval.status, lateRemoval.body], [409, late]);
+      const lateUndo = yield* call(`${path}/undo-correction`, {
+        method: "POST",
+        body: { revisionId: "another-correction" },
+      });
+      assert.deepStrictEqual([lateUndo.status, lateUndo.body], [409, late]);
+      const mismatch = yield* call(path, { method: "PATCH", body: { valueText: "165" } });
+      assert.deepStrictEqual([mismatch.status, mismatch.body.reason.includes("165")], [422, false]);
+      assert.deepStrictEqual(yield* stored, [["87", "draft"]]);
+
+      const undone = yield* call(`${path}/undo-correction`, {
+        method: "POST",
+        body: { revisionId: corrected.body.revisions[0].id },
+      });
+      assert.deepInclude(undone.body, { value: 78, valueText: "78", flag: null, revisions: [] });
+      const nothingToUndo = yield* call(`${path}/undo-correction`, { method: "POST", body: {} });
       assert.deepStrictEqual(
         [nothingToUndo.status, nothingToUndo.body],
         [
@@ -415,8 +460,14 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("med HTTP routes"
             type: "follow_up",
             status: "done",
             doneOn: "2026-11-13",
+            updatedAt: done.body.updatedAt,
           },
         ],
+      );
+      const lateReopen = yield* change({ status: "open", ifUpdatedAt: "2026-01-01T00:00:00.000Z" });
+      assert.deepStrictEqual(
+        [lateReopen.status, lateReopen.body],
+        [409, { _tag: "MedChangedSinceError", row: "plan", id: plan.id }],
       );
       assert.deepInclude((yield* change({ status: "open" })).body, {
         status: "draft",
@@ -437,7 +488,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("med HTTP routes"
       assert.strictEqual((yield* change({ status: "planned" })).status, 400);
 
       const verified = yield* call(`${path}/verified`, { method: "PUT", body: { verified: true } });
-      assert.deepStrictEqual([verified.status, verified.body], [200, { verified: true }]);
+      assert.deepStrictEqual([verified.status, verified.body.verified], [200, true]);
       assert.strictEqual((yield* store.listPlans({ patientId: wayan.id }))[0]?.status, "planned");
 
       yield* call(`${path}/removed`, { method: "PUT", body: { removed: true } });
@@ -451,18 +502,50 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("med HTTP routes"
         draftLabs: 1,
         draftPlans: 0,
       });
-      const whole = yield* call(`/api/med/notes/${note.id}/verify`, {
-        method: "POST",
-        body: undefined,
+      // Verifying a note needs the rows the page showed; none named is none verified.
+      const verifyNote = (noteId: string, body: unknown) =>
+        call(`/api/med/notes/${noteId}/verify`, { method: "POST", body });
+      assert.strictEqual((yield* verifyNote(note.id, undefined)).status, 400);
+      assert.deepInclude((yield* verifyNote(note.id, { labIds: [], planIds: [] })).body, {
+        labsVerified: 0,
       });
+      const shown = (yield* call(`/api/med/patients/${wayan.id}`)).body.notes[0].draftLabRows;
+      assert.deepStrictEqual(shown, [
+        {
+          id: shown[0].id,
+          testName: "LDL cholesterol",
+          valueText: "78",
+          unit: "mg/dL",
+          collected: "2026-11-06",
+        },
+      ]);
+      const rows = { labIds: [shown[0].id], planIds: [] };
+      const whole = yield* verifyNote(note.id, rows);
       assert.deepStrictEqual(
         [whole.status, whole.body],
-        [200, { labsVerified: 1, plansPlanned: 0, patientActivated: false }],
+        [200, { labsVerified: 1, plansPlanned: 0, patientActivated: false, ...rows }],
       );
-      const inInbox = yield* call(`/api/med/notes/${inboxNote.id}/verify`, {
+      const back = yield* call(`/api/med/notes/${note.id}/unverify`, {
         method: "POST",
-        body: undefined,
+        body: rows,
       });
+      assert.deepStrictEqual([back.status, back.body], [200, rows]);
+      assert.strictEqual((yield* store.listLabs({ patientId: wayan.id }))[0]?.status, "draft");
+
+      // A question marked as handled leaves Needs you and stays on the note.
+      const handle = (handled: boolean) =>
+        call(`/api/med/notes/${note.id}/question-handled`, { method: "PUT", body: { handled } });
+      yield* verifyNote(note.id, rows);
+      assert.strictEqual((yield* call("/api/med/counts")).body.needsYou, 1);
+      assert.deepStrictEqual((yield* handle(true)).body, { handled: true });
+      assert.strictEqual((yield* call("/api/med/counts")).body.needsYou, 0);
+      const handledNote = (yield* call(`/api/med/patients/${wayan.id}`)).body.notes[0];
+      assert.strictEqual(handledNote.needsYou, "Is the unit mg/dL?");
+      assert.isString(handledNote.needsYouHandledAt);
+      yield* handle(false);
+      assert.strictEqual((yield* call("/api/med/counts")).body.needsYou, 1);
+
+      const inInbox = yield* verifyNote(inboxNote.id, { labIds: [], planIds: [] });
       assert.deepStrictEqual(
         [inInbox.status, inInbox.body.reason],
         [422, `Note ${inboxNote.id} is in the Inbox; move it to a patient before verifying it.`],
@@ -524,10 +607,23 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("med HTTP routes"
         status: "new",
       });
 
-      assert.strictEqual((yield* edit(wayan.id, { status: "archived" })).body.status, "archived");
+      assert.strictEqual((yield* edit(wayan.id, { archived: true })).body.status, "archived");
       assert.strictEqual((yield* call("/api/med/counts")).body.patients, 2);
-      assert.strictEqual((yield* edit(wayan.id, { status: "new" })).body.status, "new");
+      assert.strictEqual((yield* edit(wayan.id, { archived: false })).body.status, "new");
       assert.strictEqual((yield* call("/api/med/counts")).body.patients, 3);
+      // An undo takes off the one spelling its edit added, and leaves the others.
+      assert.deepStrictEqual(
+        (yield* edit(wayan.id, { addSpellings: ["Wyn"], removeSpellings: ["pak wayan"] })).body
+          .alsoWrittenAs,
+        ["Wyn"],
+      );
+      assert.deepStrictEqual(
+        (yield* edit(wayan.id, { addSpellings: ["Pak Wayan"], removeSpellings: ["Wyn"] })).body
+          .alsoWrittenAs,
+        ["Pak Wayan"],
+      );
+      const noKey = yield* edit(made.id, { urn: "---" });
+      assert.deepStrictEqual([noKey.status, noKey.body.reason], [422, "urn must not be blank."]);
 
       const taken = yield* edit(made.id, { urn: "00 45 67 90" });
       assert.deepStrictEqual(
@@ -550,7 +646,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("med HTTP routes"
         (yield* edit(made.id, { name: " " })).body.reason,
         "name must not be blank.",
       );
-      assert.strictEqual((yield* edit(made.id, { status: "gone" })).status, 400);
+      assert.strictEqual((yield* edit(made.id, { archived: "yes" })).status, 400);
       assert.strictEqual((yield* edit("no-such-patient", { name: "Nobody" })).status, 404);
       assert.deepInclude(yield* store.getPatient(made.id), { name: "Ni Made Ayu", urn: null });
     }).pipe(Effect.provide(layerStore)),
@@ -641,15 +737,33 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("med HTTP routes"
           date: "2026-11-06",
           summary: "LDL saved as a draft",
           needsYou: "Is the unit mg/dL?",
+          needsYouHandledAt: null,
         };
+        const stored = (yield* store.listPlans({ patientId: wayan.id }))[0];
         const visit = {
-          id: (yield* store.listPlans({ patientId: wayan.id }))[0]?.id,
+          id: stored?.id,
           patientId: wayan.id,
           title: "Clinic visit",
           due: "2026-11-14",
           type: "follow_up",
           status: "draft",
           doneOn: null,
+          updatedAt: stored?.updatedAt,
+        };
+        // A waiting note lists its drafts, each named enough to know which row it is.
+        const drafts = {
+          draftLabs: 1,
+          draftPlans: 1,
+          draftLabRows: [
+            {
+              id: (yield* store.listLabs({ patientId: wayan.id }))[0]?.id,
+              testName: "LDL cholesterol",
+              valueText: "78",
+              unit: "mg/dL",
+              collected: "2026-11-06",
+            },
+          ],
+          draftPlanRows: [{ id: stored?.id, title: "Clinic visit", due: "2026-11-14" }],
         };
         const madeLinkedAt = (yield* store.getPatientHome(made.id)).threads[0]?.linkedAt;
         assert.isTrue(madeLinkedAt !== undefined && madeLinkedAt > note.updatedAt);
@@ -680,7 +794,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("med HTTP routes"
         // Diagnoses and the store's own columns are not in this route's schema, so they stay home.
         assert.deepStrictEqual((yield* get(`/api/med/patients/${wayan.id}`)).body, {
           patient: { ...wayanSummary, sex: "male", dateOfBirth: "1968-03-02" },
-          notes: [{ ...waitingNote, draftLabs: 1, draftPlans: 1 }],
+          notes: [{ ...waitingNote, ...drafts }],
           threads: [{ threadId: "thread-1", linkedAt: note.updatedAt }],
           draftLabs: 1,
           draftPlans: 1,
@@ -706,8 +820,17 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("med HTTP routes"
               date: "2026-11-10",
               summary: "",
               needsYou: "Named only as Ketut.",
+              needsYouHandledAt: null,
               draftLabs: 0,
               draftPlans: 1,
+              draftLabRows: [],
+              draftPlanRows: [
+                {
+                  id: (yield* store.listPlans({ inbox: true }))[0]?.id,
+                  title: "EEG",
+                  due: "2026-11-12",
+                },
+              ],
             },
           ],
           patients: [
@@ -715,7 +838,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("med HTTP routes"
               patient: wayanSummary,
               draftLabs: 1,
               draftPlans: 1,
-              notes: [{ ...waitingNote, draftLabs: 1, draftPlans: 1 }],
+              notes: [{ ...waitingNote, ...drafts }],
             },
           ],
         });

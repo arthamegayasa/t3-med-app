@@ -327,7 +327,9 @@ const PatientCorrectLabTool = Tool.make("patient_correct_lab", {
     valueText: Schema.optional(Schema.String),
     unit: Schema.optional(Schema.String),
     referenceRange: Schema.optional(Schema.String),
-    flag: Schema.optional(flag),
+    flag: Schema.optional(
+      Schema.NullOr(flag).annotate({ description: "`null` clears a flag filed by mistake." }),
+    ),
     collected: Schema.optional(IsoDate),
   }),
   success: Lab,
@@ -340,7 +342,7 @@ const PatientCorrectLabTool = Tool.make("patient_correct_lab", {
 const PatientRemoveTool = Tool.make("patient_remove", {
   ...writing,
   description:
-    "Call this when the doctor says a lab result or a plan was filed by mistake, to take it out of every list, baseline and chart. `restore: true` puts it back.",
+    "Call this when the doctor says a lab result or a plan was filed by mistake, to take it out of every list, baseline and chart. `restore: true` puts it back; filing it again does not.",
   parameters: Schema.Struct({
     row: Schema.Literals(["lab", "plan"]),
     id: Schema.String.annotate({ description: "Its `labId` or `planId`." }),

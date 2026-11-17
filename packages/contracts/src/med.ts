@@ -75,14 +75,35 @@ export const MedNote = Schema.Struct({
   title: Schema.String,
   date: Schema.String,
   summary: Schema.String,
+  /** What the note asks the doctor; it waits while `needsYouHandledAt` is null. */
   needsYou: Schema.String,
+  needsYouHandledAt: Schema.NullOr(Schema.String),
 });
 export type MedNote = typeof MedNote.Type;
+
+/** A draft as a list names it: enough to know which row verifying a note would confirm. */
+export const MedDraftLab = Schema.Struct({
+  id: Schema.String,
+  testName: Schema.String,
+  valueText: Schema.String,
+  unit: Schema.String,
+  collected: Schema.String,
+});
+export type MedDraftLab = typeof MedDraftLab.Type;
+
+export const MedDraftPlan = Schema.Struct({
+  id: Schema.String,
+  title: Schema.String,
+  due: Schema.String,
+});
+export type MedDraftPlan = typeof MedDraftPlan.Type;
 
 export const MedWaitingNote = Schema.Struct({
   ...MedNote.fields,
   draftLabs: Schema.Number,
   draftPlans: Schema.Number,
+  draftLabRows: Schema.Array(MedDraftLab),
+  draftPlanRows: Schema.Array(MedDraftPlan),
 });
 export type MedWaitingNote = typeof MedWaitingNote.Type;
 
@@ -95,6 +116,8 @@ export const MedPlan = Schema.Struct({
   status: Schema.Literals(["draft", "planned", "done", "cancelled"]),
   /** The day a done plan was done. */
   doneOn: Schema.NullOr(Schema.String),
+  /** When the plan last changed: what an undo sends back as `ifUpdatedAt`. */
+  updatedAt: Schema.String,
 });
 export type MedPlan = typeof MedPlan.Type;
 
@@ -118,6 +141,10 @@ const MedLabStatus = Schema.Literals(["draft", "verified"]);
 
 /** What a result said before a correction replaced it. */
 export const MedLabRevision = Schema.Struct({
+  /** Names the correction: an undo sends it, and is refused once a later one exists. */
+  id: Schema.String,
+  /** Null for a correction made before this was recorded. */
+  correctedBy: Schema.NullOr(Schema.Literals(["doctor", "agent"])),
   testAsWritten: Schema.String,
   value: Schema.NullOr(Schema.Number),
   valueText: Schema.String,
@@ -240,8 +267,11 @@ export const MedPatientEdit = Schema.Struct({
   diagnoses: Schema.optionalKey(Schema.String),
   /** The whole list of other spellings, replacing the one the patient has. */
   alsoWrittenAs: Schema.optionalKey(Schema.Array(Schema.String)),
-  /** `archived` archives; `active` or `new` brings the patient back. */
-  status: Schema.optionalKey(MedPatientStatus),
+  /** Spellings taken off and put on the list as it stands: what an undo sends. */
+  removeSpellings: Schema.optionalKey(Schema.Array(Schema.String)),
+  addSpellings: Schema.optionalKey(Schema.Array(Schema.String)),
+  /** True archives; false brings the patient back to the status held before. */
+  archived: Schema.optionalKey(Schema.Boolean),
 });
 export type MedPatientEdit = typeof MedPatientEdit.Type;
 
@@ -263,18 +293,53 @@ export const MedPlanChange = Schema.Struct({
   due: Schema.optionalKey(Schema.String),
   status: Schema.optionalKey(Schema.Literals(["done", "cancelled", "open"])),
   doneOn: Schema.optionalKey(Schema.String),
+  ifUpdatedAt: Schema.optionalKey(Schema.String),
 });
 export type MedPlanChange = typeof MedPlanChange.Type;
 
-export const MedRemoved = Schema.Struct({ removed: Schema.Boolean });
-export const MedVerified = Schema.Struct({ verified: Schema.Boolean });
+/**
+ * `ifUpdatedAt` is what an undo sends: the `updatedAt` the change it reverses answered with.
+ * The row is left alone, with `MedChangedSinceError`, when it changed after that.
+ */
+export const MedSetRemoved = Schema.Struct({
+  removed: Schema.Boolean,
+  ifUpdatedAt: Schema.optionalKey(Schema.String),
+});
+export const MedRemoved = Schema.Struct({ removed: Schema.Boolean, updatedAt: Schema.String });
+export const MedSetVerified = Schema.Struct({
+  verified: Schema.Boolean,
+  ifUpdatedAt: Schema.optionalKey(Schema.String),
+});
+export const MedVerified = Schema.Struct({ verified: Schema.Boolean, updatedAt: Schema.String });
+
+/** The correction an undo takes back; refused when a later one exists. */
+export const MedUndoCorrection = Schema.Struct({ revisionId: Schema.optionalKey(Schema.String) });
+
+/** The draft rows of a note the doctor was shown: verifying confirms these and no others. */
+export const MedNoteRows = Schema.Struct({
+  labIds: Schema.Array(Schema.String),
+  planIds: Schema.Array(Schema.String),
+});
+export type MedNoteRows = typeof MedNoteRows.Type;
 
 export const MedNoteVerified = Schema.Struct({
   labsVerified: Schema.Number,
   plansPlanned: Schema.Number,
   patientActivated: Schema.Boolean,
+  /** The rows this call verified: what its undo returns to draft. */
+  labIds: Schema.Array(Schema.String),
+  planIds: Schema.Array(Schema.String),
 });
 export type MedNoteVerified = typeof MedNoteVerified.Type;
+
+export const MedQuestionHandled = Schema.Struct({ handled: Schema.Boolean });
+
+/** What was removed for a patient, the latest removal first, each with what it said. */
+export const MedRemovedList = Schema.Struct({
+  labs: Schema.Array(Schema.Struct({ ...MedDraftLab.fields, removedAt: Schema.String })),
+  plans: Schema.Array(Schema.Struct({ ...MedDraftPlan.fields, removedAt: Schema.String })),
+});
+export type MedRemovedList = typeof MedRemovedList.Type;
 
 /** The note as it is in the Inbox: another id than the one moved when it was merged into one. */
 export const MedNoteMoved = Schema.Struct({ noteId: Schema.String });
@@ -300,6 +365,17 @@ export class MedRefusedError extends Schema.TaggedError<MedRefusedError>()(
   }
 }
 
+/** An undo that came too late: the row changed after the change it would take back. */
+export class MedChangedSinceError extends Schema.TaggedError<MedChangedSinceError>()(
+  "MedChangedSinceError",
+  { row: Schema.Literals(["lab", "plan"]), id: Schema.String },
+  { httpApiStatus: 409 },
+) {
+  override get message(): string {
+    return `This ${this.row === "lab" ? "result" : "plan"} has changed since, so it was not undone.`;
+  }
+}
+
 /** The URN belongs to another patient, named here for the doctor and in no log. */
 export class MedUrnTakenError extends Schema.TaggedError<MedUrnTakenError>()(
   "MedUrnTakenError",
@@ -322,7 +398,12 @@ const ThreadParams = Schema.Struct({ threadId: Schema.String });
 const LabParams = Schema.Struct({ labId: Schema.String });
 const PlanParams = Schema.Struct({ planId: Schema.String });
 const NoteParams = Schema.Struct({ noteId: Schema.String });
-const ChangeErrors = [MedRowNotFoundError, MedRefusedError, ...ReadErrors] as const;
+const ChangeErrors = [
+  MedRowNotFoundError,
+  MedRefusedError,
+  MedChangedSinceError,
+  ...ReadErrors,
+] as const;
 
 // A thread is linked to a patient by the agent tools, on evidence, and by nothing here: no
 // route writes under `/api/med/threads`, and no write below touches a thread's link.
@@ -348,6 +429,14 @@ class MedPatientsHttpApi extends HttpApiGroup.make("patients")
       headers: BearerHeaders,
       params: PatientParams,
       success: MedPatientRecord,
+      error: PatientErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.get("removed", "/api/med/patients/:patientId/removed", {
+      headers: BearerHeaders,
+      params: PatientParams,
+      success: MedRemovedList,
       error: PatientErrors,
     }).middleware(EnvironmentAuthenticatedAuth),
   )
@@ -402,6 +491,7 @@ class MedPatientsHttpApi extends HttpApiGroup.make("patients")
     HttpApiEndpoint.post("undoLabCorrection", "/api/med/labs/:labId/undo-correction", {
       headers: BearerHeaders,
       params: LabParams,
+      payload: MedUndoCorrection,
       success: MedLab,
       error: ChangeErrors,
     }).middleware(EnvironmentAuthenticatedAuth),
@@ -410,7 +500,7 @@ class MedPatientsHttpApi extends HttpApiGroup.make("patients")
     HttpApiEndpoint.put("setLabRemoved", "/api/med/labs/:labId/removed", {
       headers: BearerHeaders,
       params: LabParams,
-      payload: MedRemoved,
+      payload: MedSetRemoved,
       success: MedRemoved,
       error: ChangeErrors,
     }).middleware(EnvironmentAuthenticatedAuth),
@@ -419,7 +509,7 @@ class MedPatientsHttpApi extends HttpApiGroup.make("patients")
     HttpApiEndpoint.put("setLabVerified", "/api/med/labs/:labId/verified", {
       headers: BearerHeaders,
       params: LabParams,
-      payload: MedVerified,
+      payload: MedSetVerified,
       success: MedVerified,
       error: ChangeErrors,
     }).middleware(EnvironmentAuthenticatedAuth),
@@ -437,7 +527,7 @@ class MedPatientsHttpApi extends HttpApiGroup.make("patients")
     HttpApiEndpoint.put("setPlanRemoved", "/api/med/plans/:planId/removed", {
       headers: BearerHeaders,
       params: PlanParams,
-      payload: MedRemoved,
+      payload: MedSetRemoved,
       success: MedRemoved,
       error: ChangeErrors,
     }).middleware(EnvironmentAuthenticatedAuth),
@@ -446,7 +536,7 @@ class MedPatientsHttpApi extends HttpApiGroup.make("patients")
     HttpApiEndpoint.put("setPlanVerified", "/api/med/plans/:planId/verified", {
       headers: BearerHeaders,
       params: PlanParams,
-      payload: MedVerified,
+      payload: MedSetVerified,
       success: MedVerified,
       error: ChangeErrors,
     }).middleware(EnvironmentAuthenticatedAuth),
@@ -455,7 +545,26 @@ class MedPatientsHttpApi extends HttpApiGroup.make("patients")
     HttpApiEndpoint.post("verifyNote", "/api/med/notes/:noteId/verify", {
       headers: BearerHeaders,
       params: NoteParams,
+      payload: MedNoteRows,
       success: MedNoteVerified,
+      error: ChangeErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("unverifyNote", "/api/med/notes/:noteId/unverify", {
+      headers: BearerHeaders,
+      params: NoteParams,
+      payload: MedNoteRows,
+      success: MedNoteRows,
+      error: ChangeErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.put("setQuestionHandled", "/api/med/notes/:noteId/question-handled", {
+      headers: BearerHeaders,
+      params: NoteParams,
+      payload: MedQuestionHandled,
+      success: MedQuestionHandled,
       error: ChangeErrors,
     }).middleware(EnvironmentAuthenticatedAuth),
   )

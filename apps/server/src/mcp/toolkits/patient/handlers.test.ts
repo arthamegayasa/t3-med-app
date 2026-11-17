@@ -589,6 +589,36 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("patient tools", 
         code: "invalid_request",
         message: "collected must be a calendar date written as YYYY-MM-DD.",
       });
+      // A flag filed by mistake is cleared with null; a text that is a number needs its number.
+      expect((yield* call("patient_correct_lab", { labId: typo.labId, flag: "high" })).flag).toBe(
+        "high",
+      );
+      expect((yield* call("patient_correct_lab", { labId: typo.labId, flag: null })).flag).toBe(
+        null,
+      );
+      expect(
+        yield* call("patient_correct_lab", { labId: typo.labId, valueText: "105" }),
+      ).toMatchObject({
+        code: "invalid_request",
+        message:
+          "valueText reads as a number, so send that number in value with it: value and valueText change together.",
+      });
+
+      // A question the doctor marked as handled is no longer among what waits for them.
+      yield* call("patient_file", { patientId: wayan.patientId, needsYou: "Fasting sample?" });
+      const waits = Effect.gen(function* () {
+        const review = yield* call("patient_review", {});
+        return review.patients.flatMap((patient) =>
+          patient.notes.flatMap((note) => (note.noteId === filed.noteId ? [note.needsYou] : [])),
+        );
+      });
+      expect(yield* waits).toEqual(["Fasting sample?"]);
+      yield* PatientStore.PatientStore.pipe(
+        Effect.flatMap((store) =>
+          store.setQuestionHandled({ noteId: filed.noteId, handled: true }),
+        ),
+      );
+      expect(yield* waits).toEqual([""]);
 
       expect(yield* call("patient_remove", { row: "lab", id: first.labId })).toEqual({
         removed: true,

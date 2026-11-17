@@ -10,6 +10,7 @@ import {
   EnvironmentAuthenticatedAuth,
 } from "@t3tools/contracts";
 import {
+  MedChangedSinceError,
   MedHttpApi,
   MedPatientNotFoundError,
   MedRefusedError,
@@ -61,13 +62,22 @@ const failMissingPlan = (error: PatientStore.PlanNotFoundError) =>
 const failMissingNote = (error: PatientStore.NoteNotFoundError) =>
   Effect.fail(new MedRowNotFoundError({ row: "note", id: error.noteId }));
 
+const failChanged = (error: PatientStore.RowChangedError) =>
+  Effect.fail(new MedChangedSinceError({ row: error.row, id: error.id }));
+
 // No handler passes a thread, so no row is out of reach.
 const dieOutOfReach = (error: PatientStore.RowOutOfReachError) => Effect.die(error);
 
-const labForPage = (lab: PatientStore.Lab) => ({
+const labForPage = <Row extends PatientStore.Lab>(lab: Row) => ({
   ...lab,
   testName: testDisplayName(lab.testId) ?? lab.testName,
   noteId: lab.sourceNoteId,
+});
+
+// A note's drafts are named by the test's display name, as the Labs surface names them.
+const noteForPage = (note: PatientStore.WaitingNote) => ({
+  ...note,
+  draftLabRows: note.draftLabRows.map(labForPage),
 });
 
 const layerHandlers = HttpApiBuilder.group(
@@ -92,12 +102,27 @@ const layerHandlers = HttpApiBuilder.group(
         Effect.fn("med.patients.home")(function* (args) {
           yield* annotateEnvironmentRequest(args.endpoint.name);
           yield* requireEnvironmentScope(AuthOrchestrationReadScope);
-          return yield* store.getPatientHome(args.params.patientId).pipe(
+          const home = yield* store.getPatientHome(args.params.patientId).pipe(
             Effect.catchTags({
               PatientStoreError: failStore,
               PatientNotFoundError: failMissingPatient,
             }),
           );
+          return { ...home, notes: home.notes.map(noteForPage) };
+        }),
+      )
+      .handle(
+        "removed",
+        Effect.fn("med.patients.removed")(function* (args) {
+          yield* annotateEnvironmentRequest(args.endpoint.name);
+          yield* requireEnvironmentScope(AuthOrchestrationReadScope);
+          const removed = yield* store.listRemoved(args.params.patientId).pipe(
+            Effect.catchTags({
+              PatientStoreError: failStore,
+              PatientNotFoundError: failMissingPatient,
+            }),
+          );
+          return { ...removed, labs: removed.labs.map(labForPage) };
         }),
       )
       .handle(
@@ -119,9 +144,16 @@ const layerHandlers = HttpApiBuilder.group(
         Effect.fn("med.patients.needsYou")(function* (args) {
           yield* annotateEnvironmentRequest(args.endpoint.name);
           yield* requireEnvironmentScope(AuthOrchestrationReadScope);
-          return yield* store
+          const waiting = yield* store
             .listNeedsYou()
             .pipe(Effect.catchTags({ PatientStoreError: failStore }));
+          return {
+            inbox: waiting.inbox.map(noteForPage),
+            patients: waiting.patients.map((entry) => ({
+              ...entry,
+              notes: entry.notes.map(noteForPage),
+            })),
+          };
         }),
       )
       .handle(
@@ -201,11 +233,13 @@ const layerHandlers = HttpApiBuilder.group(
         "undoLabCorrection",
         Effect.fn("med.patients.undoLabCorrection")(function* (args) {
           yield* requireChangeScopes(args.endpoint.name);
-          return yield* store.undoLabCorrection({ labId: args.params.labId }).pipe(
+          const { revisionId } = args.payload;
+          return yield* store.undoLabCorrection({ labId: args.params.labId, revisionId }).pipe(
             Effect.map(labForPage),
             Effect.catchTags({
               PatientStoreError: failStore,
               LabNotFoundError: failMissingLab,
+              RowChangedError: failChanged,
               NoLabCorrectionError: refuse,
             }),
           );
@@ -216,14 +250,17 @@ const layerHandlers = HttpApiBuilder.group(
         Effect.fn("med.patients.setLabRemoved")(function* (args) {
           yield* requireChangeScopes(args.endpoint.name);
           const { removed } = args.payload;
-          yield* store.setLabRemoved({ labId: args.params.labId, removed }).pipe(
-            Effect.catchTags({
-              PatientStoreError: failStore,
-              LabNotFoundError: failMissingLab,
-              RowOutOfReachError: dieOutOfReach,
-            }),
-          );
-          return { removed };
+          const stamp = yield* store
+            .setLabRemoved({ ...args.payload, labId: args.params.labId })
+            .pipe(
+              Effect.catchTags({
+                PatientStoreError: failStore,
+                LabNotFoundError: failMissingLab,
+                RowChangedError: failChanged,
+                RowOutOfReachError: dieOutOfReach,
+              }),
+            );
+          return { removed, ...stamp };
         }),
       )
       .handle(
@@ -231,14 +268,17 @@ const layerHandlers = HttpApiBuilder.group(
         Effect.fn("med.patients.setLabVerified")(function* (args) {
           yield* requireChangeScopes(args.endpoint.name);
           const { verified } = args.payload;
-          yield* store.setLabVerified({ labId: args.params.labId, verified }).pipe(
-            Effect.catchTags({
-              PatientStoreError: failStore,
-              LabNotFoundError: failMissingLab,
-              NoteInInboxError: refuse,
-            }),
-          );
-          return { verified };
+          const stamp = yield* store
+            .setLabVerified({ ...args.payload, labId: args.params.labId })
+            .pipe(
+              Effect.catchTags({
+                PatientStoreError: failStore,
+                LabNotFoundError: failMissingLab,
+                RowChangedError: failChanged,
+                NoteInInboxError: refuse,
+              }),
+            );
+          return { verified, ...stamp };
         }),
       )
       .handle(
@@ -249,6 +289,7 @@ const layerHandlers = HttpApiBuilder.group(
             Effect.catchTags({
               PatientStoreError: failStore,
               PlanNotFoundError: failMissingPlan,
+              RowChangedError: failChanged,
               RowOutOfReachError: dieOutOfReach,
               PlanNotDoneError: refuse,
               InvalidDateError: refuse,
@@ -263,14 +304,17 @@ const layerHandlers = HttpApiBuilder.group(
         Effect.fn("med.patients.setPlanRemoved")(function* (args) {
           yield* requireChangeScopes(args.endpoint.name);
           const { removed } = args.payload;
-          yield* store.setPlanRemoved({ planId: args.params.planId, removed }).pipe(
-            Effect.catchTags({
-              PatientStoreError: failStore,
-              PlanNotFoundError: failMissingPlan,
-              RowOutOfReachError: dieOutOfReach,
-            }),
-          );
-          return { removed };
+          const stamp = yield* store
+            .setPlanRemoved({ ...args.payload, planId: args.params.planId })
+            .pipe(
+              Effect.catchTags({
+                PatientStoreError: failStore,
+                PlanNotFoundError: failMissingPlan,
+                RowChangedError: failChanged,
+                RowOutOfReachError: dieOutOfReach,
+              }),
+            );
+          return { removed, ...stamp };
         }),
       )
       .handle(
@@ -278,27 +322,58 @@ const layerHandlers = HttpApiBuilder.group(
         Effect.fn("med.patients.setPlanVerified")(function* (args) {
           yield* requireChangeScopes(args.endpoint.name);
           const { verified } = args.payload;
-          yield* store.setPlanVerified({ planId: args.params.planId, verified }).pipe(
-            Effect.catchTags({
-              PatientStoreError: failStore,
-              PlanNotFoundError: failMissingPlan,
-              NoteInInboxError: refuse,
-            }),
-          );
-          return { verified };
+          const stamp = yield* store
+            .setPlanVerified({ ...args.payload, planId: args.params.planId })
+            .pipe(
+              Effect.catchTags({
+                PatientStoreError: failStore,
+                PlanNotFoundError: failMissingPlan,
+                RowChangedError: failChanged,
+                NoteInInboxError: refuse,
+              }),
+            );
+          return { verified, ...stamp };
         }),
       )
       .handle(
         "verifyNote",
         Effect.fn("med.patients.verifyNote")(function* (args) {
           yield* requireChangeScopes(args.endpoint.name);
-          return yield* store.verifyNote(args.params.noteId).pipe(
+          // Always the rows the page showed: a draft filed since is not among them.
+          return yield* store.verifyNote(args.params.noteId, args.payload).pipe(
             Effect.catchTags({
               PatientStoreError: failStore,
               NoteNotFoundError: failMissingNote,
               NoteInInboxError: refuse,
             }),
           );
+        }),
+      )
+      .handle(
+        "unverifyNote",
+        Effect.fn("med.patients.unverifyNote")(function* (args) {
+          yield* requireChangeScopes(args.endpoint.name);
+          yield* store.returnNoteRowsToDraft(args.params.noteId, args.payload).pipe(
+            Effect.catchTags({
+              PatientStoreError: failStore,
+              NoteNotFoundError: failMissingNote,
+            }),
+          );
+          return args.payload;
+        }),
+      )
+      .handle(
+        "setQuestionHandled",
+        Effect.fn("med.patients.setQuestionHandled")(function* (args) {
+          yield* requireChangeScopes(args.endpoint.name);
+          const { handled } = args.payload;
+          yield* store.setQuestionHandled({ noteId: args.params.noteId, handled }).pipe(
+            Effect.catchTags({
+              PatientStoreError: failStore,
+              NoteNotFoundError: failMissingNote,
+            }),
+          );
+          return { handled };
         }),
       )
       .handle(

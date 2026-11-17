@@ -104,8 +104,10 @@ const noteResult = (note: PatientStore.Note) => ({
   needsYou: note.needsYou,
 });
 
+// What waits for the doctor: a question marked as handled is not asked of them again.
 const waitingNote = (note: PatientStore.WaitingNote) => ({
   ...noteResult(note),
+  needsYou: note.needsYouHandledAt === null ? note.needsYou : "",
   draftLabs: note.draftLabs,
   draftPlans: note.draftPlans,
 });

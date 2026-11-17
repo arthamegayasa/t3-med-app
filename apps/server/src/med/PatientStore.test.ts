@@ -1001,7 +1001,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("PatientStore", (
       assert.deepStrictEqual(yield* sql`SELECT id FROM notes`, [{ id: existing.id }]);
       assert.deepStrictEqual(yield* store.listLabs({ inbox: true }), []);
       assert.deepStrictEqual(yield* store.listPlans({ inbox: true }), []);
-      assert.deepStrictEqual(yield* store.verifyNote(existing.id), {
+      assert.deepInclude(yield* store.verifyNote(existing.id), {
         labsVerified: 1,
         plansPlanned: 1,
         patientActivated: false,
@@ -1143,7 +1143,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("PatientStore", (
         };
       });
 
-      assert.deepStrictEqual(yield* store.verifyNote(first.id), {
+      assert.deepInclude(yield* store.verifyNote(first.id), {
         labsVerified: 2,
         plansPlanned: 1,
         patientActivated: true,
@@ -1153,14 +1153,14 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("PatientStore", (
         first: ["verified", "verified", "planned"],
         second: ["draft", "draft"],
       });
-      assert.deepStrictEqual(yield* store.verifyNote(first.id), {
+      assert.deepInclude(yield* store.verifyNote(first.id), {
         labsVerified: 0,
         plansPlanned: 0,
         patientActivated: false,
       });
 
       yield* store.updatePatient(patient.id, { status: "archived" });
-      assert.deepStrictEqual(yield* store.verifyNote(second.id), {
+      assert.deepInclude(yield* store.verifyNote(second.id), {
         labsVerified: 1,
         plansPlanned: 1,
         patientActivated: false,
@@ -1735,7 +1735,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("PatientStore", (
       );
 
       // Only this thread's note is verified: thread-2's result for the same patient stays a draft.
-      assert.deepStrictEqual(yield* store.verifyThreadNote({ threadId: "thread-1" }), {
+      assert.deepInclude(yield* store.verifyThreadNote({ threadId: "thread-1" }), {
         labsVerified: 1,
         plansPlanned: 0,
         patientActivated: true,
@@ -2289,7 +2289,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("PatientStore", (
         yield* failureTag(store.updatePlan({ planId: plan.id, status: "done" })),
         "PlanNotFoundError",
       );
-      assert.deepStrictEqual(yield* store.verifyNote(filed.note.id), {
+      assert.deepInclude(yield* store.verifyNote(filed.note.id), {
         labsVerified: 1,
         plansPlanned: 0,
         patientActivated: true,
@@ -3248,7 +3248,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("PatientStore", (
 
       // Undo returns the rows that call verified, and leaves the one verified before it.
       yield* store.returnNoteRowsToDraft(noteId, {
-        labIds: [...verified.labIds, ldl!].filter((id) => id !== ldl),
+        labIds: verified.labIds,
         planIds: verified.planIds,
       });
       assert.deepStrictEqual(yield* statuses, [
