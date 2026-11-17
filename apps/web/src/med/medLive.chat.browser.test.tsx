@@ -92,8 +92,10 @@ vi.mock(import("~/rpc/requestLatencyState"), async (original) => ({
 // The shell snapshot has arrived once the client holds the project. Upstream reads that off the
 // sidebar, where the project is named; a patient workspace names it nowhere, so read the state.
 const shellSnapshotArrived = () =>
-  vi.waitFor(() =>
-    expect(appAtomRegistry.get(environmentProjects.projectsAtom).length).toBeGreaterThan(0),
+  vi.waitFor(
+    () => expect(appAtomRegistry.get(environmentProjects.projectsAtom).length).toBeGreaterThan(0),
+    // The first test of the file also pays for loading the app; the default second is too short.
+    { timeout: 10_000 },
   );
 
 async function openDraft(draftId: DraftId) {
