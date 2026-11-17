@@ -230,6 +230,13 @@ export function patientPaletteActions<
   });
 }
 
+/** A thread as a sidebar row shows it: without its Git branch and worktree. */
+export const patientCheckout = <
+  Thread extends { readonly branch: string | null; readonly worktreePath: string | null },
+>(
+  thread: Thread,
+): Thread => (T3MED ? { ...thread, branch: null, worktreePath: null } : thread);
+
 /** A project's name beside a thread, which a workspace with one project never shows. */
 export const patientProjectNames = <Names extends ReadonlyMap<string, string>>(
   names: Names,

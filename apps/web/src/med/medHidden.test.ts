@@ -15,6 +15,7 @@ import {
 import {
   hidesKeybindingCommand,
   hidesSettingsTarget,
+  patientCheckout,
   patientKeybindingCommands,
   patientKeybindings,
   patientMenuItems,
@@ -397,8 +398,14 @@ describe("the command palette", () => {
   });
 });
 
-describe("a thread's project", () => {
-  it("is not named beside the thread", () => {
+describe("a thread in the sidebar", () => {
+  it("is not shown with its project, its branch or its worktree", () => {
     expect(patientProjectNames(new Map([["env:project", "T3 Med"]])).size).toBe(0);
+    // The patient workspace is a Git repository, so every thread has a branch.
+    expect(patientCheckout({ id: "t1", branch: "main", worktreePath: "D:/wt/t1" })).toEqual({
+      id: "t1",
+      branch: null,
+      worktreePath: null,
+    });
   });
 });
