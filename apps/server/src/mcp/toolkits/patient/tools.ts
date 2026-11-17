@@ -106,7 +106,7 @@ const writing = {
 const PatientFindTool = Tool.make("patient_find", {
   ...writing,
   description:
-    "Call this first when a message is about a patient, with the URN when the message gives one. A `urn` that matches links this thread to that patient as `match`; a `name` only lists `candidates` for the doctor to choose from, and never links.",
+    "Call this first when a message is about a patient, with the URN when the message gives one, or with no arguments to read only `linked`, the patient this thread is linked to. A `urn` that matches links this thread to that patient as `match`; a `name` only lists `candidates` for the doctor to choose from, and never links.",
   parameters: Schema.Struct({
     urn: Schema.optional(Schema.String),
     name: Schema.optional(Schema.String),
@@ -115,6 +115,7 @@ const PatientFindTool = Tool.make("patient_find", {
     match: Schema.NullOr(PatientSummary),
     candidates: Schema.Array(PatientSummary),
     relinkedFrom,
+    linked: Schema.NullOr(PatientSummary),
   }),
 })
   .annotate(Tool.Strict, true)

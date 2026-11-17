@@ -14,6 +14,12 @@ import {
   EnvironmentScopeRequiredError,
 } from "./environmentHttp.ts";
 
+/**
+ * A URN as it is compared: upper case, letters and digits only. The store keys patients by it
+ * and the directory searches by it, so both must build it the same way.
+ */
+export const urnKey = (urn: string): string => urn.toUpperCase().replace(/[^\p{L}\p{N}]/gu, "");
+
 const MedPatientStatus = Schema.Literals(["new", "active", "archived"]);
 
 export const MedPatientSummary = Schema.Struct({
@@ -22,7 +28,8 @@ export const MedPatientSummary = Schema.Struct({
   urn: Schema.NullOr(Schema.String),
   status: MedPatientStatus,
   alsoWrittenAs: Schema.Array(Schema.String),
-  lastActivityAt: Schema.String,
+  /** Null when the patient has no note and no linked thread yet. */
+  lastChatAt: Schema.NullOr(Schema.String),
 });
 export type MedPatientSummary = typeof MedPatientSummary.Type;
 
@@ -63,6 +70,8 @@ export const MedPatientHome = Schema.Struct({
     dateOfBirth: Schema.NullOr(Schema.String),
   }),
   notes: Schema.Array(MedNote),
+  /** Every thread linked to the patient, whether or not it filed a note for them. */
+  threads: Schema.Array(Schema.Struct({ threadId: Schema.String, linkedAt: Schema.String })),
   draftLabs: Schema.Number,
   draftPlans: Schema.Number,
   upcomingPlans: Schema.Array(MedPlan),
@@ -86,6 +95,7 @@ export const MedUpcomingPlan = Schema.Struct({
   ...MedPlan.fields,
   /** Null for a plan still in the Inbox. */
   patientName: Schema.NullOr(Schema.String),
+  patientUrn: Schema.NullOr(Schema.String),
 });
 export type MedUpcomingPlan = typeof MedUpcomingPlan.Type;
 
@@ -124,6 +134,7 @@ const PatientErrors = [MedPatientNotFoundError, ...ReadErrors] as const;
 const PatientParams = Schema.Struct({ patientId: Schema.String });
 const ThreadParams = Schema.Struct({ threadId: Schema.String });
 
+// Reads only. A thread is linked to a patient by the agent tools, on evidence, and by nothing here.
 class MedPatientsHttpApi extends HttpApiGroup.make("patients")
   .add(
     // The whole directory: a search in the URL would put a patient's name in the request trace.
@@ -168,16 +179,6 @@ class MedPatientsHttpApi extends HttpApiGroup.make("patients")
       params: ThreadParams,
       success: MedThreadPatient,
       error: ReadErrors,
-    }).middleware(EnvironmentAuthenticatedAuth),
-  )
-  .add(
-    // POST, not PUT: the browser CORS policy of the server allows GET and POST only.
-    HttpApiEndpoint.post("linkThread", "/api/med/threads/:threadId/patient", {
-      headers: BearerHeaders,
-      params: ThreadParams,
-      payload: Schema.Struct({ patientId: Schema.String }),
-      success: MedThreadPatient,
-      error: PatientErrors,
     }).middleware(EnvironmentAuthenticatedAuth),
   ) {}
 

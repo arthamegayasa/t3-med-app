@@ -1,6 +1,7 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
+import { urnKey } from "@t3tools/contracts/med";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -56,9 +57,9 @@ const fileLinked = (
 
 it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("PatientStore", (it) => {
   it("builds the same URN key however the URN is punctuated", () => {
-    assert.strictEqual(PatientStore.urnKey("00-12-34-56"), "00123456");
-    assert.strictEqual(PatientStore.urnKey("00123456"), "00123456");
-    assert.strictEqual(PatientStore.urnKey(" rm.12/ab "), "RM12AB");
+    assert.strictEqual(urnKey("00-12-34-56"), "00123456");
+    assert.strictEqual(urnKey("00123456"), "00123456");
+    assert.strictEqual(urnKey(" rm.12/ab "), "RM12AB");
   });
 
   it.effect("finds a patient by URN on an exact key match only", () =>
@@ -160,27 +161,51 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("PatientStore", (
     }).pipe(Effect.provide(layerStore)),
   );
 
-  it.effect("lists patients by their latest note, falling back to when they were created", () =>
+  it.effect("lists patients by their last chat, falling back to when they were created", () =>
     Effect.gen(function* () {
       const store = yield* PatientStore.PatientStore;
       const first = yield* store.createPatient({ name: "First" });
       yield* TestClock.adjust(Duration.minutes(1));
-      yield* store.createPatient({ name: "Second" });
+      const second = yield* store.createPatient({ name: "Second" });
       yield* TestClock.adjust(Duration.minutes(1));
       yield* store.createPatient({ name: "Third" });
-      const names = store
+      // A patient's last chat: the latest change to a note of theirs or to a thread's link to them.
+      const lastChats = store
         .listPatients()
-        .pipe(Effect.map((patients) => patients.map((patient) => patient.name)));
-      assert.deepStrictEqual(yield* names, ["Third", "Second", "First"]);
+        .pipe(
+          Effect.map((patients) => patients.map((patient) => [patient.name, patient.lastChatAt])),
+        );
+      assert.deepStrictEqual(yield* lastChats, [
+        ["Third", null],
+        ["Second", null],
+        ["First", null],
+      ]);
 
       yield* TestClock.adjust(Duration.minutes(1));
-      yield* store.upsertThreadNote({
+      const note = yield* store.upsertThreadNote({
         threadId: "thread-1",
         patientId: first.id,
         title: "Follow-up",
         date: "2026-11-11",
       });
-      assert.deepStrictEqual(yield* names, ["First", "Third", "Second"]);
+      assert.deepStrictEqual(yield* lastChats, [
+        ["First", note.updatedAt],
+        ["Third", null],
+        ["Second", null],
+      ]);
+
+      // A chat that files nothing still counts: its thread's link is the patient's last chat.
+      yield* TestClock.adjust(Duration.minutes(1));
+      yield* store.findPatientFromThread({ threadId: "thread-2", name: "second" });
+      assert.deepStrictEqual((yield* lastChats)[2], ["Second", null]);
+      yield* store.linkThread({ threadId: "thread-2", patientId: second.id });
+      const linkedAt = (yield* store.getPatientHome(second.id)).threads[0]?.linkedAt;
+      assert.isTrue(linkedAt !== undefined && linkedAt > note.updatedAt);
+      assert.deepStrictEqual(yield* lastChats, [
+        ["Second", linkedAt],
+        ["First", note.updatedAt],
+        ["Third", null],
+      ]);
     }).pipe(Effect.provide(layerStore)),
   );
 
@@ -1391,12 +1416,12 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("PatientStore", (
     }).pipe(Effect.provide(layerStore)),
   );
 
-  it.effect("lists the plans still ahead by due date, with the patient's name", () =>
+  it.effect("lists the plans still ahead by due date, with the patient's name and URN", () =>
     Effect.gen(function* () {
       const store = yield* PatientStore.PatientStore;
       const sql = yield* MedDatabase.MedDatabase;
       const wayan = yield* store.createPatient({ name: "Wayan" });
-      const made = yield* store.createPatient({ name: "Made" });
+      const made = yield* store.createPatient({ name: "Made", urn: "00-77-88-99" });
       const verified = yield* fileLinked(store, {
         threadId: "thread-1",
         patientId: wayan.id,
@@ -1425,12 +1450,18 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("PatientStore", (
           .listUpcomingPlans(range)
           .pipe(
             Effect.map((plans) =>
-              plans.map((plan) => [plan.due, plan.title, plan.patientName, plan.status]),
+              plans.map((plan) => [
+                plan.due,
+                plan.title,
+                plan.patientName,
+                plan.patientUrn,
+                plan.status,
+              ]),
             ),
           );
-      const eeg = ["2026-11-22", "EEG", null, "draft"];
-      const visit = ["2026-11-25", "Clinic visit", "Made", "draft"];
-      const lipids = ["2026-12-01", "Repeat lipid panel", "Wayan", "planned"];
+      const eeg = ["2026-11-22", "EEG", null, null, "draft"];
+      const visit = ["2026-11-25", "Clinic visit", "Made", "00-77-88-99", "draft"];
+      const lipids = ["2026-12-01", "Repeat lipid panel", "Wayan", null, "planned"];
 
       assert.deepStrictEqual(yield* upcoming(), [eeg, visit, lipids]);
       assert.deepStrictEqual(yield* upcoming({ from: "2026-11-25" }), [visit, lipids]);
@@ -1452,7 +1483,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("PatientStore", (
     }).pipe(Effect.provide(layerStore)),
   );
 
-  it.effect("reads a patient's home: notes latest first, draft counts and plans still ahead", () =>
+  it.effect("reads a patient's home: notes, linked threads, draft counts and plans ahead", () =>
     Effect.gen(function* () {
       const store = yield* PatientStore.PatientStore;
       const sql = yield* MedDatabase.MedDatabase;
@@ -1492,6 +1523,12 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("PatientStore", (
         labs: [ldl],
         plans: [{ title: "EEG", due: "2026-11-22", type: "procedure" }],
       });
+      // A chat about Wayan whose only note is still in the Inbox, and one that filed nothing.
+      yield* TestClock.adjust(Duration.minutes(1));
+      yield* store.linkThread({ threadId: "thread-8", patientId: wayan.id });
+      yield* store.fileFromThread({ threadId: "thread-8", patientId: null, title: "Unsorted" });
+      yield* TestClock.adjust(Duration.minutes(1));
+      yield* store.linkThread({ threadId: "thread-9", patientId: wayan.id });
 
       const home = yield* store.getPatientHome(wayan.id);
 
@@ -1508,6 +1545,15 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("PatientStore", (
           ["Labs 6 Nov", "thread-2", "2026-11-06", "", "Is the unit mg/dL?"],
           ["Admission", "thread-1", "2026-08-21", "Admission labs filed", ""],
         ],
+      );
+      // Every thread linked to the patient, latest link first, with or without a note of theirs.
+      assert.deepStrictEqual(
+        home.threads.map((thread) => thread.threadId),
+        ["thread-9", "thread-8", "thread-1", "thread-2"],
+      );
+      assert.deepStrictEqual(
+        (yield* store.getPatientHome(made.id)).threads.map((thread) => thread.threadId),
+        ["thread-3"],
       );
       assert.deepStrictEqual([home.draftLabs, home.draftPlans], [2, 1]);
       assert.deepStrictEqual(
@@ -1613,9 +1659,11 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("PatientStore", (
         ["Made"],
       );
       assert.strictEqual(afterArchiving.inbox.length, 1);
+      // An archived patient stays in the directory and leaves the sidebar's count.
+      assert.strictEqual((yield* store.listPatients()).length, 3);
       assert.deepStrictEqual(yield* store.getCounts(), {
         inbox: 1,
-        patients: 3,
+        patients: 2,
         needsYou: 1,
         upcoming: 1,
       });
@@ -1727,29 +1775,31 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("PatientStore", (
               relinkedFrom: Option.getOrNull(
                 Option.map(found.relinkedFrom, (patient) => patient.name),
               ),
+              linked: Option.getOrNull(Option.map(found.linked, (patient) => patient.id)),
             })),
           );
 
+        const unlinked = { match: null, candidates: [], relinkedFrom: null, linked: null };
+        assert.deepStrictEqual(yield* find({}), unlinked);
         assert.deepStrictEqual(yield* find({ name: "wayan" }), {
-          match: null,
+          ...unlinked,
           candidates: [wayan.id],
-          relinkedFrom: null,
         });
         assert.deepStrictEqual(yield* find({ urn: "99-99", name: "wayan" }), {
-          match: null,
+          ...unlinked,
           candidates: [wayan.id],
-          relinkedFrom: null,
         });
         assert.deepStrictEqual(yield* linked("thread-1"), Option.none());
 
-        const matched = { match: wayan.id, candidates: [], relinkedFrom: null };
+        const matched = { match: wayan.id, candidates: [], relinkedFrom: null, linked: wayan.id };
         assert.deepStrictEqual(yield* find({ urn: "00123456" }), matched);
         assert.deepStrictEqual(yield* linked("thread-1"), Option.some(wayan.id));
         assert.deepStrictEqual(yield* find({ urn: "00 12 34 56" }), matched);
-        assert.deepStrictEqual(
-          yield* refusedField(store.findPatientFromThread({ threadId: "t" })),
-          ["BlankFieldError", "urn or name"],
-        );
+        // Asked nothing, it says only whom the thread is linked to; a name leaves the link alone.
+        const linkedToWayan = { ...unlinked, linked: wayan.id };
+        assert.deepStrictEqual(yield* find({}), linkedToWayan);
+        assert.deepStrictEqual(yield* find({ urn: " ", name: "" }), linkedToWayan);
+        assert.deepStrictEqual(yield* find({ name: "nobody" }), linkedToWayan);
 
         // A patient created from a new URN takes the thread over, and says whom it left.
         const created = yield* store.createPatientFromThread({
@@ -1765,6 +1815,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("PatientStore", (
           Option.some([wayan.id, "Wayan Sudarma"]),
         );
         assert.deepStrictEqual(yield* linked("thread-1"), Option.some(created.patient.id));
+        assert.deepStrictEqual(yield* find({}), { ...unlinked, linked: created.patient.id });
         assert.deepStrictEqual(yield* find({ urn: "00-12-34-56" }), {
           ...matched,
           relinkedFrom: "Ni Made Ayu",
@@ -2045,8 +2096,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("PatientStore", (
       assert.deepStrictEqual(yield* linked("thread-1"), Option.none());
       yield* store.linkThread({ threadId: "thread-1", patientId: wayan.id });
       assert.deepStrictEqual(yield* linked("thread-1"), Option.some(wayan.id));
-      const relinked = yield* store.linkThread({ threadId: "thread-1", patientId: made.id });
-      assert.strictEqual(relinked.id, made.id);
+      yield* store.linkThread({ threadId: "thread-1", patientId: made.id });
       assert.deepStrictEqual(yield* linked("thread-1"), Option.some(made.id));
       assert.deepStrictEqual(yield* linked("thread-2"), Option.none());
       assert.strictEqual(

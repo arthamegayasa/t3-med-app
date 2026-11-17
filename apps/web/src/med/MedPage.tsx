@@ -1,10 +1,9 @@
 /** T3 Med: the shell the patient pages share: a top bar and one centred column. */
-import { Link } from "@tanstack/react-router";
+import { ChevronRightIcon } from "lucide-react";
 import type { ComponentProps, ReactNode } from "react";
 
 import { Button } from "../components/ui/button";
 import { SidebarInset } from "../components/ui/sidebar";
-import { Skeleton } from "../components/ui/skeleton";
 import {
   WorkspaceBreadcrumb,
   WorkspaceBreadcrumbItem,
@@ -14,12 +13,12 @@ import { WorkspacePageContainer } from "../components/WorkspacePageContainer";
 import { WorkspacePageHeader } from "../components/WorkspacePageHeader";
 import { isElectron } from "../env";
 import { cn } from "../lib/utils";
-import { usePrimaryEnvironmentId } from "../state/environments";
 import type { EnvironmentQueryView } from "../state/query";
+import { useMedEnvironmentId } from "./medData";
+import { MedLink } from "./MedLink";
 
-const ROW_CLASS =
-  "flex min-h-9 items-center gap-3 rounded-lg px-2.5 py-1.5 text-sm outline-hidden ring-ring";
-const ROW_LINK_CLASS = "hover:bg-accent focus-visible:ring-2 focus-visible:ring-inset";
+const ROW_CLASS = "flex min-h-9 items-center gap-3 px-2.5 py-1.5 text-sm";
+const PLACEHOLDER_CLASS = "h-5 rounded-sm bg-muted-foreground/15";
 
 function Root({
   title,
@@ -38,12 +37,7 @@ function Root({
           {underPatients ? (
             <>
               <WorkspaceBreadcrumbItem>
-                <Link
-                  to="/patients"
-                  className="rounded-sm outline-hidden ring-ring hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset"
-                >
-                  Patients
-                </Link>
+                <MedLink to="/patients">Patients</MedLink>
               </WorkspaceBreadcrumbItem>
               <WorkspaceBreadcrumbSeparator />
             </>
@@ -60,16 +54,22 @@ function Root({
   );
 }
 
-/** A small muted line above a list: what it holds on the left, a column name on the right. */
-function Lead({ className, ...props }: ComponentProps<"div">) {
+/**
+ * A small muted line above a list: what it holds on the left, a column name on the right. It
+ * ends where the rows' last column ends, before the width they keep for a chevron.
+ */
+function Lead({ className, children, ...props }: ComponentProps<"div">) {
   return (
     <div
       className={cn(
-        "flex items-center justify-between gap-3 px-2.5 text-muted-foreground text-xs font-medium",
+        "flex items-center gap-3 px-2.5 text-muted-foreground text-xs font-medium",
         className,
       )}
       {...props}
-    />
+    >
+      <div className="flex min-w-0 flex-1 items-center justify-between gap-3">{children}</div>
+      <span aria-hidden className="size-4 shrink-0" />
+    </div>
   );
 }
 
@@ -77,7 +77,24 @@ function List({ className, ...props }: ComponentProps<"ul">) {
   return <ul className={cn("m-0 flex list-none flex-col gap-px p-0", className)} {...props} />;
 }
 
-/** A row that opens its thread, or plain text when the note has none. */
+/**
+ * A row that opens nothing. It keeps the width of the chevron a row that opens something ends
+ * with, so the two cannot be mistaken for each other and their columns still line up.
+ */
+function Row({ className, children, ...props }: ComponentProps<"li">) {
+  return (
+    <li className={cn(ROW_CLASS, className)} {...props}>
+      {children}
+      <span aria-hidden className="size-4 shrink-0" />
+    </li>
+  );
+}
+
+function Opens() {
+  return <ChevronRightIcon aria-hidden className="size-4 shrink-0 text-muted-foreground" />;
+}
+
+/** A row that opens its thread in the primary environment, or a plain row without a thread. */
 function ThreadRow({
   threadId,
   children,
@@ -85,46 +102,40 @@ function ThreadRow({
   readonly threadId: string | null;
   readonly children: ReactNode;
 }) {
-  const environmentId = usePrimaryEnvironmentId();
+  const environmentId = useMedEnvironmentId();
+  if (threadId === null || environmentId === null) return <Row>{children}</Row>;
   return (
     <li>
-      {threadId !== null && environmentId !== null ? (
-        <Link
-          to="/$environmentId/$threadId"
-          params={{ environmentId, threadId }}
-          className={cn(ROW_CLASS, ROW_LINK_CLASS)}
-        >
-          {children}
-        </Link>
-      ) : (
-        <div className={ROW_CLASS}>{children}</div>
-      )}
+      <MedLink
+        variant="row"
+        to="/$environmentId/$threadId"
+        params={{ environmentId, threadId }}
+        className={ROW_CLASS}
+      >
+        {children}
+        <Opens />
+      </MedLink>
     </li>
   );
 }
 
+/** A row that opens its patient's page, or a plain row for what has no patient yet. */
 function PatientRow({
   patientId,
   children,
 }: {
-  readonly patientId: string;
+  readonly patientId: string | null;
   readonly children: ReactNode;
 }) {
+  if (patientId === null) return <Row>{children}</Row>;
   return (
     <li>
-      <Link
-        to="/patients/$patientId"
-        params={{ patientId }}
-        className={cn(ROW_CLASS, ROW_LINK_CLASS)}
-      >
+      <MedLink variant="row" to="/patients/$patientId" params={{ patientId }} className={ROW_CLASS}>
         {children}
-      </Link>
+        <Opens />
+      </MedLink>
     </li>
   );
-}
-
-function Row({ className, ...props }: ComponentProps<"li">) {
-  return <li className={cn(ROW_CLASS, className)} {...props} />;
 }
 
 function Primary({ className, ...props }: ComponentProps<"span">) {
@@ -133,6 +144,28 @@ function Primary({ className, ...props }: ComponentProps<"span">) {
 
 function Secondary({ className, ...props }: ComponentProps<"span">) {
   return <span className={cn("min-w-0 truncate text-muted-foreground", className)} {...props} />;
+}
+
+/** Text the doctor has to read whole, such as a question: wrapped, never cut. */
+function Detail({ className, ...props }: ComponentProps<"span">) {
+  return (
+    <span
+      className={cn(
+        "min-w-0 whitespace-pre-line break-words text-muted-foreground text-xs",
+        className,
+      )}
+      {...props}
+    />
+  );
+}
+
+/** The URN beside a patient's name, which tells two patients of one name apart. */
+function Urn({ urn, className }: { readonly urn: string | null; readonly className?: string }) {
+  return (
+    <span className={cn("shrink-0 text-muted-foreground text-xs tabular-nums", className)}>
+      {urn === null ? "No URN" : `URN ${urn}`}
+    </span>
+  );
 }
 
 /** The trailing date or count of a row. */
@@ -151,8 +184,8 @@ function Note({ className, ...props }: ComponentProps<"p">) {
 }
 
 /**
- * The states of one query. Nothing loaded yet shows still placeholder rows; a failed first
- * load says so and offers a retry; a failed refresh keeps what was loaded and says it is old.
+ * The states of one query. Nothing loaded yet shows placeholder rows that do not move; a failed
+ * first load says so and offers a retry; a failed refresh keeps what was loaded and says it is old.
  */
 function Query<A>({
   query,
@@ -164,9 +197,9 @@ function Query<A>({
   if (query.data === null) {
     return query.error === null ? (
       <div aria-busy="true" className="flex flex-col gap-2 px-2.5 pt-1">
-        <Skeleton className="h-5 w-2/3" />
-        <Skeleton className="h-5 w-1/2" />
-        <Skeleton className="h-5 w-3/5" />
+        <div className={cn(PLACEHOLDER_CLASS, "w-2/3")} />
+        <div className={cn(PLACEHOLDER_CLASS, "w-1/2")} />
+        <div className={cn(PLACEHOLDER_CLASS, "w-3/5")} />
       </div>
     ) : (
       <div role="alert" className="flex flex-col items-start gap-2 px-2.5">
@@ -201,6 +234,8 @@ export const MedPage = {
   PatientRow,
   Primary,
   Secondary,
+  Detail,
+  Urn,
   Aside,
   Note,
   Query,

@@ -10,8 +10,7 @@ import {
   SidebarMenuItem,
   useSidebar,
 } from "../components/ui/sidebar";
-import { useEnvironmentQuery } from "../state/query";
-import { countsAtom } from "./medData";
+import { countsAtom, useMedQuery } from "./medData";
 
 const ROWS = [
   { to: "/inbox", label: "Inbox", count: "inbox", Icon: InboxIcon, waits: true },
@@ -22,7 +21,7 @@ const ROWS = [
 
 export function MedSidebarNav() {
   const pathname = useLocation({ select: (location) => location.pathname });
-  const counts = useEnvironmentQuery(countsAtom).data;
+  const counts = useMedQuery(countsAtom).data;
   const { isMobile, setOpenMobile } = useSidebar();
   const closeMobileSidebar = () => {
     if (isMobile) setOpenMobile(false);

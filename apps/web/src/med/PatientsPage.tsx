@@ -3,13 +3,12 @@ import { SearchIcon } from "lucide-react";
 import { useState } from "react";
 
 import { InputGroup, InputGroupAddon, InputGroupInput } from "../components/ui/input-group";
-import { useEnvironmentQuery } from "../state/query";
-import { patientsAtom, useToday } from "./medData";
-import { filterPatients, formatLastActivity } from "./medLogic";
+import { patientsAtom, useMedQuery, useToday } from "./medData";
+import { filterPatients, formatLastChat } from "./medLogic";
 import { MedPage } from "./MedPage";
 
 export function PatientsPage() {
-  const query = useEnvironmentQuery(patientsAtom);
+  const query = useMedQuery(patientsAtom);
   const today = useToday();
   const [search, setSearch] = useState("");
   return (
@@ -63,7 +62,7 @@ export function PatientsPage() {
                         {patient.urn ?? "No URN"}
                       </MedPage.Secondary>
                       <MedPage.Aside className="ml-0 w-20 text-right">
-                        {formatLastActivity(patient.lastActivityAt, today)}
+                        {formatLastChat(patient.lastChatAt, today)}
                       </MedPage.Aside>
                     </MedPage.PatientRow>
                   ))}

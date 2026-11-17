@@ -15,6 +15,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 
 import * as ServerConfig from "../config.ts";
 import Migration0001 from "./Migrations/001_PatientStore.ts";
+import Migration0002 from "./Migrations/002_ThreadPatientsByPatient.ts";
 
 export class MedDatabaseOpenError extends Schema.TaggedError<MedDatabaseOpenError>()(
   "MedDatabaseOpenError",
@@ -30,7 +31,10 @@ export class MedDatabase extends Context.Service<MedDatabase, SqlClient.SqlClien
 ) {}
 
 const runMigrations = Migrator.make({})({
-  loader: Migrator.fromRecord({ "1_PatientStore": Migration0001 }),
+  loader: Migrator.fromRecord({
+    "1_PatientStore": Migration0001,
+    "2_ThreadPatientsByPatient": Migration0002,
+  }),
   table: "t3med_migrations",
 });
 

@@ -7,11 +7,16 @@ import {
   AuthSessionId,
   type AuthEnvironmentScope,
 } from "@t3tools/contracts";
+import { MedHttpApi } from "@t3tools/contracts/med";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import { Etag, HttpPlatform, HttpRouter } from "effect/http";
+import * as HttpApi from "effect/http-api/HttpApi";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as MedDatabase from "./MedDatabase.ts";
@@ -60,22 +65,26 @@ const serve = Effect.fn("test.serveMedRoutes")(function* (
     { disableLogger: true },
   );
   yield* Effect.addFinalizer(() => Effect.promise(dispose));
-  const call = (path: string, body?: unknown) =>
+  const call = (path: string, write?: { readonly method: string; readonly body: unknown }) =>
     Effect.promise(async () => {
       const response = await handler(
         new Request(
           `http://t3med.test${path}`,
-          body === undefined
+          write === undefined
             ? undefined
             : {
-                method: "POST",
+                method: write.method,
                 headers: { "content-type": "application/json" },
-                body: JSON.stringify(body),
+                body: JSON.stringify(write.body),
               },
         ),
       );
       const text = await response.text();
-      return { status: response.status, body: text === "" ? null : JSON.parse(text) };
+      return {
+        status: response.status,
+        cacheControl: response.headers.get("cache-control"),
+        body: text === "" ? null : JSON.parse(text),
+      };
     });
   return call;
 });
@@ -90,6 +99,8 @@ const seed = Effect.fn("test.seedPatients")(function* (store: Store) {
     alsoWrittenAs: ["Pak Yan"],
   });
   const made = yield* store.createPatient({ name: "Ni Made Ayu" });
+  const ketut = yield* store.createPatient({ name: "Ketut Rai" });
+  yield* TestClock.adjust(Duration.minutes(1));
   yield* store.linkThread({ threadId: "thread-1", patientId: wayan.id });
   const filed = yield* store.fileFromThread({
     threadId: "thread-1",
@@ -109,7 +120,10 @@ const seed = Effect.fn("test.seedPatients")(function* (store: Store) {
     needsYou: "Named only as Ketut.",
     plans: [{ title: "EEG", due: "2026-11-12", type: "procedure" }],
   });
-  return { wayan, made, note: filed.note, inboxNote: inbox.note };
+  // Made's chat is the latest, so the directory's order is not the order of the names.
+  yield* TestClock.adjust(Duration.minutes(1));
+  yield* store.linkThread({ threadId: "thread-3", patientId: made.id });
+  return { wayan, made, ketut, note: filed.note, inboxNote: inbox.note };
 });
 
 const READ_ROUTES = [
@@ -125,34 +139,78 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("med HTTP routes"
   it.effect("answers no route without a credential, and no route the session's scopes miss", () =>
     Effect.gen(function* () {
       const store = yield* PatientStore.PatientStore;
-      const { wayan } = yield* seed(store);
-      const link = { patientId: wayan.id };
+      yield* seed(store);
 
+      // Patient data is never kept by a cache, whatever the answer.
       const anonymous = yield* serve(store, null);
       for (const path of READ_ROUTES) {
         const response = yield* anonymous(path);
         assert.deepStrictEqual(
-          [path, response.status, response.body?.reason],
-          [path, 401, "missing_credential"],
+          [path, response.status, response.body?.reason, response.cacheControl],
+          [path, 401, "missing_credential", "no-store"],
         );
       }
-      assert.strictEqual((yield* anonymous("/api/med/threads/thread-9/patient", link)).status, 401);
 
       const unscoped = yield* serve(store, []);
       for (const path of READ_ROUTES) {
-        assert.deepStrictEqual([path, (yield* unscoped(path)).status], [path, 403]);
+        const response = yield* unscoped(path);
+        assert.deepStrictEqual(
+          [path, response.status, response.cacheControl],
+          [path, 403, "no-store"],
+        );
       }
 
       const reader = yield* serve(store, [AuthOrchestrationReadScope]);
-      assert.strictEqual((yield* reader("/api/med/counts")).status, 200);
-      const refused = yield* reader("/api/med/threads/thread-9/patient", link);
-      assert.deepStrictEqual(
-        [refused.status, refused.body?.requiredScope],
-        [403, AuthOrchestrationOperateScope],
-      );
+      for (const path of READ_ROUTES) {
+        const response = yield* reader(path);
+        assert.deepStrictEqual(
+          [path, response.status, response.cacheControl],
+          [path, path.endsWith("some-patient") ? 404 : 200, "no-store"],
+        );
+      }
       assert.deepStrictEqual((yield* reader("/api/med/threads/thread-9/patient")).body, {
         patient: null,
       });
+    }).pipe(Effect.provide(layerStore)),
+  );
+
+  it.effect("has no route that links a thread to a patient, or changes anything", () =>
+    Effect.gen(function* () {
+      const store = yield* PatientStore.PatientStore;
+      const { wayan, made } = yield* seed(store);
+      const routes: Array<string> = [];
+      HttpApi.reflect(MedHttpApi, {
+        onGroup: () => {},
+        onEndpoint: ({ endpoint }) => routes.push(`${endpoint.method} ${endpoint.path}`),
+      });
+      assert.deepStrictEqual(routes.toSorted(), [
+        "GET /api/med/counts",
+        "GET /api/med/needs-you",
+        "GET /api/med/patients",
+        "GET /api/med/patients/:patientId",
+        "GET /api/med/threads/:threadId/patient",
+        "GET /api/med/upcoming",
+      ]);
+
+      // The request the patient pages once sent, and its neighbours, from a session that may do all.
+      const call = yield* serve(store, [AuthOrchestrationReadScope, AuthOrchestrationOperateScope]);
+      for (const threadId of ["thread-1", "thread-9"]) {
+        for (const method of ["POST", "PUT", "PATCH", "DELETE"]) {
+          const response = yield* call(`/api/med/threads/${threadId}/patient`, {
+            method,
+            body: { patientId: made.id },
+          });
+          assert.deepStrictEqual([method, threadId, response.status], [method, threadId, 404]);
+        }
+      }
+      const linked = (threadId: string) =>
+        store
+          .getThreadPatient(threadId)
+          .pipe(Effect.map((patient) => Option.getOrNull(patient)?.id ?? null));
+      assert.deepStrictEqual(
+        [yield* linked("thread-1"), yield* linked("thread-9")],
+        [wayan.id, null],
+      );
     }).pipe(Effect.provide(layerStore)),
   );
 
@@ -161,7 +219,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("med HTTP routes"
     () =>
       Effect.gen(function* () {
         const store = yield* PatientStore.PatientStore;
-        const { wayan, made, note, inboxNote } = yield* seed(store);
+        const { wayan, made, ketut, note, inboxNote } = yield* seed(store);
         const get = yield* serve(store, [AuthOrchestrationReadScope]);
         const wayanSummary = {
           id: wayan.id,
@@ -169,7 +227,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("med HTTP routes"
           urn: "00-45-67-89",
           status: "new",
           alsoWrittenAs: ["Pak Yan"],
-          lastActivityAt: (yield* store.getPatient(wayan.id)).lastActivityAt,
+          lastChatAt: note.updatedAt,
         };
         const waitingNote = {
           id: note.id,
@@ -187,18 +245,29 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("med HTTP routes"
           type: "follow_up",
           status: "draft",
         };
+        const madeLinkedAt = (yield* store.getPatientHome(made.id)).threads[0]?.linkedAt;
+        assert.isTrue(madeLinkedAt !== undefined && madeLinkedAt > note.updatedAt);
 
+        // Latest chat first; a patient with no chat has no last chat and comes after them.
         const directory = yield* get("/api/med/patients");
         assert.strictEqual(directory.status, 200);
         assert.deepStrictEqual(directory.body.patients, [
-          wayanSummary,
           {
             id: made.id,
             name: "Ni Made Ayu",
             urn: null,
             status: "new",
             alsoWrittenAs: [],
-            lastActivityAt: made.lastActivityAt,
+            lastChatAt: madeLinkedAt,
+          },
+          wayanSummary,
+          {
+            id: ketut.id,
+            name: "Ketut Rai",
+            urn: null,
+            status: "new",
+            alsoWrittenAs: [],
+            lastChatAt: null,
           },
         ]);
 
@@ -206,9 +275,15 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("med HTTP routes"
         assert.deepStrictEqual((yield* get(`/api/med/patients/${wayan.id}`)).body, {
           patient: { ...wayanSummary, sex: "male", dateOfBirth: "1968-03-02" },
           notes: [waitingNote],
+          threads: [{ threadId: "thread-1", linkedAt: note.updatedAt }],
           draftLabs: 1,
           draftPlans: 1,
           upcomingPlans: [visit],
+        });
+        // A chat that filed nothing is still one of the patient's chats.
+        assert.deepInclude((yield* get(`/api/med/patients/${made.id}`)).body, {
+          notes: [],
+          threads: [{ threadId: "thread-3", linkedAt: madeLinkedAt }],
         });
         const missing = yield* get("/api/med/patients/no-such-patient");
         assert.deepStrictEqual(
@@ -245,55 +320,34 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("med HTTP routes"
             plan.due,
             plan.title,
             plan.patientName,
+            plan.patientUrn,
             plan.patientId,
             plan.type,
             plan.status,
           ]),
           [
-            ["2026-11-12", "EEG", null, null, "procedure", "draft"],
-            ["2026-11-14", "Clinic visit", "I Wayan Sudarma", wayan.id, "follow_up", "draft"],
+            ["2026-11-12", "EEG", null, null, null, "procedure", "draft"],
+            [
+              "2026-11-14",
+              "Clinic visit",
+              "I Wayan Sudarma",
+              "00-45-67-89",
+              wayan.id,
+              "follow_up",
+              "draft",
+            ],
           ],
         );
 
         assert.deepStrictEqual((yield* get("/api/med/counts")).body, {
           inbox: 1,
-          patients: 2,
+          patients: 3,
           needsYou: 1,
           upcoming: 2,
         });
+        assert.deepStrictEqual((yield* get("/api/med/threads/thread-3/patient")).body, {
+          patient: { id: made.id, name: "Ni Made Ayu" },
+        });
       }).pipe(Effect.provide(layerStore)),
-  );
-
-  it.effect("links a thread to the patient the doctor chose, and reads the link back", () =>
-    Effect.gen(function* () {
-      const store = yield* PatientStore.PatientStore;
-      const { wayan, made } = yield* seed(store);
-      const call = yield* serve(store, [AuthOrchestrationReadScope, AuthOrchestrationOperateScope]);
-      const path = "/api/med/threads/thread-9/patient";
-
-      assert.deepStrictEqual((yield* call(path)).body, { patient: null });
-      assert.deepStrictEqual(yield* call(path, { patientId: made.id }), {
-        status: 200,
-        body: { patient: { id: made.id, name: "Ni Made Ayu" } },
-      });
-      assert.deepStrictEqual((yield* call(path)).body, {
-        patient: { id: made.id, name: "Ni Made Ayu" },
-      });
-      // The doctor's later choice replaces the earlier one.
-      yield* call(path, { patientId: wayan.id });
-      assert.deepStrictEqual((yield* call(path)).body, {
-        patient: { id: wayan.id, name: "I Wayan Sudarma" },
-      });
-
-      const unknown = yield* call(path, { patientId: "no-such-patient" });
-      assert.deepStrictEqual(
-        [unknown.status, unknown.body?._tag],
-        [404, "MedPatientNotFoundError"],
-      );
-      assert.strictEqual((yield* call(path, { patient: made.id })).status, 400);
-      assert.deepStrictEqual((yield* call(path)).body, {
-        patient: { id: wayan.id, name: "I Wayan Sudarma" },
-      });
-    }).pipe(Effect.provide(layerStore)),
   );
 });

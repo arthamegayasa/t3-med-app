@@ -1,13 +1,10 @@
 /** T3 Med: every plan still ahead, soonest first, with the overdue ones marked. */
-import { Link } from "@tanstack/react-router";
-
-import { useEnvironmentQuery } from "../state/query";
-import { upcomingAtom, useToday } from "./medData";
+import { upcomingAtom, useMedQuery, useToday } from "./medData";
 import { MedPage } from "./MedPage";
 import { MedPlanRow } from "./MedPlanRow";
 
 export function UpcomingPage() {
-  const query = useEnvironmentQuery(upcomingAtom);
+  const query = useMedQuery(upcomingAtom);
   const today = useToday();
   return (
     <MedPage.Root title="Upcoming">
@@ -33,16 +30,12 @@ export function UpcomingPage() {
                     plan={plan}
                     today={today}
                     patient={
-                      plan.patientId !== null && plan.patientName !== null ? (
-                        <Link
-                          to="/patients/$patientId"
-                          params={{ patientId: plan.patientId }}
-                          className="rounded-sm outline-hidden ring-ring hover:text-foreground hover:underline focus-visible:ring-2 focus-visible:ring-inset"
-                        >
-                          {plan.patientName}
-                        </Link>
-                      ) : (
+                      plan.patientName === null ? (
                         "No patient yet"
+                      ) : (
+                        <>
+                          {plan.patientName} · <MedPage.Urn urn={plan.patientUrn} />
+                        </>
                       )
                     }
                   />

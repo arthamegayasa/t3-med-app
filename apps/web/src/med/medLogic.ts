@@ -1,4 +1,5 @@
 /** T3 Med: what the patient pages decide before they draw, kept free of React. */
+import { urnKey } from "@t3tools/contracts/med";
 
 const DAY_MS = 86_400_000;
 
@@ -56,21 +57,63 @@ export function formatDay(isoDate: string, today: string): string {
   return format.format(ms);
 }
 
-/** When a patient was last worked on: by day, so the label cannot go stale within one. */
-export function formatLastActivity(timestamp: string, today: string): string {
-  const at = new Date(timestamp);
+// oxlint-disable-next-line t3code/no-em-dash-copy -- The mark of an empty cell, not punctuation in a sentence.
+const NO_CHAT = "—";
+
+/**
+ * When a patient last had a chat: by day, so the label cannot go stale within one. A dash for
+ * a patient who has had none.
+ */
+export function formatLastChat(timestamp: string | null, today: string): string {
+  const at = timestamp === null ? null : new Date(timestamp);
   const todayMs = dayMs(today);
-  if (Number.isNaN(at.getTime()) || todayMs === null) return "";
+  if (at === null || Number.isNaN(at.getTime()) || todayMs === null) return NO_CHAT;
   const day = localIsoDate(at);
   if (day === today) return "Today";
   if (dayMs(day) === todayMs - DAY_MS) return "Yesterday";
   return formatDay(day, today);
 }
 
-const nameKey = (text: string) => text.trim().replace(/\s+/g, " ").toLowerCase();
+const oneLine = (text: string) => text.trim().replace(/\s+/g, " ");
 
-// The store's URN key: upper case, letters and digits only.
-const urnKey = (urn: string) => urn.toUpperCase().replace(/[^\p{L}\p{N}]/gu, "");
+const nameKey = (text: string) => oneLine(text).toLowerCase();
+
+/**
+ * The line a chat started from a patient's page opens with. The agent links a thread by URN
+ * only, so the URN is what the line gives it; the name is for the doctor. Null without a URN.
+ */
+export function newChatPrompt(patient: {
+  readonly name: string;
+  readonly urn: string | null;
+}): string | null {
+  const urn = oneLine(patient.urn ?? "");
+  return urnKey(urn) === "" ? null : `URN ${urn} (${oneLine(patient.name)})\n`;
+}
+
+export type EarlierChat<N> =
+  | { readonly kind: "note"; readonly day: string; readonly note: N }
+  | { readonly kind: "thread"; readonly day: string; readonly threadId: string };
+
+/**
+ * A patient's chats, latest day first: each note, and each linked thread that filed no note
+ * for the patient, so a chat in which nothing was filed is still listed.
+ */
+export function earlierChats<N extends { readonly threadId: string | null; readonly date: string }>(
+  notes: ReadonlyArray<N>,
+  threads: ReadonlyArray<{ readonly threadId: string; readonly linkedAt: string }>,
+): ReadonlyArray<EarlierChat<N>> {
+  const withNote = new Set(notes.map((note) => note.threadId));
+  return [
+    ...notes.map((note) => ({ kind: "note" as const, day: note.date, note })),
+    ...threads
+      .filter((thread) => !withNote.has(thread.threadId))
+      .map((thread) => ({
+        kind: "thread" as const,
+        day: localIsoDate(new Date(thread.linkedAt)),
+        threadId: thread.threadId,
+      })),
+  ].toSorted((a, b) => (a.day < b.day ? 1 : a.day > b.day ? -1 : 0));
+}
 
 /**
  * The patients a search means: its text inside the name or another spelling, or its URN key
@@ -104,14 +147,4 @@ export function draftsLabel(draftLabs: number, draftPlans: number): string | nul
     ...(draftPlans > 0 ? [counted(draftPlans, "draft plan")] : []),
   ];
   return parts.length === 0 ? null : parts.join(", ");
-}
-
-/** The first thing a note asks; the thread holds the rest. */
-export function firstLine(text: string): string {
-  return (
-    text
-      .split("\n")
-      .map((line) => line.trim())
-      .find((line) => line !== "") ?? ""
-  );
 }

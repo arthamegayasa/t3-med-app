@@ -119,6 +119,7 @@ const handlers = {
         match: Option.getOrNull(Option.map(found.match, patientSummary)),
         candidates: found.candidates.map(patientSummary),
         relinkedFrom: relinkedFrom(found.relinkedFrom),
+        linked: Option.getOrNull(Option.map(found.linked, patientSummary)),
       };
     }),
   ),

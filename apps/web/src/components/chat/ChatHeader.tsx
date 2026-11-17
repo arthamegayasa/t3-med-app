@@ -354,7 +354,10 @@ export const ChatHeader = memo(function ChatHeader({
             </WorkspaceBreadcrumbSeparator>
           </>
         ) : null}
-        <MedThreadPatientCrumb threadId={activeThreadId} />
+        <MedThreadPatientCrumb
+          environmentId={activeThreadEnvironmentId}
+          threadId={activeThreadId}
+        />
         <WorkspaceBreadcrumbItem current className="min-w-10 flex-1">
           {renamingTitle !== null ? (
             <input

@@ -1,11 +1,10 @@
 /** T3 Med: notes an agent filed without knowing whose they are. */
-import { useEnvironmentQuery } from "../state/query";
-import { needsYouAtom, useToday } from "./medData";
-import { draftsLabel, firstLine, formatDay } from "./medLogic";
+import { needsYouAtom, useMedQuery, useToday } from "./medData";
+import { draftsLabel, formatDay } from "./medLogic";
 import { MedPage } from "./MedPage";
 
 export function InboxPage() {
-  const query = useEnvironmentQuery(needsYouAtom);
+  const query = useMedQuery(needsYouAtom);
   const today = useToday();
   return (
     <MedPage.Root title="Inbox">
@@ -28,12 +27,12 @@ export function InboxPage() {
                   <MedPage.ThreadRow key={note.id} threadId={note.threadId}>
                     <span className="flex min-w-0 flex-1 flex-col">
                       <MedPage.Primary>{note.title}</MedPage.Primary>
-                      <MedPage.Secondary className="text-xs">
-                        {firstLine(note.needsYou) ||
+                      <MedPage.Detail>
+                        {note.needsYou.trim() ||
                           draftsLabel(note.draftLabs, note.draftPlans) ||
                           note.summary ||
                           "No patient yet"}
-                      </MedPage.Secondary>
+                      </MedPage.Detail>
                     </span>
                     <MedPage.Aside>{formatDay(note.date, today)}</MedPage.Aside>
                   </MedPage.ThreadRow>

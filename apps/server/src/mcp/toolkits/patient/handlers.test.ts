@@ -149,32 +149,48 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("patient tools", 
         status: "new",
       };
 
+      const unlinked = { match: null, candidates: [], relinkedFrom: null, linked: null };
+      expect(yield* call("patient_find", {})).toEqual(unlinked);
       expect(yield* call("patient_find", { name: "wayan" })).toEqual({
-        match: null,
+        ...unlinked,
         candidates: [summary],
-        relinkedFrom: null,
       });
-      expect(yield* call("patient_find", { urn: "99-99" })).toEqual({
-        match: null,
-        candidates: [],
-        relinkedFrom: null,
-      });
+      expect(yield* call("patient_find", { urn: "99-99" })).toEqual(unlinked);
       expect(yield* linkedPatient("thread-1")).toBeNull();
 
-      const matched = { match: summary, candidates: [], relinkedFrom: null };
+      const matched = { match: summary, candidates: [], relinkedFrom: null, linked: summary };
       expect(yield* call("patient_find", { urn: "00123456" })).toEqual(matched);
       expect(yield* linkedPatient("thread-1")).toBe(wayan.patientId);
       expect(yield* call("patient_find", { urn: "00 12 34 56" })).toEqual(matched);
+      // A name never links, and the reply still says whom the thread is linked to.
+      expect(yield* call("patient_find", { name: "made" })).toEqual({
+        match: null,
+        candidates: [
+          { ...summary, patientId: made.patientId, name: "Ni Made Ayu", urn: "00-77-88-99" },
+        ],
+        relinkedFrom: null,
+        linked: summary,
+      });
+      expect(yield* call("patient_find", { urn: "99-99" })).toEqual({
+        ...unlinked,
+        linked: summary,
+      });
 
       expect(yield* call("patient_find", { urn: "00-77-88-99" })).toMatchObject({
         match: { patientId: made.patientId },
         relinkedFrom: { patientId: wayan.patientId, name: "I Wayan Sudarma" },
+        linked: { patientId: made.patientId },
       });
       expect(yield* linkedPatient("thread-1")).toBe(made.patientId);
-      expect(yield* call("patient_find", {})).toMatchObject({
-        code: "invalid_request",
-        message: "urn or name must not be blank.",
-      });
+      // No arguments: only whom this thread is linked to, and another thread's link is its own.
+      const linkedToMade = {
+        ...unlinked,
+        linked: { ...summary, patientId: made.patientId, name: "Ni Made Ayu", urn: "00-77-88-99" },
+      };
+      expect(yield* call("patient_find", {})).toEqual(linkedToMade);
+      expect(yield* call("patient_find", { urn: " ", name: "" })).toEqual(linkedToMade);
+      expect(yield* call("patient_find", {}, from("thread-7"))).toEqual(unlinked);
+      expect(yield* linkedPatient("thread-1")).toBe(made.patientId);
     }).pipe(Effect.provide(layerPatientTools)),
   );
 

@@ -1,13 +1,11 @@
 /** T3 Med: per patient, the notes that ask the doctor something or hold drafts to check. */
-import { Link } from "@tanstack/react-router";
-
-import { useEnvironmentQuery } from "../state/query";
-import { needsYouAtom, useToday } from "./medData";
-import { draftsLabel, firstLine, formatDay } from "./medLogic";
+import { needsYouAtom, useMedQuery, useToday } from "./medData";
+import { draftsLabel, formatDay } from "./medLogic";
+import { MedLink } from "./MedLink";
 import { MedPage } from "./MedPage";
 
 export function NeedsYouPage() {
-  const query = useEnvironmentQuery(needsYouAtom);
+  const query = useMedQuery(needsYouAtom);
   const today = useToday();
   return (
     <MedPage.Root title="Needs you">
@@ -22,29 +20,36 @@ export function NeedsYouPage() {
             patients.map(({ patient, draftLabs, draftPlans, notes }) => (
               <section key={patient.id} className="flex flex-col gap-1">
                 <MedPage.Lead>
-                  <Link
-                    to="/patients/$patientId"
-                    params={{ patientId: patient.id }}
-                    className="min-w-0 truncate rounded-sm text-foreground text-sm outline-hidden ring-ring hover:underline focus-visible:ring-2 focus-visible:ring-inset"
-                  >
-                    {patient.name}
-                  </Link>
+                  <span className="flex min-w-0 items-baseline gap-2">
+                    <MedLink
+                      to="/patients/$patientId"
+                      params={{ patientId: patient.id }}
+                      className="min-w-0 truncate text-foreground text-sm hover:underline"
+                    >
+                      {patient.name}
+                    </MedLink>
+                    <MedPage.Urn urn={patient.urn} />
+                  </span>
                   <span className="shrink-0">{draftsLabel(draftLabs, draftPlans)}</span>
                 </MedPage.Lead>
                 <MedPage.List aria-label={`What needs you for ${patient.name}`}>
-                  {notes.map((note) => (
-                    <MedPage.ThreadRow key={note.id} threadId={note.threadId}>
-                      <span className="flex min-w-0 flex-1 flex-col">
-                        <MedPage.Primary>{note.title}</MedPage.Primary>
-                        <MedPage.Secondary className="text-xs">
-                          {[firstLine(note.needsYou), draftsLabel(note.draftLabs, note.draftPlans)]
-                            .filter((part) => part !== null && part !== "")
-                            .join(" · ")}
-                        </MedPage.Secondary>
-                      </span>
-                      <MedPage.Aside>{formatDay(note.date, today)}</MedPage.Aside>
-                    </MedPage.ThreadRow>
-                  ))}
+                  {notes.map((note) => {
+                    const drafts = draftsLabel(note.draftLabs, note.draftPlans);
+                    return (
+                      <MedPage.ThreadRow key={note.id} threadId={note.threadId}>
+                        <span className="flex min-w-0 flex-1 flex-col">
+                          <MedPage.Primary>{note.title}</MedPage.Primary>
+                          {note.needsYou.trim() === "" ? null : (
+                            <MedPage.Detail>{note.needsYou.trim()}</MedPage.Detail>
+                          )}
+                          {drafts === null ? null : (
+                            <MedPage.Secondary className="text-xs">{drafts}</MedPage.Secondary>
+                          )}
+                        </span>
+                        <MedPage.Aside>{formatDay(note.date, today)}</MedPage.Aside>
+                      </MedPage.ThreadRow>
+                    );
+                  })}
                 </MedPage.List>
               </section>
             ))

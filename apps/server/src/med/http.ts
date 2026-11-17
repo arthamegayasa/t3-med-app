@@ -3,11 +3,13 @@
  * one `PatientStore` method and maps its failure; the contract's schemas drop every store
  * field the pages do not show.
  */
-import { AuthOrchestrationOperateScope, AuthOrchestrationReadScope } from "@t3tools/contracts";
+import { AuthOrchestrationReadScope, EnvironmentAuthenticatedAuth } from "@t3tools/contracts";
 import { MedHttpApi, MedPatientNotFoundError } from "@t3tools/contracts/med";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import { HttpServerResponse } from "effect/http";
+import * as HttpEffect from "effect/http/HttpEffect";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 
 import {
@@ -101,28 +103,29 @@ const layerHandlers = HttpApiBuilder.group(
             .pipe(Effect.catchTags({ PatientStoreError: failStore }));
           return { patient: Option.getOrNull(patient) };
         }),
-      )
-      .handle(
-        "linkThread",
-        Effect.fn("med.patients.linkThread")(function* (args) {
-          yield* annotateEnvironmentRequest(args.endpoint.name);
-          yield* requireEnvironmentScope(AuthOrchestrationOperateScope);
-          const patient = yield* store
-            .linkThread({ threadId: args.params.threadId, patientId: args.payload.patientId })
-            .pipe(
-              Effect.catchTags({
-                PatientStoreError: failStore,
-                PatientNotFoundError: failMissingPatient,
-              }),
-            );
-          return { patient };
-        }),
       );
   }),
 );
 
-/** The routes, signed in by the middleware that guards upstream's own HTTP API. */
+const forbidStoring = HttpEffect.appendPreResponseHandler((_request, response) =>
+  Effect.succeed(HttpServerResponse.setHeader(response, "cache-control", "no-store")),
+);
+
+// Every route runs this middleware first, so a refusal carries the header as an answer does.
+const layerAuth = Layer.effect(
+  EnvironmentAuthenticatedAuth,
+  Effect.gen(function* () {
+    const authenticate = yield* EnvironmentAuthenticatedAuth;
+    return (httpEffect, options) =>
+      forbidStoring.pipe(Effect.andThen(authenticate(httpEffect, options)));
+  }),
+).pipe(Layer.provide(layerAuthenticatedAuth));
+
+/**
+ * The routes, signed in by the middleware that guards upstream's own HTTP API. No answer may
+ * be kept by a cache: each one is patient data.
+ */
 export const layer = HttpApiBuilder.layer(MedHttpApi).pipe(
   Layer.provide(layerHandlers),
-  Layer.provide(layerAuthenticatedAuth),
+  Layer.provide(layerAuth),
 );

@@ -1,15 +1,17 @@
 /** T3 Med: one patient: who they are, a new chat about them, and their earlier chats. */
-import { useAtomSet } from "@effect/atom-react";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { type ScopedProjectRef, ThreadId } from "@t3tools/contracts";
 import type { MedPatientHome } from "@t3tools/contracts/med";
 import { SquarePenIcon } from "lucide-react";
+import { useId } from "react";
 
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
-import { toastManager } from "../components/ui/toast";
-import { useHandleNewThread } from "../hooks/useHandleNewThread";
-import { useEnvironmentQuery } from "../state/query";
-import { linkThreadAtom, patientHomeAtom, useToday } from "./medData";
-import { ageOn, draftsLabel, formatDay } from "./medLogic";
+import { resolveDefaultProjectRef, useNewThreadHandler } from "../hooks/useHandleNewThread";
+import { useProjects, useQuietThreadShell } from "../state/entities";
+import { useUiStateStore } from "../uiStateStore";
+import { patientHomeAtom, useMedEnvironmentId, useMedQuery, useToday } from "./medData";
+import { ageOn, draftsLabel, earlierChats, formatDay, newChatPrompt } from "./medLogic";
 import { MedPage } from "./MedPage";
 import { MedPlanRow } from "./MedPlanRow";
 
@@ -26,7 +28,7 @@ function PatientFacts({
   const who = [age === null ? null : String(age), patient.sex].filter((fact) => fact !== null);
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-muted-foreground text-sm">
-      <span className="tabular-nums">{patient.urn === null ? "No URN" : `URN ${patient.urn}`}</span>
+      <MedPage.Urn urn={patient.urn} className="text-sm" />
       {who.length === 0 ? null : <span>{who.join(", ")}</span>}
       <Badge variant="outline" size="sm">
         {STATUS_LABEL[patient.status]}
@@ -35,39 +37,80 @@ function PatientFacts({
   );
 }
 
+/** Where a chat about a patient starts: the first project of the environment their data is in. */
+function useMedProjectRef(): ScopedProjectRef | null {
+  const environmentId = useMedEnvironmentId();
+  const projects = useProjects();
+  const projectOrder = useUiStateStore((store) => store.projectOrder);
+  return resolveDefaultProjectRef(
+    projects.filter((project) => project.environmentId === environmentId),
+    projectOrder,
+  );
+}
+
+/**
+ * Opens a draft whose composer already names the patient by URN. Nothing links the draft to
+ * the patient: the agent does, from that URN, when the doctor sends the message.
+ */
 function NewChatButton({ patient }: { readonly patient: MedPatientHome["patient"] }) {
-  const { defaultProjectRef, handleNewThread } = useHandleNewThread();
-  const linkThread = useAtomSet(linkThreadAtom, { mode: "promiseExit" });
-  const startChat = async () => {
-    if (defaultProjectRef === null) return;
-    // The draft has its thread id before any message exists, so the link is in place by the
-    // time the doctor can send one.
-    const draft = await handleNewThread(defaultProjectRef);
-    if (draft === null) return;
-    const linked = await linkThread({ threadId: draft.threadId, patientId: patient.id });
-    if (linked._tag === "Failure") {
-      toastManager.add({
-        type: "error",
-        title: `This chat is not linked to ${patient.name}`,
-        description: "Give the agent the URN in your message so it files for this patient.",
-      });
-    }
-  };
+  const projectRef = useMedProjectRef();
+  const openDraft = useNewThreadHandler();
+  const reasonId = useId();
+  const prompt = newChatPrompt(patient);
+  const unavailable =
+    prompt === null
+      ? "This patient has no URN yet, and a chat started here names them by URN."
+      : projectRef === null
+        ? "Add a project on this machine to start a chat."
+        : null;
   return (
     <div className="flex flex-wrap items-center gap-3">
-      <Button onClick={() => void startChat()} disabled={defaultProjectRef === null}>
+      <Button
+        disabled={unavailable !== null}
+        aria-describedby={unavailable === null ? undefined : reasonId}
+        onClick={() => {
+          if (projectRef !== null && prompt !== null) void openDraft(projectRef, { prompt });
+        }}
+      >
         <SquarePenIcon aria-hidden />
         New chat
       </Button>
-      {defaultProjectRef === null ? (
-        <span className="text-muted-foreground text-sm">Add a project to start a chat.</span>
-      ) : null}
+      {unavailable === null ? null : (
+        <span id={reasonId} className="text-muted-foreground text-sm">
+          {unavailable}
+        </span>
+      )}
     </div>
   );
 }
 
+/** A chat about the patient in which nothing was filed for them: named as the thread list names it. */
+function LinkedThreadRow({
+  threadId,
+  day,
+  today,
+}: {
+  readonly threadId: string;
+  readonly day: string;
+  readonly today: string;
+}) {
+  const environmentId = useMedEnvironmentId();
+  const thread = useQuietThreadShell(
+    environmentId === null ? null : scopeThreadRef(environmentId, ThreadId.make(threadId)),
+  );
+  return (
+    <MedPage.ThreadRow threadId={threadId}>
+      <MedPage.Primary className="max-w-[45%] shrink-0">
+        {thread?.title ?? "Untitled chat"}
+      </MedPage.Primary>
+      <MedPage.Secondary className="flex-1 text-xs">Nothing filed</MedPage.Secondary>
+      <MedPage.Aside className="ml-0">{formatDay(day, today)}</MedPage.Aside>
+    </MedPage.ThreadRow>
+  );
+}
+
 export function PatientHomePage({ patientId }: { readonly patientId: string }) {
-  const query = useEnvironmentQuery(patientHomeAtom(patientId));
+  const query = useMedQuery(patientHomeAtom(patientId));
   const today = useToday();
   if (query.failure?._tag === "MedPatientNotFoundError") {
     return (
@@ -79,8 +122,9 @@ export function PatientHomePage({ patientId }: { readonly patientId: string }) {
   return (
     <MedPage.Root title={query.data?.patient.name ?? "Patient"} underPatients>
       <MedPage.Query query={query}>
-        {({ patient, notes, draftLabs, draftPlans, upcomingPlans }) => {
+        {({ patient, notes, threads, draftLabs, draftPlans, upcomingPlans }) => {
           const drafts = draftsLabel(draftLabs, draftPlans);
+          const chats = earlierChats(notes, threads);
           return (
             <>
               <div className="flex flex-col gap-1.5 px-2.5 pt-4">
@@ -96,32 +140,41 @@ export function PatientHomePage({ patientId }: { readonly patientId: string }) {
               <section className="flex flex-col gap-1 pt-2">
                 <MedPage.Lead>
                   <span>Earlier chats</span>
-                  <span className="tabular-nums">{notes.length}</span>
+                  <span className="tabular-nums">{chats.length}</span>
                 </MedPage.Lead>
-                {notes.length === 0 ? (
+                {chats.length === 0 ? (
                   <MedPage.Note className="pt-1">
                     No chats yet. Start one to ask about {patient.name} or to paste their data.
                   </MedPage.Note>
                 ) : (
                   <MedPage.List aria-label="Earlier chats">
-                    {notes.map((note) => (
-                      <MedPage.ThreadRow key={note.id} threadId={note.threadId}>
-                        <MedPage.Primary className="max-w-[45%] shrink-0">
-                          {note.title}
-                        </MedPage.Primary>
-                        <MedPage.Secondary className="flex-1 text-xs">
-                          {note.summary}
-                        </MedPage.Secondary>
-                        {note.needsYou.trim() === "" ? null : (
-                          <Badge variant="info" size="sm">
-                            Needs you
-                          </Badge>
-                        )}
-                        <MedPage.Aside className="ml-0">
-                          {formatDay(note.date, today)}
-                        </MedPage.Aside>
-                      </MedPage.ThreadRow>
-                    ))}
+                    {chats.map((chat) =>
+                      chat.kind === "thread" ? (
+                        <LinkedThreadRow
+                          key={chat.threadId}
+                          threadId={chat.threadId}
+                          day={chat.day}
+                          today={today}
+                        />
+                      ) : (
+                        <MedPage.ThreadRow key={chat.note.id} threadId={chat.note.threadId}>
+                          <MedPage.Primary className="max-w-[45%] shrink-0">
+                            {chat.note.title}
+                          </MedPage.Primary>
+                          <MedPage.Secondary className="flex-1 text-xs">
+                            {chat.note.summary}
+                          </MedPage.Secondary>
+                          {chat.note.needsYou.trim() === "" ? null : (
+                            <Badge variant="info" size="sm">
+                              Needs you
+                            </Badge>
+                          )}
+                          <MedPage.Aside className="ml-0">
+                            {formatDay(chat.day, today)}
+                          </MedPage.Aside>
+                        </MedPage.ThreadRow>
+                      ),
+                    )}
                   </MedPage.List>
                 )}
               </section>

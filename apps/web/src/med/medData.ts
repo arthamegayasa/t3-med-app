@@ -1,10 +1,10 @@
 /**
- * T3 Med: patient data for the web client, read over `/api/med` on the primary environment
- * with the session this browser already holds. One doctor has one patient store, so these
- * queries do not take an environment id.
+ * T3 Med: patient data for the web client. It belongs to the primary environment and is read
+ * over `/api/med` there, with the session this browser already holds, so these queries take no
+ * environment id. The client only reads: a thread is linked to a patient by the agent tools.
  */
-import { useAtomValue } from "@effect/atom-react";
 import { isThreadWorking } from "@t3tools/client-runtime/state/thread-inbox";
+import { AuthOrchestrationReadScope, type EnvironmentId } from "@t3tools/contracts";
 import { MedHttpApi, type MedThreadPatient } from "@t3tools/contracts/med";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -15,6 +15,13 @@ import * as PrimaryEnvironmentHttpLayer from "../environments/primary/httpLayer"
 import { resolvePrimaryEnvironmentHttpUrl } from "../environments/primary/target";
 import { useNowMinute } from "../hooks/useNowMinute";
 import { appAtomRegistry } from "../rpc/atomRegistry";
+import { usePrimaryEnvironmentId } from "../state/environments";
+import {
+  type EnvironmentQueryView,
+  useEnvironmentQuery,
+  useEnvironmentQuerySelector,
+} from "../state/query";
+import { useEnvironmentScope } from "../state/session";
 import { environmentThreadShells } from "../state/threads";
 import { localIsoDate } from "./medLogic";
 
@@ -37,7 +44,7 @@ const workingThreadsAtom = Atom.make((get) =>
     .join(),
 ).pipe(Atom.withLabel("med:working-threads"));
 
-/** Reads every patient query again: after the doctor's own write, and on entering a page. */
+/** Reads every patient query again, on entering a patient page. */
 export function refreshMedData(): void {
   appAtomRegistry.set(revisionAtom, appAtomRegistry.get(revisionAtom) + 1);
 }
@@ -81,23 +88,20 @@ const threadPatientAtom = Atom.family((threadId: string) =>
 );
 
 /**
- * The doctor's own link, made when a chat is started from a patient's page. Kept alive: the
- * page that asked for it has given way to the new chat while the request is still out.
+ * The environment patient data belongs to: the primary one, once this session may read there.
+ * Null until then, and nothing is asked of any server while it is null.
  */
-export const linkThreadAtom = medRuntime
-  .fn((input: { readonly threadId: string; readonly patientId: string }) =>
-    medClient.pipe(
-      Effect.flatMap((client) =>
-        client.patients.linkThread({
-          headers: {},
-          params: { threadId: input.threadId },
-          payload: { patientId: input.patientId },
-        }),
-      ),
-      Effect.tap(() => Effect.sync(refreshMedData)),
-    ),
-  )
-  .pipe(Atom.keepAlive);
+export function useMedEnvironmentId(): EnvironmentId | null {
+  const environmentId = usePrimaryEnvironmentId();
+  return useEnvironmentScope(environmentId, AuthOrchestrationReadScope) ? environmentId : null;
+}
+
+/** One patient query, read only while `useMedEnvironmentId` names an environment. */
+export function useMedQuery<A, E>(
+  atom: Atom.Atom<AsyncResult.AsyncResult<A, E>>,
+): EnvironmentQueryView<A, E> {
+  return useEnvironmentQuery(useMedEnvironmentId() === null ? null : atom);
+}
 
 /** Today on this machine's calendar, moving on at midnight. */
 export function useToday(): string {
@@ -109,7 +113,19 @@ const selectThreadPatient = (
   result: AsyncResult.AsyncResult<MedThreadPatient, unknown>,
 ): MedThreadPatient["patient"] => AsyncResult.getOrElse(result, () => null)?.patient ?? null;
 
-/** The patient a thread is linked to, or null while unknown or when it has none. */
-export function useThreadPatient(threadId: string): MedThreadPatient["patient"] {
-  return useAtomValue(threadPatientAtom(threadId), selectThreadPatient);
+/**
+ * The patient a thread is linked to, or null while unknown or when it has none. A thread of
+ * another environment has none: its id is not asked about at all.
+ */
+export function useThreadPatient(
+  environmentId: EnvironmentId,
+  threadId: string,
+): MedThreadPatient["patient"] {
+  const medEnvironmentId = useMedEnvironmentId();
+  return useEnvironmentQuerySelector(
+    medEnvironmentId !== null && medEnvironmentId === environmentId
+      ? threadPatientAtom(threadId)
+      : null,
+    selectThreadPatient,
+  );
 }

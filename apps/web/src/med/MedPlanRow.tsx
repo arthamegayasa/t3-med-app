@@ -21,12 +21,15 @@ export function MedPlanRow({
 }: {
   readonly plan: MedPlan;
   readonly today: string;
-  /** Whose plan it is, on a list that spans patients. */
+  /**
+   * Whose plan it is, on a list that spans patients: the row then opens that patient's page.
+   * Without it the row opens nothing, as on the patient's own page.
+   */
   readonly patient?: ReactNode;
 }) {
   const overdue = overdueLabel(plan.due, today);
-  return (
-    <MedPage.Row>
+  const cells = (
+    <>
       <span className="flex min-w-0 flex-1 flex-col">
         <MedPage.Primary>{plan.title}</MedPage.Primary>
         <MedPage.Secondary className="text-xs">
@@ -45,6 +48,11 @@ export function MedPlanRow({
         </Badge>
       )}
       <MedPage.Aside className="ml-0 w-20 text-right">{formatDay(plan.due, today)}</MedPage.Aside>
-    </MedPage.Row>
+    </>
+  );
+  return patient === undefined ? (
+    <MedPage.Row>{cells}</MedPage.Row>
+  ) : (
+    <MedPage.PatientRow patientId={plan.patientId}>{cells}</MedPage.PatientRow>
   );
 }

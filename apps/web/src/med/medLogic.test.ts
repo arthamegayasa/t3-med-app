@@ -3,12 +3,13 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   ageOn,
   draftsLabel,
+  earlierChats,
   filterPatients,
-  firstLine,
   formatDay,
-  formatLastActivity,
+  formatLastChat,
   isOverdue,
   localIsoDate,
+  newChatPrompt,
   overdueLabel,
 } from "./medLogic";
 
@@ -93,13 +94,69 @@ describe("dates as the doctor reads them", () => {
   it("names today and yesterday, and dates anything older", () => {
     const at = (year: number, month: number, day: number, hour: number) =>
       new Date(year, month - 1, day, hour).toISOString();
-    expect(formatLastActivity(at(2026, 11, 11, 0), "2026-11-11")).toBe("Today");
-    expect(formatLastActivity(at(2026, 11, 10, 23), "2026-11-11")).toBe("Yesterday");
-    expect(formatLastActivity(at(2026, 11, 9, 12), "2026-11-11")).toBe("9 Nov");
-    expect(formatLastActivity(at(2026, 10, 31, 12), "2026-11-01")).toBe("Yesterday");
-    expect(formatLastActivity(at(2025, 12, 31, 12), "2026-01-01")).toBe("Yesterday");
-    expect(formatLastActivity(at(2025, 3, 2, 12), "2026-11-11")).toBe("2 Mar 2025");
-    expect(formatLastActivity("never", "2026-11-11")).toBe("");
+    expect(formatLastChat(at(2026, 11, 11, 0), "2026-11-11")).toBe("Today");
+    expect(formatLastChat(at(2026, 11, 10, 23), "2026-11-11")).toBe("Yesterday");
+    expect(formatLastChat(at(2026, 11, 9, 12), "2026-11-11")).toBe("9 Nov");
+    expect(formatLastChat(at(2026, 10, 31, 12), "2026-11-01")).toBe("Yesterday");
+    expect(formatLastChat(at(2025, 12, 31, 12), "2026-01-01")).toBe("Yesterday");
+    expect(formatLastChat(at(2025, 3, 2, 12), "2026-11-11")).toBe("2 Mar 2025");
+  });
+
+  it("shows a dash for a patient who has had no chat, never a day", () => {
+    expect(formatLastChat(null, "2026-11-11")).toBe("\u2014");
+    expect(formatLastChat("never", "2026-11-11")).toBe("\u2014");
+  });
+});
+
+describe("a chat started from a patient's page", () => {
+  it("opens with one line that names the patient by URN, for the agent to link by", () => {
+    expect(newChatPrompt({ name: "Ni Made Suartini", urn: "00-12-34-56" })).toBe(
+      "URN 00-12-34-56 (Ni Made Suartini)\n",
+    );
+    expect(newChatPrompt({ name: "  Ni  Made\nSuartini ", urn: " 00-12-34-56 " })).toBe(
+      "URN 00-12-34-56 (Ni Made Suartini)\n",
+    );
+  });
+
+  it.each([[null], [""], ["  "], ["--"]])("has no line for a patient whose URN is %j", (urn) => {
+    expect(newChatPrompt({ name: "Ni Made Suartini", urn })).toBeNull();
+  });
+});
+
+describe("a patient's earlier chats", () => {
+  const note = (id: string, threadId: string | null, date: string) => ({ id, threadId, date });
+  const linked = (threadId: string, year: number, month: number, day: number) => ({
+    threadId,
+    linkedAt: new Date(year, month - 1, day, 9).toISOString(),
+  });
+
+  it("lists every linked thread once, and a note without a thread, latest day first", () => {
+    const visit = note("note-visit", "thread-1", "2026-11-06");
+    const scan = note("note-scan", null, "2026-11-09");
+    const admission = note("note-admission", "thread-2", "2026-08-21");
+    expect(
+      earlierChats(
+        [scan, visit, admission],
+        [
+          linked("thread-9", 2026, 11, 10),
+          linked("thread-1", 2026, 11, 6),
+          linked("thread-8", 2026, 11, 6),
+          linked("thread-2", 2026, 8, 21),
+        ],
+      ),
+    ).toEqual([
+      { kind: "thread", threadId: "thread-9", day: "2026-11-10" },
+      { kind: "note", note: scan, day: "2026-11-09" },
+      { kind: "note", note: visit, day: "2026-11-06" },
+      { kind: "thread", threadId: "thread-8", day: "2026-11-06" },
+      { kind: "note", note: admission, day: "2026-08-21" },
+    ]);
+  });
+
+  it("keeps a note whose thread is linked to another patient now, and has no rows for none", () => {
+    const moved = note("note-moved", "thread-5", "2026-11-06");
+    expect(earlierChats([moved], [])).toEqual([{ kind: "note", note: moved, day: "2026-11-06" }]);
+    expect(earlierChats([], [])).toEqual([]);
   });
 });
 
@@ -112,11 +169,5 @@ describe("what waits, in a line", () => {
     [3, 2, "3 draft labs, 2 draft plans"],
   ])("counts %i labs and %i plans", (labs, plans, label) => {
     expect(draftsLabel(labs, plans)).toBe(label);
-  });
-
-  it("shows the first question a note asks", () => {
-    expect(firstLine("Is the unit mg/dL?\nWhich Wayan?")).toBe("Is the unit mg/dL?");
-    expect(firstLine("\n  Which Wayan?  \n")).toBe("Which Wayan?");
-    expect(firstLine("")).toBe("");
   });
 });
