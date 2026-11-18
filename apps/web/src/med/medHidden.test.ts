@@ -581,6 +581,11 @@ describe("upstream's sentences that name what a patient workspace hides", () => 
       "../components/settings/TypographySettings.tsx",
     "All environments": "../components/usage/UsagePage.tsx",
     "No matching files or folders.": "../components/chat/useComposerMenuItems.ts",
+    "Pair with this environment": "../components/auth/PairingRouteSurface.tsx",
+    "This environment expects a trusted pairing credential before the app can connect.":
+      "../components/auth/PairingRouteSurface.tsx",
+    "This environment is desktop-managed. Open it from the desktop app or paste a bootstrap credential if one was issued explicitly.":
+      "../components/auth/PairingRouteSurface.tsx",
   };
 
   it("are each still written by upstream, and replaced by a sentence that names none of it", async () => {

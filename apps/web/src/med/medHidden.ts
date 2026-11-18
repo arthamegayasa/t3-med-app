@@ -372,6 +372,12 @@ const PATIENT_WORDING: Readonly<Record<string, string>> = {
   // The Usage page's machine filter, and the composer's `@` menu without files.
   "All environments": "This computer",
   "No matching files or folders.": "No matching threads or models.",
+  // The page a browser sees before it is paired, through remote access.
+  "Pair with this environment": "Pair this browser with T3 Med",
+  "This environment expects a trusted pairing credential before the app can connect.":
+    "Open the one-time link made on your laptop, or paste its token here.",
+  "This environment is desktop-managed. Open it from the desktop app or paste a bootstrap credential if one was issued explicitly.":
+    "On the laptop: T3 Med, Settings, Sharing & access, Remote access, Create link. A link works once.",
 };
 
 // A row whose description upstream writes as markup, by the row's anchor id.

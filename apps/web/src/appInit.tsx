@@ -20,7 +20,7 @@ import { startSshPasswordPromptQueue } from "./components/desktop/SshPasswordPro
 import { startHostFreezeToasts } from "./components/HostFreezeToastCoordinator";
 import { startKeybindingsUpdateToasts } from "./components/KeybindingsUpdateToast";
 import { startLegacyThreadMigrationToast } from "./components/LegacyThreadMigrationToast";
-import { startPermissionUpdateNotices } from "./components/PermissionUpdateNotice";
+import { startPermissionUpdateNotices } from "./med/medPermissionUpdateNotice";
 import { startAgentOpenedPreviews } from "./med/medAgentOpenedPreviews";
 import { startMainAppLocationTracking } from "./components/sidebar/mainAppLocation";
 import { startDesktopUpdateLaunchNotice } from "./components/sidebar/updateEverythingRun";

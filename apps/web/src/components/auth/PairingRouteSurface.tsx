@@ -14,6 +14,7 @@ import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { StandalonePage, StandalonePageHeader } from "../ui/standalone-page";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { patientWording } from "../../med/medHidden";
 
 export function PairingPendingSurface() {
   return (
@@ -85,8 +86,8 @@ export function PairingRouteSurface({
   return (
     <StandalonePage>
       <StandalonePageHeader
-        title="Pair with this environment"
-        description={describeAuthGate(auth.bootstrapMethods)}
+        title={patientWording("Pair with this environment")}
+        description={patientWording(describeAuthGate(auth.bootstrapMethods))}
       />
 
       <form className="mt-6 space-y-4" onSubmit={(event) => void handleSubmit(event)}>
@@ -130,7 +131,7 @@ export function PairingRouteSurface({
       </form>
 
       <div className="mt-6 rounded-lg border border-border/70 bg-background/55 px-3 py-3 text-xs leading-relaxed text-muted-foreground">
-        {describeSupportedMethods(auth.bootstrapMethods)}
+        {patientWording(describeSupportedMethods(auth.bootstrapMethods))}
       </div>
     </StandalonePage>
   );
