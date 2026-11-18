@@ -9,6 +9,8 @@ import {
   AuthEnvironmentBootstrapTokenType,
   AuthTokenExchangeGrantType,
   EnvironmentHttpApi,
+  WS_METHODS,
+  WsRpcGroup,
 } from "@t3tools/contracts";
 import * as MedContract from "@t3tools/contracts/med";
 import {
@@ -28,14 +30,17 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
+import * as Stream from "effect/Stream";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as TestClock from "effect/testing/TestClock";
 import { Etag, HttpPlatform, HttpRouter } from "effect/http";
 import * as HttpApi from "effect/http-api/HttpApi";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
+import * as RpcTest from "effect/rpc/RpcTest";
 
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as AuthHttp from "../auth/http.ts";
+import * as RpcAuthorization from "../auth/RpcAuthorization.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as SessionStore from "../auth/SessionStore.ts";
 import * as ServerConfig from "../config.ts";
@@ -299,6 +304,24 @@ const MED_ROUTES = MED_APIS.flatMap((api) => {
   return routes;
 });
 
+// One WebSocket call a paired browser may make, and three it may not.
+const REMOTE_RPC_METHODS = [
+  WS_METHODS.serverProbe,
+  WS_METHODS.terminalOpen,
+  WS_METHODS.serverUpdateSettings,
+  WS_METHODS.subscribeAuthAccess,
+] as const;
+const REMOTE_RPC_GROUP = WsRpcGroup.omit(
+  ...[...WsRpcGroup.requests.keys()].filter(
+    (
+      tag,
+    ): tag is Exclude<
+      keyof typeof RpcAuthorization.RPC_REQUIRED_SCOPES,
+      (typeof REMOTE_RPC_METHODS)[number]
+    > => !(REMOTE_RPC_METHODS as ReadonlyArray<string>).includes(tag),
+  ),
+);
+
 const everyMedRoute = (
   call: (route: string, call?: Call) => Effect.Effect<Answer>,
   headers: Record<string, string>,
@@ -438,6 +461,76 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("med remote acces
         field(field(yield* server.readSettings, "remote"), "address"),
         PUBLIC_ORIGIN,
       );
+    }),
+  );
+
+  it.effect("gives a link spent for a token only what the link grants, whatever is asked", () =>
+    Effect.gen(function* () {
+      const server = yield* startServer();
+      const exchange = (scope: string) =>
+        Effect.gen(function* () {
+          return yield* server.remote("/oauth/token", {
+            form: {
+              grant_type: AuthTokenExchangeGrantType,
+              subject_token: tokenOf((yield* server.makeLink()).url),
+              subject_token_type: AuthEnvironmentBootstrapTokenType,
+              requested_token_type: AuthAccessTokenType,
+              scope,
+            },
+          });
+        });
+
+      const greedy = yield* exchange(
+        "orchestration:read orchestration:operate access:write terminal:operate settings:write",
+      );
+      assert.strictEqual(greedy.status, 200);
+      assert.strictEqual(field(greedy.body, "scope"), MED_REMOTE_CLIENT_SCOPES.join(" "));
+      const token = { authorization: `Bearer ${textField(greedy.body, "access_token")}` };
+      const managing = yield* server.remote("/api/med/remote", { headers: token });
+      assert.deepStrictEqual(
+        [managing.status, field(managing.body, "requiredPermission")],
+        [403, "access:write"],
+      );
+
+      // Asking only for what the link does not grant gets no token at all.
+      const foreign = yield* exchange("access:write terminal:operate");
+      assert.notStrictEqual(foreign.status, 200);
+      assert.strictEqual(field(foreign.body, "access_token"), undefined);
+    }),
+  );
+
+  it.effect("refuses a request whose forwarded host is not the host it came to", () =>
+    Effect.gen(function* () {
+      const server = yield* startServer();
+      const { cookie } = yield* server.pair((yield* server.makeLink()).url);
+      const read = (headers: Record<string, string>) =>
+        server
+          .remote("/api/med/patients", { headers: { cookie, ...headers } })
+          .pipe(Effect.map((answer) => answer.status));
+
+      // Upstream takes a cookie from a page whose origin is `X-Forwarded-Host`, so a request
+      // from another site that names itself there would pass as the app's own.
+      assert.strictEqual(
+        yield* read({
+          origin: "https://other.example.com",
+          "x-forwarded-host": "other.example.com",
+        }),
+        400,
+      );
+      assert.strictEqual(
+        yield* read({
+          origin: "https://other.example.com",
+          "sec-fetch-site": "cross-site",
+          "x-forwarded-host": "other.example.com, med.example.com",
+        }),
+        400,
+      );
+      // The same host twice is what an honest proxy sends, and changes nothing.
+      assert.strictEqual(
+        yield* read({ origin: PUBLIC_ORIGIN, "x-forwarded-host": PUBLIC_HOST }),
+        200,
+      );
+      assert.strictEqual(yield* read({ origin: "https://other.example.com" }), 401);
     }),
   );
 
@@ -605,6 +698,75 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("med remote acces
         [200, { address: PUBLIC_ORIGIN, port: PORT, keptPort: null }],
       );
       assert.deepStrictEqual(yield* server.readSettings, { remote: { address: PUBLIC_ORIGIN } });
+    }),
+  );
+
+  it.effect("refuses a paired browser the terminal, the settings and the client list", () =>
+    Effect.gen(function* () {
+      const server = yield* startServer();
+      yield* server.pair((yield* server.makeLink()).url);
+      // What the session really holds, as upstream's WebSocket route hands it to the RPC layer.
+      const [paired] = (yield* server.onServerClock(server.auth.listSessions())).filter(
+        (session) => session.subject === MED_REMOTE_SUBJECT,
+      );
+      assert.deepStrictEqual(paired?.scopes, [...MED_REMOTE_CLIENT_SCOPES]);
+
+      const handled: Array<string> = [];
+      const handle = (method: string) => Effect.sync(() => void handled.push(method));
+      const client = yield* RpcTest.makeClient(REMOTE_RPC_GROUP).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            REMOTE_RPC_GROUP.toLayerHandler(WS_METHODS.serverProbe, () =>
+              handle(WS_METHODS.serverProbe).pipe(Effect.as({})),
+            ),
+            REMOTE_RPC_GROUP.toLayerHandler(WS_METHODS.terminalOpen, () =>
+              handle(WS_METHODS.terminalOpen).pipe(Effect.andThen(Effect.never)),
+            ),
+            REMOTE_RPC_GROUP.toLayerHandler(WS_METHODS.serverUpdateSettings, () =>
+              handle(WS_METHODS.serverUpdateSettings).pipe(Effect.andThen(Effect.never)),
+            ),
+            REMOTE_RPC_GROUP.toLayerHandler(WS_METHODS.subscribeAuthAccess, () =>
+              Stream.fromEffect(handle(WS_METHODS.subscribeAuthAccess)).pipe(Stream.drain),
+            ),
+            RpcAuthorization.layer(paired?.scopes ?? []),
+          ),
+        ),
+      );
+      const refusal = <A, E>(call: Effect.Effect<A, E>) =>
+        call.pipe(
+          Effect.flip,
+          Effect.map((error) => field(error, "requiredPermission")),
+        );
+
+      yield* client[WS_METHODS.serverProbe]({});
+      assert.strictEqual(
+        yield* refusal(
+          client[WS_METHODS.terminalOpen]({
+            threadId: "thread-1",
+            terminalId: "terminal-1",
+            cwd: "E:/Clinic",
+          }),
+        ),
+        "terminal:operate",
+      );
+      assert.strictEqual(
+        yield* refusal(client[WS_METHODS.serverUpdateSettings]({ patch: { setModelsHidden: [] } })),
+        "settings:write",
+      );
+      assert.strictEqual(
+        yield* refusal(
+          client[WS_METHODS.serverUpdateSettings]({
+            patch: { requireConnectDeviceApproval: false },
+          }),
+        ),
+        "access:write",
+      );
+      assert.strictEqual(
+        yield* refusal(Stream.runDrain(client[WS_METHODS.subscribeAuthAccess]({}))),
+        "access:read",
+      );
+      // Only the call its scopes cover reached a handler.
+      assert.deepStrictEqual(handled, [WS_METHODS.serverProbe]);
     }),
   );
 

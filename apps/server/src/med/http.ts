@@ -23,6 +23,7 @@ import {
   failEnvironmentInternal,
   requireEnvironmentScope,
 } from "../auth/http.ts";
+import * as MedForwardedHost from "./forwardedHost.ts";
 import { layerAuth } from "./httpAuth.ts";
 import { testDisplayName } from "./labs.ts";
 import * as PatientStore from "./PatientStore.ts";
@@ -408,5 +409,8 @@ export const layerPatients = HttpApiBuilder.layer(MedHttpApi).pipe(
   Layer.provide(layerAuth),
 );
 
-/** Everything under `/api/med`: the patient routes and remote access. `server.ts` mounts this. */
-export const layer = Layer.mergeAll(layerPatients, MedRemote.layer);
+/**
+ * What `server.ts` mounts: the patient routes and remote access under `/api/med`, and the
+ * forwarded-host check, which guards every route of the server.
+ */
+export const layer = Layer.mergeAll(layerPatients, MedRemote.layer, MedForwardedHost.layer);
