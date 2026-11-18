@@ -143,12 +143,21 @@ const make = Effect.gen(function* () {
       return yield* new MedRefusedError({ reason: MED_UNREADABLE_SETTINGS });
     }
     const { remote: _previous, ...rest } = settings;
-    // The port in use now is the one the tunnel is pointed at, so the app keeps it.
-    const remote = address === null ? null : { address, port: config.port };
-    if (remote !== null || "remote" in settings) {
-      yield* writeText(settingsText(remote === null ? rest : { ...rest, remote }));
+    // A port once kept stays kept, through turning off and through a start that fell back to
+    // another: the tunnel points at it. Only the desktop app picks a port at each start, so
+    // only under it is this server's port one to keep.
+    const port =
+      parseMedRemoteSetting(text ?? "").port ??
+      (address !== null && config.mode === "desktop" ? config.port : null);
+    const remote = {
+      ...(address === null ? {} : { address }),
+      ...(port === null ? {} : { port }),
+    };
+    const kept = address !== null || port !== null;
+    if (kept || "remote" in settings) {
+      yield* writeText(settingsText(kept ? { ...rest, remote } : rest));
     }
-    return describe(remote ?? { address: null, port: null });
+    return describe({ address, port });
   });
 
   const createPairingLink: MedRemoteAccess["Service"]["createPairingLink"] = Effect.gen(

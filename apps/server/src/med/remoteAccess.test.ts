@@ -544,12 +544,67 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("med remote acces
         [cleared.status, cleared.body],
         [200, { address: null, port: PORT, keptPort: null }],
       );
-      assert.deepStrictEqual(yield* server.readSettings, { workspace: "E:\\Clinic", other: 1 });
+      // The address is gone; the port a tunnel was pointed at is remembered for the next time.
+      assert.deepStrictEqual(yield* server.readSettings, {
+        workspace: "E:\\Clinic",
+        other: 1,
+        remote: { port: PORT },
+      });
       const link = yield* server.local("/api/med/remote/pairing-link", {
         body: {},
         headers: server.laptop,
       });
       assert.strictEqual(link.status, 422);
+    }),
+  );
+
+  it.effect("keeps the port a tunnel points at, whatever port this start ended up on", () =>
+    Effect.gen(function* () {
+      // 3901 was kept; something held it at this start, so the server is on its fallback port.
+      const server = yield* startServer();
+      yield* server.fs.writeFileString(
+        server.settingsFile,
+        JSON.stringify({ remote: { address: "https://old.example.com", port: 3901 } }),
+      );
+      const set = (address: string | null) =>
+        server.local("/api/med/remote", {
+          method: "PUT",
+          body: { address },
+          headers: server.laptop,
+        });
+
+      assert.deepStrictEqual((yield* set(PUBLIC_ORIGIN)).body, {
+        address: PUBLIC_ORIGIN,
+        port: PORT,
+        keptPort: 3901,
+      });
+      // Off and on again while on the fallback port does not make the fallback the kept port.
+      assert.deepStrictEqual((yield* set(null)).body, {
+        address: null,
+        port: PORT,
+        keptPort: null,
+      });
+      assert.deepStrictEqual(yield* server.readSettings, { remote: { port: 3901 } });
+      yield* set(PUBLIC_ORIGIN);
+      assert.deepStrictEqual(yield* server.readSettings, {
+        remote: { address: PUBLIC_ORIGIN, port: 3901 },
+      });
+    }),
+  );
+
+  it.effect("keeps no port for the browser version, which is always started on its own", () =>
+    Effect.gen(function* () {
+      const server = yield* startServer({ mode: "web" });
+      const saved = yield* server.local("/api/med/remote", {
+        method: "PUT",
+        body: { address: PUBLIC_ORIGIN },
+        headers: server.laptop,
+      });
+      assert.deepStrictEqual(
+        [saved.status, saved.body],
+        [200, { address: PUBLIC_ORIGIN, port: PORT, keptPort: null }],
+      );
+      assert.deepStrictEqual(yield* server.readSettings, { remote: { address: PUBLIC_ORIGIN } });
     }),
   );
 
