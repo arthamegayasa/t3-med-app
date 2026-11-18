@@ -9,6 +9,11 @@ import * as HttpApiEndpoint from "effect/http-api/HttpApiEndpoint";
 import * as HttpApiGroup from "effect/http-api/HttpApiGroup";
 
 import {
+  AuthOrchestrationOperateScope,
+  AuthOrchestrationReadScope,
+  type AuthGrantScope,
+} from "./auth.ts";
+import {
   EnvironmentAuthenticatedAuth,
   EnvironmentInternalError,
   EnvironmentScopeRequiredError,
@@ -623,3 +628,103 @@ class MedPatientsHttpApi extends HttpApiGroup.make("patients")
   ) {}
 
 export class MedHttpApi extends HttpApi.make("med").add(MedPatientsHttpApi) {}
+
+/**
+ * What a browser paired through T3 Med's remote link (docs/t3-med/REMOTE.md) may do: read and
+ * work in chats and patient pages. Left out on purpose: access management, the terminal, the
+ * filesystem, settings, providers, maintenance, diagnostics, previews and the relay.
+ */
+export const MED_REMOTE_CLIENT_SCOPES = [
+  AuthOrchestrationReadScope,
+  AuthOrchestrationOperateScope,
+] as const satisfies ReadonlyArray<AuthGrantScope>;
+
+const IPV4_LITERAL = /^\d{1,3}(\.\d{1,3}){3}$/;
+
+/**
+ * The public address as its origin (`https://med.example.com`), or undefined when the text is
+ * not an HTTPS hostname another computer can resolve. A bare hostname gets the scheme. Loopback
+ * names and IP addresses are refused: a link to one would not leave this machine, or would name
+ * a LAN address, which T3 Med never listens on.
+ */
+export function normalizeMedRemoteAddress(text: string): string | undefined {
+  const trimmed = text.trim();
+  if (trimmed === "" || /\s/.test(trimmed)) return undefined;
+  let url: URL;
+  try {
+    url = new URL(/^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`);
+  } catch {
+    return undefined;
+  }
+  if (url.protocol !== "https:" || url.username !== "" || url.password !== "") return undefined;
+  if (url.pathname !== "/" || url.search !== "" || url.hash !== "") return undefined;
+  // `URL` keeps a bare "#" or "?" out of `hash` and `search`.
+  if (/[?#]/.test(trimmed)) return undefined;
+  const host = url.hostname.toLowerCase();
+  if (!host.includes(".") || host.startsWith("[") || IPV4_LITERAL.test(host)) return undefined;
+  if (host === "localhost" || host.endsWith(".localhost")) return undefined;
+  return url.origin;
+}
+
+/** Upstream's pairing link (`/pair#token=…`) on the public address. */
+export function medRemotePairingUrl(address: string, credential: string): string {
+  const url = new URL("/pair", address);
+  url.hash = new URLSearchParams([["token", credential]]).toString();
+  return url.toString();
+}
+
+export const MedRemoteAccess = Schema.Struct({
+  /** The public HTTPS address the tunnel answers at, or null while remote access is not set up. */
+  address: Schema.NullOr(Schema.String),
+  /** The loopback port this server listens on: the tunnel's target. */
+  port: Schema.Number,
+  /** The port the desktop app was told to keep. Differs from `port` when that one was taken. */
+  keptPort: Schema.NullOr(Schema.Number),
+});
+export type MedRemoteAccess = typeof MedRemoteAccess.Type;
+
+export const MedRemoteAddressChange = Schema.Struct({ address: Schema.NullOr(Schema.String) });
+
+export const MedRemotePairingRequest = Schema.Struct({
+  label: Schema.optionalKey(Schema.String),
+});
+
+/** A one-time link. `url` carries the credential and is returned once, to the laptop only. */
+export const MedRemotePairingLink = Schema.Struct({
+  id: Schema.String,
+  url: Schema.String,
+  expiresAt: Schema.DateTimeUtc,
+  scopes: Schema.Array(Schema.String),
+});
+export type MedRemotePairingLink = typeof MedRemotePairingLink.Type;
+
+const RemoteErrors = [MedRefusedError, ...ReadErrors] as const;
+
+// Every route here is the laptop's: each asks for `access:write`, which the remote link never
+// grants. Its own HttpApi, so the patient routes can be mounted and tested without it.
+class MedRemoteGroup extends HttpApiGroup.make("remote")
+  .add(
+    HttpApiEndpoint.get("read", "/api/med/remote", {
+      headers: BearerHeaders,
+      success: MedRemoteAccess,
+      error: ReadErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.put("setAddress", "/api/med/remote", {
+      headers: BearerHeaders,
+      payload: MedRemoteAddressChange,
+      success: MedRemoteAccess,
+      error: RemoteErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("createPairingLink", "/api/med/remote/pairing-link", {
+      headers: BearerHeaders,
+      payload: MedRemotePairingRequest,
+      success: MedRemotePairingLink,
+      error: RemoteErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  ) {}
+
+export class MedRemoteHttpApi extends HttpApi.make("medRemote").add(MedRemoteGroup) {}

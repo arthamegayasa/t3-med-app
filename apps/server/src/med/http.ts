@@ -4,11 +4,7 @@
  * contract's schemas drop every store field the pages do not show. No handler passes a thread
  * id, and none links a thread to a patient.
  */
-import {
-  AuthOrchestrationOperateScope,
-  AuthOrchestrationReadScope,
-  EnvironmentAuthenticatedAuth,
-} from "@t3tools/contracts";
+import { AuthOrchestrationOperateScope, AuthOrchestrationReadScope } from "@t3tools/contracts";
 import {
   MedChangedSinceError,
   MedHttpApi,
@@ -20,18 +16,17 @@ import {
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import { HttpServerResponse } from "effect/http";
-import * as HttpEffect from "effect/http/HttpEffect";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 
 import {
   annotateEnvironmentRequest,
   failEnvironmentInternal,
-  layerAuthenticatedAuth,
   requireEnvironmentScope,
 } from "../auth/http.ts";
+import { layerAuth } from "./httpAuth.ts";
 import { testDisplayName } from "./labs.ts";
 import * as PatientStore from "./PatientStore.ts";
+import * as MedRemote from "./remote.ts";
 
 // Only the step is logged: the cause of a failed statement can carry what it was given.
 const failStore = Effect.fnUntraced(function* (error: PatientStore.PatientStoreError) {
@@ -404,25 +399,14 @@ const layerHandlers = HttpApiBuilder.group(
   }),
 );
 
-const forbidStoring = HttpEffect.appendPreResponseHandler((_request, response) =>
-  Effect.succeed(HttpServerResponse.setHeader(response, "cache-control", "no-store")),
-);
-
-// Every route runs this middleware first, so a refusal carries the header as an answer does.
-const layerAuth = Layer.effect(
-  EnvironmentAuthenticatedAuth,
-  Effect.gen(function* () {
-    const authenticate = yield* EnvironmentAuthenticatedAuth;
-    return (httpEffect, options) =>
-      forbidStoring.pipe(Effect.andThen(authenticate(httpEffect, options)));
-  }),
-).pipe(Layer.provide(layerAuthenticatedAuth));
-
 /**
  * The routes, signed in by the middleware that guards upstream's own HTTP API. No answer may
  * be kept by a cache: each one is patient data.
  */
-export const layer = HttpApiBuilder.layer(MedHttpApi).pipe(
+export const layerPatients = HttpApiBuilder.layer(MedHttpApi).pipe(
   Layer.provide(layerHandlers),
   Layer.provide(layerAuth),
 );
+
+/** Everything under `/api/med`: the patient routes and remote access. `server.ts` mounts this. */
+export const layer = Layer.mergeAll(layerPatients, MedRemote.layer);

@@ -47,7 +47,7 @@ const serve = Effect.fn("test.serveMedRoutes")(function* (
   tracer?: Tracer.Tracer,
 ) {
   const { handler, dispose } = HttpRouter.toWebHandler(
-    MedHttp.layer.pipe(
+    MedHttp.layerPatients.pipe(
       Layer.provide(Layer.succeed(PatientStore.PatientStore, store)),
       Layer.provide(
         Layer.succeed(EnvironmentAuth.EnvironmentAuth, {
