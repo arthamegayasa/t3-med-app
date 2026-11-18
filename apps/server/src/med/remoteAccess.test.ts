@@ -204,18 +204,12 @@ const startServer = Effect.fn("test.startMedServer")(function* () {
   return { local, remote, laptop, makeLink, pair, settingsFile, readSettings, fs };
 });
 
-const routesOf = (api: HttpApi.Any): ReadonlyArray<readonly [method: string, path: string]> => {
-  const routes: Array<readonly [string, string]> = [];
-  HttpApi.reflect(api as never, {
-    onGroup: () => {},
-    onEndpoint: ({ endpoint }) => {
-      routes.push([endpoint.method, endpoint.path.replaceAll(/:(\w+)/g, "some-$1")]);
-    },
-  });
-  return routes;
+const MED_ROUTES: Array<readonly [method: string, path: string]> = [];
+const listRoute = ({ endpoint }: { endpoint: { method: string; path: string } }) => {
+  MED_ROUTES.push([endpoint.method, endpoint.path.replaceAll(/:(\w+)/g, "some-$1")]);
 };
-
-const MED_ROUTES = [...routesOf(MedHttpApi), ...routesOf(MedRemoteHttpApi)];
+HttpApi.reflect(MedHttpApi, { onGroup: () => {}, onEndpoint: listRoute });
+HttpApi.reflect(MedRemoteHttpApi, { onGroup: () => {}, onEndpoint: listRoute });
 
 const everyMedRoute = (
   call: (route: string, call?: Call) => Effect.Effect<Answer>,
@@ -235,7 +229,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("med remote acces
         MED_ROUTES.filter(([, route]) => !route.startsWith("/api/med/")),
         [],
       );
-      assert.includeDeepMembers(MED_ROUTES as Array<readonly [string, string]>, [
+      assert.includeDeepMembers(MED_ROUTES, [
         ["GET", "/api/med/remote"],
         ["PUT", "/api/med/remote"],
         ["POST", "/api/med/remote/pairing-link"],

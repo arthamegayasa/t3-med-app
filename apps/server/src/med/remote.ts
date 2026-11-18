@@ -74,6 +74,10 @@ function withMedRemoteSetting(
   return remote === null ? rest : { ...rest, remote };
 }
 
+// Indented, so the doctor's helper can read and edit the file by hand.
+const settingsText = (settings: Record<string, unknown>): string =>
+  `${JSON.stringify(settings, null, 2)}\n`;
+
 const layerHandlers = HttpApiBuilder.group(
   MedRemoteHttpApi,
   "remote",
@@ -133,9 +137,7 @@ const layerHandlers = HttpApiBuilder.group(
           yield* fs
             .makeDirectory(config.stateDir, { recursive: true })
             .pipe(
-              Effect.andThen(
-                fs.writeFileString(settingsPath, `${JSON.stringify(next, null, 2)}\n`),
-              ),
+              Effect.andThen(fs.writeFileString(settingsPath, settingsText(next))),
               Effect.catchTags({ PlatformError: () => failFile("write") }),
             );
           return describe(remote ?? undefined);
