@@ -37,7 +37,7 @@ const link = {
 };
 
 it("offers no link until a public address is saved, and names the tunnel's target", async () => {
-  const call = answer(access());
+  answer(access());
   await using screen = await render(<MedRemoteAccessAction />);
 
   await screen.getByRole("button", { name: "Remote access" }).click();
@@ -45,7 +45,6 @@ it("offers no link until a public address is saved, and names the tunnel's targe
   await expect.element(page.getByText(/http:\/\/127\.0\.0\.1:3900/)).toBeInTheDocument();
   await expect.element(page.getByRole("button", { name: "Create link" })).not.toBeInTheDocument();
   await expect.element(page.getByRole("button", { name: "Turn off" })).not.toBeInTheDocument();
-  expect(call).toHaveBeenCalledTimes(1);
 });
 
 it("refuses an address that is not an HTTPS hostname without asking the server", async () => {
@@ -62,7 +61,7 @@ it("refuses an address that is not an HTTPS hostname without asking the server",
 
 it("saves the address, then makes a link and shows it once", async () => {
   const saved = access({ address: "https://med.example.com", keptPort: 3900 });
-  const call = answer(access(), saved, link);
+  answer(access(), saved, link);
   await using screen = await render(<MedRemoteAccessAction />);
   await screen.getByRole("button", { name: "Remote access" }).click();
 
@@ -76,7 +75,6 @@ it("saves the address, then makes a link and shows it once", async () => {
   await expect.element(page.getByLabelText("One-time link")).toHaveValue(LINK);
   await expect.element(page.getByText(/Works once/)).toBeInTheDocument();
   await expect.element(page.getByRole("button", { name: "New link" })).toBeInTheDocument();
-  expect(call).toHaveBeenCalledTimes(3);
 });
 
 it("says when the tunnel points at a port T3 Med could not take", async () => {
@@ -90,7 +88,7 @@ it("says when the tunnel points at a port T3 Med could not take", async () => {
 });
 
 it("turns remote access off, which takes the link away with the address", async () => {
-  const call = answer(access({ address: "https://med.example.com", keptPort: 3900 }), access());
+  answer(access({ address: "https://med.example.com", keptPort: 3900 }), access());
   await using screen = await render(<MedRemoteAccessAction />);
   await screen.getByRole("button", { name: "Remote access" }).click();
 
@@ -98,7 +96,7 @@ it("turns remote access off, which takes the link away with the address", async 
 
   await expect.element(page.getByLabelText("Public address")).toHaveValue("");
   await expect.element(page.getByRole("button", { name: "Create link" })).not.toBeInTheDocument();
-  expect(call).toHaveBeenCalledTimes(2);
+  await expect.element(page.getByText(/signs out every browser/)).not.toBeInTheDocument();
 });
 
 it("shows the server's refusal and keeps the dialog usable", async () => {

@@ -1,7 +1,7 @@
 /**
  * T3 Med: remote access in Settings > Sharing & access. The doctor names the public address a
  * tunnel answers at (docs/t3-med/REMOTE.md) and makes a one-time link for another computer's
- * browser. Shown on the laptop only: a paired browser's session cannot manage access.
+ * browser. Shown on this computer only: a paired browser's session cannot manage access.
  */
 import {
   MED_REMOTE_ADDRESS_RULE,
@@ -102,8 +102,8 @@ function RemoteAccessForm({ initial }: { readonly initial: MedRemoteAccess }) {
             </Button>
           </div>
           <p className="text-xs text-muted-foreground">
-            The tunnel on this laptop sends that address to http://127.0.0.1:{access.port}. T3 Med
-            itself listens on this laptop only.
+            The tunnel on this computer sends that address to http://127.0.0.1:{access.port}. T3 Med
+            itself listens on this computer only.
           </p>
           {moved ? (
             <p className="text-xs text-warning">
@@ -121,7 +121,7 @@ function RemoteAccessForm({ initial }: { readonly initial: MedRemoteAccess }) {
                 <h3 className="text-xs font-medium text-foreground">One-time link</h3>
                 <p className="text-xs text-muted-foreground">
                   Open it once in the other computer&apos;s browser. That browser can read and work
-                  in chats and patient pages. It cannot make links or remove clients.
+                  in chats and patient pages for 12 hours. It cannot make links or remove clients.
                 </p>
               </div>
               <Button
@@ -161,9 +161,15 @@ function RemoteAccessForm({ initial }: { readonly initial: MedRemoteAccess }) {
       </DialogPanel>
       <DialogFooter variant="bare">
         {saved !== null ? (
-          <Button variant="destructive-outline" disabled={busy} onClick={() => saveAddress(null)}>
-            Turn off
-          </Button>
+          <>
+            <p className="text-xs text-muted-foreground">
+              Turn off signs out every browser paired through a link, cancels links not yet opened,
+              and removes the address.
+            </p>
+            <Button variant="destructive-outline" disabled={busy} onClick={() => saveAddress(null)}>
+              Turn off
+            </Button>
+          </>
         ) : null}
       </DialogFooter>
     </>
@@ -186,8 +192,8 @@ export function MedRemoteAccessAction() {
         <DialogHeader>
           <DialogTitle>Open T3 Med from another computer</DialogTitle>
           <DialogDescription>
-            Through a tunnel you run on this laptop, at an address of your own. Patient data and
-            agents stay on this laptop.
+            Through a tunnel you run on this computer, at an address of your own. Patient data and
+            agents stay on this computer.
           </DialogDescription>
         </DialogHeader>
         {loaded === null ? (

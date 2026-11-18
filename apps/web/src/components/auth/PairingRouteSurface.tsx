@@ -20,7 +20,7 @@ export function PairingPendingSurface() {
   return (
     <StandalonePage>
       <StandalonePageHeader
-        title="Pairing with this environment"
+        title={patientWording("Pairing with this environment")}
         description="Validating the pairing link and preparing your session."
       />
     </StandalonePage>
@@ -103,7 +103,7 @@ export function PairingRouteSurface({
             disabled={isSubmitting}
             nativeInput
             onChange={(event) => setCredential(event.currentTarget.value)}
-            placeholder="Paste a one-time token or pairing secret"
+            placeholder={patientWording("Paste a one-time token or pairing secret")}
             spellCheck={false}
             value={credential}
           />

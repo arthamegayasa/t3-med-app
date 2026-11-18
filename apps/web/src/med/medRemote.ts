@@ -1,5 +1,5 @@
 /**
- * T3 Med: the laptop's calls for remote access (docs/t3-med/REMOTE.md), over `/api/med/remote`
+ * T3 Med: this computer's calls for remote access (docs/t3-med/REMOTE.md), over `/api/med/remote`
  * in the primary environment. The server answers them only for a session that may manage access.
  */
 import {
