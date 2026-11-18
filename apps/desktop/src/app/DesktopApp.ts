@@ -42,6 +42,7 @@ import * as DesktopWslBackend from "../wsl/DesktopWslBackend.ts";
 import * as DesktopRendererHistory from "../telemetry/DesktopRendererHistory.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { MED_DESKTOP_BACKEND_PORT } from "../med/identity.ts";
+import { medBackendPort } from "../med/remote.ts";
 
 const DEFAULT_DESKTOP_BACKEND_PORT = MED_DESKTOP_BACKEND_PORT;
 const MAX_TCP_PORT = 65_535;
@@ -223,7 +224,9 @@ const startLocalBackend = Effect.gen(function* () {
     return false;
   }
 
-  const backendPortSelection = yield* resolveDesktopBackendPort(environment.configuredBackendPort);
+  const backendPortSelection = yield* resolveDesktopBackendPort(
+    yield* medBackendPort(environment.configuredBackendPort),
+  );
   const backendPort = backendPortSelection.port;
   yield* logBootstrapInfo(
     backendPortSelection.selectedByScan

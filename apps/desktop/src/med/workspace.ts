@@ -14,7 +14,7 @@ import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import type { DesktopBackendStartConfig } from "../backend/DesktopBackendManager.ts";
 
 export const MED_DEFAULT_WORKSPACE = "D:\\T3 Projects\\T3 Med";
-const MED_DESKTOP_SETTINGS_FILE = "t3med-desktop.json";
+export const MED_DESKTOP_SETTINGS_FILE = "t3med-desktop.json";
 const WORKSPACE_ENV = "T3MED_WORKSPACE";
 
 const nonEmpty = (value: unknown): string | undefined =>
