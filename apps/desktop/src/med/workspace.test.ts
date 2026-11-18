@@ -21,7 +21,7 @@ describe("resolveMedWorkspace", () => {
   });
 
   it("reads a file saved with a byte order mark, as Windows PowerShell saves it", () => {
-    const raw = `﻿${JSON.stringify({ workspace: "E:\Clinic" })}`;
+    const raw = `\uFEFF${JSON.stringify({ workspace: "E:\Clinic" })}`;
     assert.equal(parseMedWorkspaceSetting(raw), "E:\Clinic");
   });
 

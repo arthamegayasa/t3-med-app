@@ -9,10 +9,11 @@ import * as HttpApiEndpoint from "effect/http-api/HttpApiEndpoint";
 import * as HttpApiGroup from "effect/http-api/HttpApiGroup";
 
 import {
+  AuthGrantScope,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
-  type AuthGrantScope,
 } from "./auth.ts";
+import { PortSchema } from "./baseSchemas.ts";
 import {
   EnvironmentAuthenticatedAuth,
   EnvironmentInternalError,
@@ -673,28 +674,74 @@ export function medRemotePairingUrl(address: string, credential: string): string
   return url.toString();
 }
 
+/** What the server and the dialog both say to an address they refuse. */
+export const MED_REMOTE_ADDRESS_RULE =
+  "The address must be an HTTPS hostname, such as https://med.example.com.";
+
+/**
+ * The subject of every one-time link T3 Med's remote access makes, and so of every session paired
+ * through one. Turning remote access off revokes by it, and the server shortens those sessions
+ * by it (`apps/server/src/med/remoteSessions.ts`).
+ */
+export const MED_REMOTE_SUBJECT = "t3med-remote";
+
+/** The desktop app's own settings file in the state directory: `workspace` and `remote`. */
+export const MED_DESKTOP_SETTINGS_FILE = "t3med-desktop.json";
+
+export interface MedRemoteSetting {
+  /** The public address, or null while remote access is off. */
+  readonly address: string | null;
+  /** The loopback port the desktop app keeps while the address is set; it outlives turning off. */
+  readonly port: number | null;
+}
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+const isPort = Schema.is(PortSchema);
+
+/** The settings file's text as an object, or undefined when it is not a JSON object. */
+export function parseMedDesktopSettings(raw: string): Record<string, unknown> | undefined {
+  try {
+    // Windows PowerShell 5.1 writes a byte order mark, which JSON.parse refuses.
+    const parsed: unknown = JSON.parse(raw.replace(/^\uFEFF/, ""));
+    return isRecord(parsed) ? parsed : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** The `remote` setting of the settings file's text. An address the server would refuse is none. */
+export function parseMedRemoteSetting(raw: string): MedRemoteSetting {
+  const remote = parseMedDesktopSettings(raw)?.remote;
+  if (!isRecord(remote)) return { address: null, port: null };
+  return {
+    address:
+      typeof remote.address === "string"
+        ? (normalizeMedRemoteAddress(remote.address) ?? null)
+        : null,
+    port: isPort(remote.port) ? remote.port : null,
+  };
+}
+
 export const MedRemoteAccess = Schema.Struct({
   /** The public HTTPS address the tunnel answers at, or null while remote access is not set up. */
   address: Schema.NullOr(Schema.String),
   /** The loopback port this server listens on: the tunnel's target. */
-  port: Schema.Number,
+  port: PortSchema,
   /** The port the desktop app was told to keep. Differs from `port` when that one was taken. */
-  keptPort: Schema.NullOr(Schema.Number),
+  keptPort: Schema.NullOr(PortSchema),
 });
 export type MedRemoteAccess = typeof MedRemoteAccess.Type;
 
 export const MedRemoteAddressChange = Schema.Struct({ address: Schema.NullOr(Schema.String) });
-
-export const MedRemotePairingRequest = Schema.Struct({
-  label: Schema.optionalKey(Schema.String),
-});
 
 /** A one-time link. `url` carries the credential and is returned once, to the laptop only. */
 export const MedRemotePairingLink = Schema.Struct({
   id: Schema.String,
   url: Schema.String,
   expiresAt: Schema.DateTimeUtc,
-  scopes: Schema.Array(Schema.String),
+  scopes: Schema.Array(AuthGrantScope),
 });
 export type MedRemotePairingLink = typeof MedRemotePairingLink.Type;
 
@@ -721,7 +768,6 @@ class MedRemoteGroup extends HttpApiGroup.make("remote")
   .add(
     HttpApiEndpoint.post("createPairingLink", "/api/med/remote/pairing-link", {
       headers: BearerHeaders,
-      payload: MedRemotePairingRequest,
       success: MedRemotePairingLink,
       error: RemoteErrors,
     }).middleware(EnvironmentAuthenticatedAuth),

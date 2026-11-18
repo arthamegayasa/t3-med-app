@@ -10,18 +10,22 @@ import {
   AuthTokenExchangeGrantType,
   EnvironmentHttpApi,
 } from "@t3tools/contracts";
+import * as MedContract from "@t3tools/contracts/med";
 import {
+  MED_DESKTOP_SETTINGS_FILE,
   MED_REMOTE_CLIENT_SCOPES,
   MedHttpApi,
   MedRemoteHttpApi,
   normalizeMedRemoteAddress,
 } from "@t3tools/contracts/med";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as SecureRandom from "effect/crypto/SecureRandom";
+import * as TestClock from "effect/testing/TestClock";
 import { Etag, HttpPlatform, HttpRouter } from "effect/http";
 import * as HttpApi from "effect/http-api/HttpApi";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
@@ -36,7 +40,6 @@ import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import * as MedDatabase from "./MedDatabase.ts";
 import * as MedHttp from "./http.ts";
 import * as PatientStore from "./PatientStore.ts";
-import { MED_DESKTOP_SETTINGS_FILE } from "./remote.ts";
 
 const PORT = 3907;
 const DESKTOP_TOKEN = "desktop-bootstrap-token-of-this-test";
@@ -47,10 +50,22 @@ class AuthApi extends HttpApi.make("environment").add(EnvironmentHttpApi.groups.
 
 interface Answer {
   readonly status: number;
-  readonly body: any;
+  readonly body: unknown;
   readonly cookies: ReadonlyArray<string>;
   readonly cacheControl: string | null;
 }
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null;
+
+/** A field of a JSON answer; undefined when the answer is no object or lacks the field. */
+const field = (body: unknown, name: string): unknown => (isRecord(body) ? body[name] : undefined);
+
+const textField = (body: unknown, name: string): string => {
+  const value = field(body, name);
+  if (typeof value !== "string") throw new Error(`The answer has no text field ${name}.`);
+  return value;
+};
 
 interface Call {
   readonly method?: string;
@@ -60,7 +75,13 @@ interface Call {
 }
 
 /** The laptop's server: desktop mode, loopback, with the patient routes and upstream's auth routes. */
-const startServer = Effect.fn("test.startMedServer")(function* () {
+const startServer = Effect.fn("test.startMedServer")(function* (
+  options: {
+    /** The clock the server tells time by; without one, the real clock. */
+    readonly clock?: Clock.Clock;
+    readonly mode?: ServerConfig.ServerConfig["Service"]["mode"];
+  } = {},
+) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const random = yield* SecureRandom.SecureRandom;
@@ -70,7 +91,7 @@ const startServer = Effect.fn("test.startMedServer")(function* () {
   );
   const config = {
     ...testConfig,
-    mode: "desktop",
+    mode: options.mode ?? "desktop",
     host: "127.0.0.1",
     port: PORT,
     desktopBootstrapToken: DESKTOP_TOKEN,
@@ -87,6 +108,14 @@ const startServer = Effect.fn("test.startMedServer")(function* () {
     Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
     Layer.provideMerge(Etag.layerWeak),
   );
+  // Built once, so a test can ask the same sign-in service the routes use.
+  const onServerClock = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+    options.clock === undefined
+      ? TestClock.withLive(effect)
+      : Effect.provideService(effect, Clock.Clock, options.clock);
+  const services = yield* onServerClock(
+    Layer.build(layerAuth.pipe(Layer.provideMerge(layerConfig), Layer.provideMerge(layerPlatform))),
+  );
   const layerRoutes = Layer.mergeAll(
     MedHttp.layer,
     HttpApiBuilder.layer(AuthApi).pipe(
@@ -99,13 +128,13 @@ const startServer = Effect.fn("test.startMedServer")(function* () {
         Layer.provide(MedDatabase.layerFromPath(path.join(config.stateDir, "t3med.sqlite"))),
       ),
     ),
-    Layer.provideMerge(layerAuth),
-    Layer.provide(layerConfig),
-    Layer.provideMerge(layerPlatform),
+    Layer.provideMerge(Layer.succeedContext(services)),
   );
   const { handler, dispose } = HttpRouter.toWebHandler(layerRoutes, { disableLogger: true });
   yield* Effect.addFinalizer(() => Effect.promise(dispose));
   const requestContext = Context.make(SecureRandom.SecureRandom, random).pipe(
+    // A request tells time by the server's clock; the default is the real one.
+    options.clock === undefined ? (context) => context : Context.add(Clock.Clock, options.clock),
     Context.add(
       ServerSecretStore.ServerSecretStore,
       ServerSecretStore.ServerSecretStore.of({
@@ -173,7 +202,7 @@ const startServer = Effect.fn("test.startMedServer")(function* () {
     },
   });
   assert.strictEqual(exchanged.status, 200);
-  const laptop = { authorization: `Bearer ${exchanged.body.access_token}` };
+  const laptop = { authorization: `Bearer ${textField(exchanged.body, "access_token")}` };
 
   /** Sets the public address and makes one link, as Settings > Sharing & access does. */
   const makeLink = Effect.fn("test.makeLink")(function* () {
@@ -185,7 +214,11 @@ const startServer = Effect.fn("test.startMedServer")(function* () {
     assert.strictEqual(saved.status, 200);
     const link = yield* local("/api/med/remote/pairing-link", { body: {}, headers: laptop });
     assert.strictEqual(link.status, 200);
-    return link.body as { id: string; url: string; scopes: ReadonlyArray<string> };
+    return {
+      id: textField(link.body, "id"),
+      url: textField(link.body, "url"),
+      scopes: field(link.body, "scopes"),
+    };
   });
 
   /** Opens the link in the other computer's browser and returns its cookie. */
@@ -199,17 +232,40 @@ const startServer = Effect.fn("test.startMedServer")(function* () {
   });
 
   const settingsFile = path.join(config.stateDir, MED_DESKTOP_SETTINGS_FILE);
-  const readSettings = fs.readFileString(settingsFile).pipe(Effect.map((text) => JSON.parse(text)));
+  const readSettings = fs
+    .readFileString(settingsFile)
+    .pipe(Effect.map((text): unknown => JSON.parse(text)));
+  const auth = Context.get(services, EnvironmentAuth.EnvironmentAuth);
 
-  return { local, remote, laptop, makeLink, pair, settingsFile, readSettings, fs };
+  return {
+    local,
+    remote,
+    laptop,
+    makeLink,
+    pair,
+    settingsFile,
+    readSettings,
+    fs,
+    auth,
+    onServerClock,
+  };
 });
 
-const MED_ROUTES: Array<readonly [method: string, path: string]> = [];
-const listRoute = ({ endpoint }: { endpoint: { method: string; path: string } }) => {
-  MED_ROUTES.push([endpoint.method, endpoint.path.replaceAll(/:(\w+)/g, "some-$1")]);
-};
-HttpApi.reflect(MedHttpApi, { onGroup: () => {}, onEndpoint: listRoute });
-HttpApi.reflect(MedRemoteHttpApi, { onGroup: () => {}, onEndpoint: listRoute });
+// Every HttpApi the fork's contract exports, so a new route or a new group is listed without an
+// edit here, and a route this server does not mount answers 404 below instead of 401.
+const MED_APIS = Object.values(MedContract).flatMap((value: unknown) =>
+  HttpApi.isHttpApi(value) ? [value] : [],
+);
+const MED_ROUTES = MED_APIS.flatMap((api) => {
+  const routes: Array<readonly [method: string, path: string]> = [];
+  HttpApi.reflect(api, {
+    onGroup: () => {},
+    onEndpoint: ({ endpoint }) => {
+      routes.push([endpoint.method, endpoint.path.replaceAll(/:(\w+)/g, "some-$1")]);
+    },
+  });
+  return routes;
+});
 
 const everyMedRoute = (
   call: (route: string, call?: Call) => Effect.Effect<Answer>,
@@ -224,12 +280,18 @@ const everyMedRoute = (
 it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("med remote access", (it) => {
   it.effect("lists every med route, patient and remote, so none is left out below", () =>
     Effect.sync(() => {
-      assert.strictEqual(MED_ROUTES.length, 24);
+      const exported: Array<unknown> = [...MED_APIS];
+      assert.includeMembers(exported, [MedHttpApi, MedRemoteHttpApi]);
+      assert.strictEqual(
+        new Set(MED_ROUTES.map(([method, route]) => `${method} ${route}`)).size,
+        MED_ROUTES.length,
+      );
       assert.deepStrictEqual(
         MED_ROUTES.filter(([, route]) => !route.startsWith("/api/med/")),
         [],
       );
       assert.includeDeepMembers(MED_ROUTES, [
+        ["GET", "/api/med/patients"],
         ["GET", "/api/med/remote"],
         ["PUT", "/api/med/remote"],
         ["POST", "/api/med/remote/pairing-link"],
@@ -283,7 +345,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("med remote acces
 
       const { answer, cookie } = yield* server.pair(link.url);
       assert.strictEqual(answer.status, 200);
-      assert.deepStrictEqual(answer.body.permissions, [...MED_REMOTE_CLIENT_SCOPES]);
+      assert.deepStrictEqual(field(answer.body, "permissions"), [...MED_REMOTE_CLIENT_SCOPES]);
       // A cookie the browser sends back over HTTPS only, and never to a script.
       assert.strictEqual(answer.cookies.length, 1);
       assert.match(answer.cookies[0]!, new RegExp(`^t3_session_${PORT}=`));
@@ -336,11 +398,14 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("med remote acces
       ] as ReadonlyArray<readonly [string, Call]>) {
         const answer = yield* server.remote(route, { ...call, headers: browser });
         assert.deepStrictEqual(
-          [route, call.method ?? "", answer.status, answer.body?.requiredPermission],
+          [route, call.method ?? "", answer.status, field(answer.body, "requiredPermission")],
           [route, call.method ?? "", 403, "access:write"],
         );
       }
-      assert.strictEqual((yield* server.readSettings).remote.address, PUBLIC_ORIGIN);
+      assert.strictEqual(
+        field(field(yield* server.readSettings, "remote"), "address"),
+        PUBLIC_ORIGIN,
+      );
     }),
   );
 
@@ -413,7 +478,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("med remote acces
       const server = yield* startServer();
       yield* server.fs.writeFileString(
         server.settingsFile,
-        `﻿${JSON.stringify({ workspace: "E:\\Clinic", other: 1 })}`,
+        `\uFEFF${JSON.stringify({ workspace: "E:\\Clinic", other: 1 })}`,
       );
       const set = (address: string | null) =>
         server.local("/api/med/remote", {
@@ -437,7 +502,10 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("med remote acces
         assert.strictEqual(normalizeMedRemoteAddress(address), undefined);
         assert.strictEqual((yield* set(address)).status, 422, address);
       }
-      assert.strictEqual((yield* server.readSettings).remote.address, PUBLIC_ORIGIN);
+      assert.strictEqual(
+        field(field(yield* server.readSettings, "remote"), "address"),
+        PUBLIC_ORIGIN,
+      );
 
       const cleared = yield* set(null);
       assert.deepStrictEqual(
@@ -466,7 +534,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("med remote acces
       const exchanged = yield* server.local("/oauth/token", {
         form: {
           grant_type: AuthTokenExchangeGrantType,
-          subject_token: narrow.body.credential,
+          subject_token: textField(narrow.body, "credential"),
           subject_token_type: AuthEnvironmentBootstrapTokenType,
           requested_token_type: AuthAccessTokenType,
         },
@@ -474,10 +542,10 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("med remote acces
       assert.strictEqual(exchanged.status, 200);
       const link = yield* server.local("/api/med/remote/pairing-link", {
         body: {},
-        headers: { authorization: `Bearer ${exchanged.body.access_token}` },
+        headers: { authorization: `Bearer ${textField(exchanged.body, "access_token")}` },
       });
       assert.deepStrictEqual(
-        [link.status, link.body?.requiredPermission],
+        [link.status, field(link.body, "requiredPermission")],
         [403, "orchestration:read"],
       );
     }),

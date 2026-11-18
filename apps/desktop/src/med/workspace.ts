@@ -7,6 +7,7 @@
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
+import { MED_DESKTOP_SETTINGS_FILE, parseMedDesktopSettings } from "@t3tools/contracts/med";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 
@@ -14,7 +15,6 @@ import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import type { DesktopBackendStartConfig } from "../backend/DesktopBackendManager.ts";
 
 export const MED_DEFAULT_WORKSPACE = "D:\\T3 Projects\\T3 Med";
-export const MED_DESKTOP_SETTINGS_FILE = "t3med-desktop.json";
 const WORKSPACE_ENV = "T3MED_WORKSPACE";
 
 const nonEmpty = (value: unknown): string | undefined =>
@@ -22,15 +22,7 @@ const nonEmpty = (value: unknown): string | undefined =>
 
 /** The workspace named by the settings file's text, or undefined when it names none. */
 export function parseMedWorkspaceSetting(raw: string): string | undefined {
-  try {
-    // Windows PowerShell 5.1 writes a byte order mark, which JSON.parse refuses.
-    const parsed: unknown = JSON.parse(raw.replace(/^﻿/, ""));
-    return typeof parsed === "object" && parsed !== null && "workspace" in parsed
-      ? nonEmpty(parsed.workspace)
-      : undefined;
-  } catch {
-    return undefined;
-  }
+  return nonEmpty(parseMedDesktopSettings(raw)?.workspace);
 }
 
 /** Environment first, then the file, then the default. */

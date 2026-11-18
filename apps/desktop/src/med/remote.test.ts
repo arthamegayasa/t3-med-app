@@ -11,7 +11,7 @@ describe("medKeptPort", () => {
   it("is the port saved with a public address", () => {
     assert.equal(medKeptPort(settings({ address: "https://med.example.com", port: 3901 })), 3901);
     assert.equal(
-      medKeptPort(`﻿${settings({ address: "https://med.example.com", port: 3900 })}`),
+      medKeptPort(`\uFEFF${settings({ address: "https://med.example.com", port: 3900 })}`),
       3900,
     );
   });

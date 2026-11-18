@@ -4,6 +4,7 @@
  * browser. Shown on the laptop only: a paired browser's session cannot manage access.
  */
 import {
+  MED_REMOTE_ADDRESS_RULE,
   type MedRemoteAccess,
   type MedRemotePairingLink,
   normalizeMedRemoteAddress,
@@ -59,7 +60,7 @@ function RemoteAccessForm({ initial }: { readonly initial: MedRemoteAccess }) {
 
   const saveAddress = (next: string | null) => {
     if (next !== null && normalizeMedRemoteAddress(next) === undefined) {
-      setProblem("The address must be an HTTPS hostname, such as https://med.example.com.");
+      setProblem(MED_REMOTE_ADDRESS_RULE);
       return;
     }
     void run(
@@ -127,10 +128,7 @@ function RemoteAccessForm({ initial }: { readonly initial: MedRemoteAccess }) {
                 className="shrink-0"
                 disabled={busy || changed}
                 onClick={() =>
-                  void run(
-                    (client) => client.createPairingLink({ headers: {}, payload: {} }),
-                    setLink,
-                  )
+                  void run((client) => client.createPairingLink({ headers: {} }), setLink)
                 }
               >
                 {link === null ? "Create link" : "New link"}

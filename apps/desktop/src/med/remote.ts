@@ -7,37 +7,21 @@
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
-import { normalizeMedRemoteAddress } from "@t3tools/contracts/med";
+import { MED_DESKTOP_SETTINGS_FILE, parseMedRemoteSetting } from "@t3tools/contracts/med";
 import * as NetService from "@t3tools/shared/Net";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
-import { MED_DESKTOP_SETTINGS_FILE } from "./workspace.ts";
 
 // The hosts upstream's own scan asks about before it takes a port.
 const PROBE_HOSTS = ["127.0.0.1", "0.0.0.0", "::"] as const;
 
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
-
 /** The port saved with a usable public address in the settings file's text, or undefined. */
 export function medKeptPort(raw: string | undefined): number | undefined {
   if (raw === undefined) return undefined;
-  let parsed: unknown;
-  try {
-    // Windows PowerShell 5.1 writes a byte order mark, which JSON.parse refuses.
-    parsed = JSON.parse(raw.replace(/^﻿/, ""));
-  } catch {
-    return undefined;
-  }
-  const remote = isRecord(parsed) ? parsed.remote : undefined;
-  if (!isRecord(remote) || typeof remote.address !== "string") return undefined;
-  if (normalizeMedRemoteAddress(remote.address) === undefined) return undefined;
-  const { port } = remote;
-  return typeof port === "number" && Number.isInteger(port) && port > 0 && port <= 65_535
-    ? port
-    : undefined;
+  const remote = parseMedRemoteSetting(raw);
+  return remote.address === null ? undefined : (remote.port ?? undefined);
 }
 
 /** `T3CODE_PORT` first, then the kept port if it is free; none means upstream's scan. */
