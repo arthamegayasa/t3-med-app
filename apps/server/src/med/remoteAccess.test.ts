@@ -21,6 +21,7 @@ import {
 } from "@t3tools/contracts/med";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
@@ -607,6 +608,68 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("med remote acces
       assert.strictEqual(
         (yield* server.local("/api/med/patients", { headers: server.laptop })).status,
         200,
+      );
+    }),
+  );
+
+  it.effect("signs a remote browser out after twelve hours, by the server's own clock", () =>
+    Effect.gen(function* () {
+      const server = yield* startServer({ clock: yield* Clock.Clock });
+      const twelveHours = Duration.toMillis(Duration.hours(12));
+      const pairedAt = yield* Clock.currentTimeMillis;
+      const { answer, cookie } = yield* server.pair((yield* server.makeLink()).url);
+      assert.strictEqual(Date.parse(textField(answer.body, "expiresAt")) - pairedAt, twelveHours);
+      // The browser drops the cookie at the same moment.
+      const expires = /;\s*Expires=([^;]+)/i.exec(answer.cookies[0] ?? "")?.[1] ?? "";
+      assert.strictEqual(Date.parse(expires) - pairedAt, twelveHours);
+      // A link spent for a bearer token instead gets no longer a life.
+      const spent = yield* server.remote("/oauth/token", {
+        form: {
+          grant_type: AuthTokenExchangeGrantType,
+          subject_token: tokenOf((yield* server.makeLink()).url),
+          subject_token_type: AuthEnvironmentBootstrapTokenType,
+          requested_token_type: AuthAccessTokenType,
+        },
+      });
+      assert.strictEqual(field(spent.body, "expires_in"), twelveHours / 1000);
+      const script = { authorization: `Bearer ${textField(spent.body, "access_token")}` };
+      const reads = (headers: Record<string, string>) =>
+        server.remote("/api/med/patients", { headers }).pipe(Effect.map((answer) => answer.status));
+
+      yield* TestClock.adjust(Duration.minutes(12 * 60 - 1));
+      assert.deepStrictEqual([yield* reads({ cookie }), yield* reads(script)], [200, 200]);
+      yield* TestClock.adjust(Duration.minutes(1));
+      assert.deepStrictEqual([yield* reads({ cookie }), yield* reads(script)], [401, 401]);
+      // This computer's own session is upstream's, and lasts as upstream's does.
+      assert.strictEqual(yield* reads(server.laptop), 200);
+    }),
+  );
+
+  it.effect("lets no remote link sign an agent in through MCP", () =>
+    Effect.gen(function* () {
+      const server = yield* startServer();
+      const link = yield* server.makeLink();
+      // What POST /oauth/mcp/decision does with a pairing code, at the two levels the link's
+      // scopes would cover. Either would mint a 30-day session that Turn off does not end.
+      for (const access of ["read-only", "approval-required"] as const) {
+        const refused = yield* server
+          .onServerClock(server.auth.consumeMcpApprovalCode(tokenOf(link.url), access))
+          .pipe(Effect.flip);
+        assert.strictEqual(refused._tag, "ServerAuthMcpApprovalCodeError");
+      }
+      // Offered there, the link is used up.
+      assert.strictEqual((yield* server.pair(link.url)).answer.status, 401);
+
+      // Upstream's own code still approves an agent, so the refusal is the link's alone.
+      const own = yield* server.local("/api/auth/pairing-token", {
+        body: {},
+        headers: server.laptop,
+      });
+      assert.strictEqual(
+        yield* server.onServerClock(
+          server.auth.consumeMcpApprovalCode(textField(own.body, "credential"), "read-only"),
+        ),
+        "read-only",
       );
     }),
   );

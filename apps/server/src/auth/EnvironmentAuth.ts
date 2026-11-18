@@ -52,6 +52,7 @@ import * as ManagedLimits from "../policy/managedLimits.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import { MCP_APPROVAL_SUBJECT_PREFIX } from "../persistence/AuthPairingLinks.ts";
 import { requestUrl } from "../requestUrl.ts";
+import { layerRemoteCredentials } from "../med/remoteCredentials.ts";
 
 const DEFAULT_SESSION_SUBJECT = "cli-issued-session";
 export const INTERNAL_ADMINISTRATIVE_BOOTSTRAP_SUBJECT = "administrative-bootstrap";
@@ -1691,6 +1692,7 @@ const revokePairedClientsThePolicyDisallows = Effect.fn(
 });
 
 export const layer = Layer.effect(EnvironmentAuth, make).pipe(
+  Layer.provide(layerRemoteCredentials),
   Layer.provideMerge(PairingGrantStore.layer),
   Layer.provideMerge(SessionStore.layer),
   Layer.provideMerge(EnvironmentAuthPolicy.layer),

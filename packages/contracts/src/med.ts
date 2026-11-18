@@ -681,7 +681,7 @@ export const MED_REMOTE_ADDRESS_RULE =
 /**
  * The subject of every one-time link T3 Med's remote access makes, and so of every session paired
  * through one. Turning remote access off revokes by it, and the server shortens those sessions
- * by it (`apps/server/src/med/remoteSessions.ts`).
+ * by it (`apps/server/src/med/remoteCredentials.ts`).
  */
 export const MED_REMOTE_SUBJECT = "t3med-remote";
 
