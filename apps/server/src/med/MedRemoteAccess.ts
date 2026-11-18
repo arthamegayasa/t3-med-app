@@ -7,6 +7,7 @@ import {
   MED_DESKTOP_SETTINGS_FILE,
   MED_REMOTE_ADDRESS_RULE,
   MED_REMOTE_CLIENT_SCOPES,
+  MED_REMOTE_SUBJECT,
   MedRefusedError,
   type MedRemoteAccess as MedRemoteAccessState,
   type MedRemotePairingLink,
@@ -44,10 +45,16 @@ export class MedRemoteAccess extends Context.Service<
   MedRemoteAccess,
   {
     readonly read: Effect.Effect<MedRemoteAccessState, MedRemoteSettingsFileError>;
-    /** Sets the public address, or with null turns remote access off. */
+    /**
+     * Sets the public address. With null, turns remote access off: every session paired through
+     * a remote link ends, every unused link is void, and the address is taken out.
+     */
     readonly setAddress: (
       address: string | null,
-    ) => Effect.Effect<MedRemoteAccessState, MedRefusedError | MedRemoteSettingsFileError>;
+    ) => Effect.Effect<
+      MedRemoteAccessState,
+      MedRefusedError | MedRemoteSettingsFileError | EnvironmentAuth.ServerAuthInternalError
+    >;
     readonly createPairingLink: Effect.Effect<
       MedRemotePairingLink,
       MedRefusedError | MedRemoteSettingsFileError | EnvironmentAuth.ServerAuthInternalError
@@ -101,6 +108,23 @@ const make = Effect.gen(function* () {
     Effect.withSpan("MedRemoteAccess.read"),
   );
 
+  // Links first, so none can still be opened while the sessions go. Upstream closes a revoked
+  // session's open connections itself.
+  const revokeRemoteClients = Effect.gen(function* () {
+    const links = yield* serverAuth.listPairingLinks();
+    yield* Effect.forEach(
+      links.filter((link) => link.subject === MED_REMOTE_SUBJECT),
+      (link) => serverAuth.revokePairingLink(link.id),
+      { discard: true },
+    );
+    const sessions = yield* serverAuth.listSessions();
+    yield* Effect.forEach(
+      sessions.filter((session) => session.subject === MED_REMOTE_SUBJECT),
+      (session) => serverAuth.revokeSession(session.sessionId),
+      { discard: true },
+    );
+  });
+
   const setAddress: MedRemoteAccess["Service"]["setAddress"] = Effect.fn(
     "MedRemoteAccess.setAddress",
   )(function* (input) {
@@ -108,6 +132,8 @@ const make = Effect.gen(function* () {
     if (address === undefined) {
       return yield* new MedRefusedError({ reason: MED_REMOTE_ADDRESS_RULE });
     }
+    // Before the file: a failure here leaves remote access visibly on, to be turned off again.
+    if (address === null) yield* revokeRemoteClients;
     const text = yield* readText;
     const settings = text === undefined ? {} : parseMedDesktopSettings(text);
     if (settings === undefined) {
@@ -133,9 +159,11 @@ const make = Effect.gen(function* () {
           reason: "Set the public address before making a link.",
         });
       }
+      // The subject is how a session paired through this link is told from any other.
       const issued = yield* serverAuth
-        .issuePairingCredential({
+        .createPairingLink({
           scopes: MED_REMOTE_CLIENT_SCOPES,
+          subject: MED_REMOTE_SUBJECT,
           label: MED_REMOTE_CLIENT_LABEL,
         })
         .pipe(

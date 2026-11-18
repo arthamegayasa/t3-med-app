@@ -14,6 +14,7 @@ import * as MedContract from "@t3tools/contracts/med";
 import {
   MED_DESKTOP_SETTINGS_FILE,
   MED_REMOTE_CLIENT_SCOPES,
+  MED_REMOTE_SUBJECT,
   MedHttpApi,
   MedRemoteHttpApi,
   normalizeMedRemoteAddress,
@@ -21,6 +22,7 @@ import {
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
@@ -34,6 +36,7 @@ import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as AuthHttp from "../auth/http.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
+import * as SessionStore from "../auth/SessionStore.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
@@ -67,6 +70,10 @@ const textField = (body: unknown, name: string): string => {
   if (typeof value !== "string") throw new Error(`The answer has no text field ${name}.`);
   return value;
 };
+
+/** The one-time token a pairing link carries after its hash. */
+const tokenOf = (url: string): string =>
+  new URLSearchParams(new URL(url).hash.slice(1)).get("token") ?? "";
 
 interface Call {
   readonly method?: string;
@@ -245,7 +252,7 @@ const startServer = Effect.fn("test.startMedServer")(function* (
 
   /** Opens the link in the other computer's browser and returns its cookie. */
   const pair = Effect.fn("test.pair")(function* (url: string) {
-    const credential = new URLSearchParams(new URL(url).hash.slice(1)).get("token") ?? "";
+    const credential = tokenOf(url);
     const paired = yield* remote("/api/auth/browser-session", {
       body: { credential },
       headers: { origin: PUBLIC_ORIGIN },
@@ -269,6 +276,7 @@ const startServer = Effect.fn("test.startMedServer")(function* (
     readSettings,
     fs,
     stateDir: config.stateDir,
+    services,
     auth,
     onServerClock,
   };
@@ -541,6 +549,65 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("med remote acces
         headers: server.laptop,
       });
       assert.strictEqual(link.status, 422);
+    }),
+  );
+
+  it.effect("turning off signs out every remote browser and voids every unused link", () =>
+    Effect.gen(function* () {
+      const server = yield* startServer();
+      const { cookie } = yield* server.pair((yield* server.makeLink()).url);
+      // A link is a credential like any other: a script can spend one for a bearer token.
+      const spent = yield* server.remote("/oauth/token", {
+        form: {
+          grant_type: AuthTokenExchangeGrantType,
+          subject_token: tokenOf((yield* server.makeLink()).url),
+          subject_token_type: AuthEnvironmentBootstrapTokenType,
+          requested_token_type: AuthAccessTokenType,
+        },
+      });
+      const script = { authorization: `Bearer ${textField(spent.body, "access_token")}` };
+      const unused = yield* server.makeLink();
+      // A client paired by upstream's own link is not remote access's to sign out.
+      const other = yield* server.local("/api/auth/pairing-token", {
+        body: {},
+        headers: server.laptop,
+      });
+      const otherClient = yield* server.pair(
+        `${PUBLIC_ORIGIN}/pair#token=${textField(other.body, "credential")}`,
+      );
+      const reads = (headers: Record<string, string>) =>
+        server.remote("/api/med/patients", { headers }).pipe(Effect.map((answer) => answer.status));
+      assert.deepStrictEqual([yield* reads({ cookie }), yield* reads(script)], [200, 200]);
+
+      // An open connection is closed by upstream when its session ends.
+      const sessions = Context.get(server.services, SessionStore.SessionStore);
+      const remoteSessions = (yield* server.onServerClock(server.auth.listSessions())).filter(
+        (session) => session.subject === MED_REMOTE_SUBJECT,
+      );
+      assert.strictEqual(remoteSessions.length, 2);
+      const closed = yield* Effect.forkChild(
+        Effect.forEach(
+          remoteSessions,
+          (session) => sessions.awaitInvalidation(session.sessionId, undefined),
+          { concurrency: "unbounded" },
+        ),
+      );
+
+      const off = yield* server.local("/api/med/remote", {
+        method: "PUT",
+        body: { address: null },
+        headers: server.laptop,
+      });
+      assert.strictEqual(off.status, 200);
+
+      assert.deepStrictEqual([yield* reads({ cookie }), yield* reads(script)], [401, 401]);
+      assert.strictEqual((yield* server.pair(unused.url)).answer.status, 401);
+      yield* Fiber.join(closed);
+      assert.strictEqual(yield* reads({ cookie: otherClient.cookie }), 200);
+      assert.strictEqual(
+        (yield* server.local("/api/med/patients", { headers: server.laptop })).status,
+        200,
+      );
     }),
   );
 

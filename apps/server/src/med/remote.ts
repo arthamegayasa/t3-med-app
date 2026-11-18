@@ -43,9 +43,12 @@ const layerHandlers = HttpApiBuilder.group(
         Effect.fn("med.remote.setAddress")(function* (args) {
           yield* annotateEnvironmentRequest(args.endpoint.name);
           yield* requireEnvironmentScope(AuthAccessWriteScope);
-          return yield* remoteAccess
-            .setAddress(args.payload.address)
-            .pipe(Effect.catchTags(failSettingsFile));
+          return yield* remoteAccess.setAddress(args.payload.address).pipe(
+            Effect.catchTags(failSettingsFile),
+            Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
+              failEnvironmentInternal("internal_error", error),
+            ),
+          );
         }),
       )
       .handle(
