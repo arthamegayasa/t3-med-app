@@ -82,6 +82,7 @@ Done about once a month, from a stable tag. This is the routine as it was run fo
    grep -rn "med/identity\|med/workspace\|med/remote" apps/desktop/src --include=*.ts | grep -v "src/med/"
    grep -n "med/medPermissionUpdateNotice\|med/medAgentOpenedPreviews" apps/web/src/appInit.tsx
    grep -n "patientWording" apps/web/src/components/auth/PairingRouteSurface.tsx
+   grep -n "layerRemoteCredentials" apps/server/src/auth/EnvironmentAuth.ts
    grep -n "t3med" apps/server/src/httpCors.ts apps/server/src/cliCompileCache.ts packages/shared/src/providerAuthReturnUrl.ts
    grep -n '"productName": "T3 Med"' apps/desktop/package.json
    grep -n "MED_\|medStagePackageJson\|applyMedWebIcons" scripts/build-desktop-artifact.ts
@@ -118,7 +119,7 @@ Done about once a month, from a stable tag. This is the routine as it was run fo
    grep -rn "share\|export\|upload\|feedback" --include=*.ts -il apps/server/src/ws.ts apps/server/src/guest packages/contracts/src/rpc.ts
    ```
 
-   A new Settings page or row, palette action and shortcut command is decided in `medHidden.ts`, where `medHidden.test.ts` lists what stays and fails on one that is new. A new path out of the machine goes in FORK.md's table of them. A change to pairing, sessions or scopes (`git diff med..v<version> --stat -- apps/server/src/auth packages/contracts/src/auth.ts`) is read against FORK.md's Remote access: `apps/server/src/med/remoteAccess.test.ts` runs upstream's own sign-in and fails when a rule there moved. A new right-panel surface kind is dropped from saved state unless it is added to `KEPT_SURFACE_KINDS` (`medStoredState.ts`).
+   A new Settings page or row, palette action and shortcut command is decided in `medHidden.ts`, where `medHidden.test.ts` lists what stays and fails on one that is new. A new path out of the machine goes in FORK.md's table of them. A change to pairing, sessions or scopes (`git diff med..v<version> --stat -- apps/server/src/auth packages/contracts/src/auth.ts`) is read against FORK.md's Remote access: `apps/server/src/med/remoteAccess.test.ts` runs upstream's own sign-in and fails when a rule there moved. The fork tells its remote sessions by their subject and wraps `SessionStore.issue` and `PairingGrantStore.consume` (`apps/server/src/med/remoteCredentials.ts`): a change to either store's interface, or a new place that spends a pairing code or issues a session, is read against that file, and upstream's own `src/auth` tests are run with the fork's layer in place. A new right-panel surface kind is dropped from saved state unless it is added to `KEPT_SURFACE_KINDS` (`medStoredState.ts`).
 
 7. **Install and build.** `vp i` when `pnpm-lock.yaml` changed, then `vp run --filter t3 build`. The build writes `routeTree.gen.ts`; `git status` shows whether it differs from what was merged.
 8. **Re-measure the context budget.** In `apps/server`: `vp test run src/provider/AgentContextBudget.test.ts`. Set `agentContextBudget.json` to the values the failure prints; the tool list is upstream's number plus the patient tools.
@@ -128,13 +129,13 @@ Done about once a month, from a stable tag. This is the routine as it was run fo
     ```sh
     vp run --filter t3 typecheck
     vp run --filter @t3tools/web typecheck
-    cd apps/server && vp test run src/med src/mcp/toolkits/patient src/provider/AgentContextBudget.test.ts src/cli/update.test.ts src/cloud/selfUpdate.test.ts
+    cd apps/server && vp test run src/med src/auth src/mcp/toolkits/patient src/provider/AgentContextBudget.test.ts src/cli/update.test.ts src/cloud/selfUpdate.test.ts
     cd apps/server && vp test run src/policy src/serverSettings.test.ts src/orchestration-v2/Adapters/CodexAdapterV2.test.ts src/orchestration-v2/Adapters/GrokAdapterV2.test.ts
     cd packages/provider-acp && vp test run --config ../../vite.config.ts --dir . src/server/med
     cd packages/provider-grok && vp test run --config ../../vite.config.ts --dir . src/server/med
     cd apps/desktop && vp test run src/med src/window/DesktopApplicationMenu.test.ts src/updates
     cd packages/shared && vp test run --config ../../vite.config.ts --dir . src/medRelease.test.ts src/cliRelease.test.ts
-    cd packages/contracts && vp test run --config ../../vite.config.ts --dir . src/medRemote.test.ts
+    cd packages/contracts && vp test run --config ../../vite.config.ts --dir . src/med.test.ts
     cd scripts && vp test run --config ../vite.config.ts --dir . med
     cd apps/web && vp test run --project unit
     cd apps/web && vp test run --project browser
