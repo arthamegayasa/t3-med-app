@@ -29,6 +29,8 @@ import * as ServerConfig from "../config.ts";
 /** How a paired browser is named in the list of clients. */
 const MED_REMOTE_CLIENT_LABEL = "Remote browser";
 
+const MED_UNREADABLE_SETTINGS = `The address was not saved: ${MED_DESKTOP_SETTINGS_FILE} in T3 Med's data folder is not valid JSON. Correct that file, or delete it, then save the address again.`;
+
 export class MedRemoteSettingsFileError extends Schema.TaggedError<MedRemoteSettingsFileError>()(
   "MedRemoteSettingsFileError",
   { step: Schema.Literals(["read", "write"]), cause: Schema.Defect() },
@@ -78,6 +80,16 @@ const make = Effect.gen(function* () {
     }),
   );
 
+  // Beside the file, then moved onto it: a write that stops halfway leaves the old file whole.
+  const temporaryPath = `${settingsPath}.tmp`;
+  const writeText = (text: string) =>
+    fs.makeDirectory(config.stateDir, { recursive: true }).pipe(
+      Effect.andThen(fs.writeFileString(temporaryPath, text)),
+      Effect.andThen(fs.rename(temporaryPath, settingsPath)),
+      Effect.onError(() => Effect.ignore(fs.remove(temporaryPath, { force: true }))),
+      Effect.catchTags({ PlatformError: failFile("write") }),
+    );
+
   const describe = (remote: MedRemoteSetting): MedRemoteAccessState => ({
     address: remote.address,
     port: config.port,
@@ -97,20 +109,19 @@ const make = Effect.gen(function* () {
       return yield* new MedRefusedError({ reason: MED_REMOTE_ADDRESS_RULE });
     }
     const text = yield* readText;
-    const { remote: _previous, ...rest } = parseMedDesktopSettings(text ?? "") ?? {};
+    const settings = text === undefined ? {} : parseMedDesktopSettings(text);
+    if (settings === undefined) {
+      // Nothing is set in a file that cannot be read, so turning off has nothing to take out.
+      if (address === null) return describe({ address: null, port: null });
+      // Writing would drop whatever else the file holds, the workspace folder among it.
+      return yield* new MedRefusedError({ reason: MED_UNREADABLE_SETTINGS });
+    }
+    const { remote: _previous, ...rest } = settings;
     // The port in use now is the one the tunnel is pointed at, so the app keeps it.
     const remote = address === null ? null : { address, port: config.port };
-    yield* fs
-      .makeDirectory(config.stateDir, { recursive: true })
-      .pipe(
-        Effect.andThen(
-          fs.writeFileString(
-            settingsPath,
-            settingsText(remote === null ? rest : { ...rest, remote }),
-          ),
-        ),
-        Effect.catchTags({ PlatformError: failFile("write") }),
-      );
+    if (remote !== null || "remote" in settings) {
+      yield* writeText(settingsText(remote === null ? rest : { ...rest, remote }));
+    }
     return describe(remote ?? { address: null, port: null });
   });
 

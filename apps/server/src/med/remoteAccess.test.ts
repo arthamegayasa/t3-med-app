@@ -24,6 +24,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as PlatformError from "effect/PlatformError";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as TestClock from "effect/testing/TestClock";
 import { Etag, HttpPlatform, HttpRouter } from "effect/http";
@@ -80,6 +81,8 @@ const startServer = Effect.fn("test.startMedServer")(function* (
     /** The clock the server tells time by; without one, the real clock. */
     readonly clock?: Clock.Clock;
     readonly mode?: ServerConfig.ServerConfig["Service"]["mode"];
+    /** A disk that refuses to move a file into place. */
+    readonly renameFails?: boolean;
   } = {},
 ) {
   const fs = yield* FileSystem.FileSystem;
@@ -113,8 +116,27 @@ const startServer = Effect.fn("test.startMedServer")(function* (
     options.clock === undefined
       ? TestClock.withLive(effect)
       : Effect.provideService(effect, Clock.Clock, options.clock);
+  const layerDisk = options.renameFails
+    ? Layer.succeed(FileSystem.FileSystem, {
+        ...fs,
+        rename: () =>
+          Effect.fail(
+            PlatformError.systemError({
+              _tag: "PermissionDenied",
+              module: "FileSystem",
+              method: "rename",
+            }),
+          ),
+      })
+    : Layer.empty;
   const services = yield* onServerClock(
-    Layer.build(layerAuth.pipe(Layer.provideMerge(layerConfig), Layer.provideMerge(layerPlatform))),
+    Layer.build(
+      layerAuth.pipe(
+        Layer.provideMerge(layerConfig),
+        Layer.provideMerge(layerDisk),
+        Layer.provideMerge(layerPlatform),
+      ),
+    ),
   );
   const layerRoutes = Layer.mergeAll(
     MedHttp.layer,
@@ -246,6 +268,7 @@ const startServer = Effect.fn("test.startMedServer")(function* (
     settingsFile,
     readSettings,
     fs,
+    stateDir: config.stateDir,
     auth,
     onServerClock,
   };
@@ -518,6 +541,54 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("med remote acces
         headers: server.laptop,
       });
       assert.strictEqual(link.status, 422);
+    }),
+  );
+
+  it.effect("refuses to save over a settings file it cannot read, and leaves it as it was", () =>
+    Effect.gen(function* () {
+      const server = yield* startServer();
+      // A hand edit that lost its closing brace. The workspace setting is still in it.
+      const broken = '{ "workspace": "E:/Clinic"';
+      yield* server.fs.writeFileString(server.settingsFile, broken);
+      const set = (address: string | null) =>
+        server.local("/api/med/remote", {
+          method: "PUT",
+          body: { address },
+          headers: server.laptop,
+        });
+
+      const saved = yield* set(PUBLIC_ORIGIN);
+      assert.strictEqual(saved.status, 422);
+      assert.match(textField(saved.body, "reason"), /t3med-desktop\.json/);
+      assert.strictEqual(yield* server.fs.readFileString(server.settingsFile), broken);
+
+      // Nothing is set in a file that cannot be read, so there is no link and nothing to take off.
+      assert.deepStrictEqual(
+        (yield* server.local("/api/med/remote", { headers: server.laptop })).body,
+        { address: null, port: PORT, keptPort: null },
+      );
+      assert.strictEqual((yield* set(null)).status, 200);
+      assert.strictEqual(yield* server.fs.readFileString(server.settingsFile), broken);
+    }),
+  );
+
+  it.effect("writes the settings file whole or not at all", () =>
+    Effect.gen(function* () {
+      const server = yield* startServer({ renameFails: true });
+      const before = JSON.stringify({ workspace: "E:/Clinic" });
+      yield* server.fs.writeFileString(server.settingsFile, before);
+      const files = yield* server.fs.readDirectory(server.stateDir);
+
+      const saved = yield* server.local("/api/med/remote", {
+        method: "PUT",
+        body: { address: PUBLIC_ORIGIN },
+        headers: server.laptop,
+      });
+
+      // The new text never reached the file's name, and no half-written copy is left beside it.
+      assert.strictEqual(saved.status, 500);
+      assert.strictEqual(yield* server.fs.readFileString(server.settingsFile), before);
+      assert.sameMembers(yield* server.fs.readDirectory(server.stateDir), files);
     }),
   );
 
