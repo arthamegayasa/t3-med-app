@@ -1,6 +1,7 @@
 import { ORCHESTRATION_PROTOCOL_HEADER } from "@t3tools/contracts";
 
-export const browserApiCorsAllowedMethods = ["GET", "POST", "OPTIONS"] as const;
+// T3 Med: PUT and PATCH added; the patient and remote access routes use them (med/cors.test.ts).
+export const browserApiCorsAllowedMethods = ["GET", "POST", "PUT", "PATCH", "OPTIONS"] as const;
 export const browserApiCorsAllowedHeaders = [
   "authorization",
   "b3",
