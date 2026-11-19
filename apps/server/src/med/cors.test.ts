@@ -3,11 +3,14 @@
 // fails in the installed app only, as "Transport error", while same-origin browser tests pass.
 import { MedHttpApi, MedRemoteHttpApi } from "@t3tools/contracts/med";
 import * as HttpApi from "effect/http-api/HttpApi";
-import { assert, it } from "vitest";
+import type * as HttpApiGroup from "effect/http-api/HttpApiGroup";
+import { assert, it } from "@effect/vitest";
 
 import { browserApiCorsAllowedMethods } from "../httpCors.ts";
 
-const methodsOf = (api: Parameters<typeof HttpApi.reflect>[0]): ReadonlyArray<string> => {
+const methodsOf = <Id extends string, Groups extends HttpApiGroup.Constraint>(
+  api: HttpApi.HttpApi<Id, Groups>,
+): ReadonlyArray<string> => {
   const methods = new Set<string>();
   HttpApi.reflect(api, {
     onGroup: () => {},
