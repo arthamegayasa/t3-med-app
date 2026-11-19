@@ -56,16 +56,17 @@ jobs:
       - name: Setup dependencies
         uses: ./.github/actions/setup-ci-deps
 
-      # Only what is on med is released. The checkout above holds one commit; this adds the
-      # commits (no files) behind it and behind med, and the release tags, which is what the
-      # question, the version and the release notes need. A tag on any other commit, and a
-      # manual run started on another branch, stop here.
+      # Only what is on med is released. The checkout above holds one commit; this adds the last
+      # 300 commits behind med and behind each release tag, which is what the question, the
+      # version and the release notes need. A tag on any other commit, a commit further back
+      # than that, and a manual run started on another branch, stop here. Not a partial clone
+      # (--filter=tree:0): the runner's Git stopped on it with "BUG: builtin/pack-objects.c".
       - name: Refuse a commit that is not on med
         shell: bash
         env:
           GIT_TERMINAL_PROMPT: "0"
         run: |
-          git fetch --no-tags --filter=tree:0 --unshallow origin \
+          git fetch --no-tags --depth=300 origin \
             "+refs/heads/med:refs/remotes/origin/med" "+refs/tags/med-v*:refs/tags/med-v*"
           node scripts/med/release-commit.ts \
             --event "$GITHUB_EVENT_NAME" \
